@@ -1,6 +1,6 @@
 # control-center-workspace
 
-A **project-independent agentic harness** for Claude Code. Pair Claude's agent pipeline with an Obsidian knowledge vault and a structured ticket lifecycle, so every piece of work — feature, bug, refactor — produces a paper trail you can navigate, audit, and resume months later.
+A **project-independent agentic harness** for **Claude Code** and **Cursor**. Pair the same agent pipeline (definitions under `.claude/`) with an Obsidian knowledge vault and a structured ticket lifecycle, so every piece of work — feature, bug, refactor — produces a paper trail you can navigate, audit, and resume months later.
 
 This workspace doesn't contain your project's source code. It sits *next to* your projects and tracks them: their requirements, plans, decisions, progress, and verification — all as plain Markdown the agents read and write.
 
@@ -20,6 +20,7 @@ This workspace doesn't contain your project's source code. It sits *next to* you
 10. [Worked example: end-to-end](#worked-example-end-to-end)
 11. [Common operations](#common-operations)
 12. [Conventions](#conventions)
+13. [Where to read more](#where-to-read-more)
 
 ---
 
@@ -56,9 +57,19 @@ control-center-workspace/
 │   ├── projects/control-center/
 │   │   └── memory/                # Persistent memory across sessions
 │   ├── hooks/
-│   │   └── session-context.sh     # Injects active tickets at session start
+│   │   └── session-context.sh     # Claude Code SessionStart: artifact map context
 │   ├── settings.json              # Workspace config
 │   └── settings.local.json        # Per-machine permissions (gitignored)
+├── .cursor/                       # Cursor-only wiring (same harness; no duplicate agents/skills)
+│   ├── rules/
+│   │   └── control-center-harness.mdc   # always-on rules for this repo
+│   ├── hooks/
+│   │   └── session_context.py     # sessionStart: same artifact-map idea as Claude hook
+│   ├── hooks.json                 # Registers Cursor hooks (e.g. sessionStart)
+│   ├── skills/
+│   │   └── README.md              # Points here: canonical skills stay under .claude/skills/
+│   └── projects/control-center/
+│       └── README.md              # Notes shared memory path (.claude/.../memory/)
 ├── knowledge-center/              # The Obsidian vault
 │   ├── artifact-map.md            # Index of every ticket
 │   ├── knowledge-center-index.md  # Vault entry point
@@ -72,17 +83,26 @@ control-center-workspace/
 │   │   └── ...
 │   └── wiki/                      # Long-lived reference docs (ADRs, guides)
 ├── .obsidian/                     # Obsidian's own config
-├── CLAUDE.md                      # Instructions Claude reads on every session
+├── CLAUDE.md                      # Instructions Claude Code reads on every session
+├── CURSOR.md                      # Same harness story for Cursor (paths, hooks, conventions)
+├── AGENTS.md                      # Short Cursor entry point → CURSOR.md + .claude/
 └── control-center-workspace.code-workspace   # VS Code multi-folder workspace
 ```
 
-**The deal:** agents and skills live in `.claude/`. Knowledge — every ticket's plan, progress, decisions — lives in `knowledge-center/`. Your project source code lives in a sibling directory you add as a workspace folder.
+**The deal:** agent and skill definitions live only in **`.claude/`** (both products use those files). Knowledge — every ticket's plan, progress, decisions — lives in **`knowledge-center/`**. Your project source code lives in a sibling directory you add as a workspace folder.
+
+### Using Cursor
+
+- Read **`CURSOR.md`** (mirrors `CLAUDE.md` for Cursor-specific paths and behavior).
+- **`AGENTS.md`** points at the same harness: skills and agents under **`.claude/skills/`** and **`.claude/agents/`** — this repo does **not** copy them under `.cursor/`.
+- **`.cursor/rules/`** supplies always-on project rules; **`.cursor/hooks.json`** + **`.cursor/hooks/`** run Cursor lifecycle hooks (e.g. `sessionStart` injects Active/Blocked lines from `artifact-map.md`, parallel to the Claude Code `SessionStart` hook).
+- Where **`.claude/agents/harness.md`** says to delegate to another agent, Claude Code uses the **Agent** tool; in Cursor use the **Task** tool with the same specialist roles (`harness`, `analyst`, `planner`, `builder`, `verifier`, `fixer`, etc.).
 
 ---
 
 ## The agent pipeline
 
-Six stages, six agents. Each stage produces a specific artifact and hands off through a gate to the next.
+Six stages, six agents. Each stage produces a specific artifact and hands off through a gate to the next. The specialist definitions live under `.claude/agents/` and apply whether you drive the harness from **Claude Code** or **Cursor** (see [Using Cursor](#using-cursor) above for delegation differences).
 
 ```
 GROUND ──→ CLARIFY ──→ CANONICAL ──→ TEMPLATE ──→ SIMPLIFY ──→ VERIFY ──→ Closed
@@ -772,7 +792,10 @@ Months later, you grep `artifact-map.md` for "dark-mode" and have the entire rea
 ## Common operations
 
 ### Start each session
-The `SessionStart` hook (`.claude/hooks/session-context.sh`) auto-injects active and blocked tickets from `artifact-map.md` so Claude knows what's in flight without you re-explaining.
+- **Claude Code:** `SessionStart` runs `.claude/hooks/session-context.sh` and injects active and blocked ticket rows from `knowledge-center/artifact-map.md`.
+- **Cursor:** `sessionStart` runs `.cursor/hooks/session_context.py` (see `.cursor/hooks.json`) for the same artifact-map excerpt as `additional_context` (requires `python` on your PATH).
+
+In both cases the goal is the same: the agent sees what’s in flight without you re-pasting the map.
 
 ### Multi-project work
 The artifact-map can hold tickets for several projects. Suggested ID prefix per project:
@@ -819,7 +842,7 @@ Loads every artifact for the ticket and surfaces the current stage, unchecked pl
 
 **Filenames.** Every artifact in a ticket is `{TICKET}-{artifact}.md` — globally unique across the vault.
 
-**Wikilinks.** Always `[[{TICKET}-{artifact}]]` style — e.g. `[[T013-plan]]`, never `[[plan]]` or `[[T013/plan]]`. Obsidian resolves them; Claude reads them.
+**Wikilinks.** Always `[[{TICKET}-{artifact}]]` style — e.g. `[[T013-plan]]`, never `[[plan]]` or `[[T013/plan]]`. Obsidian resolves them; agents (Claude Code or Cursor) read them.
 
 **Cross-linking.** Every artifact ends with a `## Links` block listing every sibling in the ticket. This is mandatory — it's what makes each ticket appear as a connected cluster in Obsidian's graph view.
 
@@ -831,8 +854,11 @@ Loads every artifact for the ticket and surfaces the current stage, unchecked pl
 
 ## Where to read more
 
-- `CLAUDE.md` — what Claude itself reads at session start.
-- `.claude/agents/*.md` — agent definitions (view, skills, protocol, output contract).
-- `.claude/skills/*/SKILL.md` — skill definitions (inputs, steps, output, rules).
+- `CLAUDE.md` — what Claude Code reads at session start.
+- `CURSOR.md` — same workspace harness for Cursor (shared `.claude/` paths; Cursor-only hooks/rules).
+- `AGENTS.md` — brief Cursor entry point.
+- `.cursor/rules/control-center-harness.mdc` — always-on Cursor rules for this repo.
+- `.claude/agents/*.md` — agent definitions (view, skills, protocol, output contract); used by both Claude Code and Cursor.
+- `.claude/skills/*/SKILL.md` — skill definitions (inputs, steps, output, rules); single canonical copy for both tools.
 - `knowledge-center/artifacts/_template/` — the seven files every new ticket starts with.
 - `knowledge-center/artifact-map.md` — the live index of all tickets.
