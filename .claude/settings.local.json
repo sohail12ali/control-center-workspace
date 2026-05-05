@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(bash .claude/hooks/session-context.sh)",
+      "Bash(chmod +x .claude/hooks/session-context.sh)",
+      "Bash(mkdir -p *)",
+      "Bash(touch *)",
+      "Bash(grep *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(awk *)",
+      "Bash(sed *)",
+      "Bash(echo *)",
+      "Read(//d/Workspace/**)"
+    ]
+  }
+}

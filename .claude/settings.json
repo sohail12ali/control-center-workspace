@@ -1,0 +1,32 @@
+{
+  "workspace": {
+    "path": "D:\\Workspace\\control-center-workspace",
+    "vault": "D:\\Workspace\\control-center-workspace\\knowledge-center",
+    "artifacts": "D:\\Workspace\\control-center-workspace\\knowledge-center\\artifacts",
+    "memory": "D:\\Workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
+  },
+  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer"],
+  "skills": [
+    "kickoff", "trace-context", "analyze", "requirements", "clarify",
+    "manage-questions", "validate", "plan", "plan-effort", "risk-scan",
+    "progress-tracker", "fix", "evolve", "reconcile", "handoff",
+    "standup", "close-work",
+    "simplify", "review", "security-review",
+    "update-config", "keybindings-help", "loop", "schedule", "claude-api"
+  ],
+  "claudeCode.defaultMode": "acceptEdits",
+  "claudeCode.permissions.allow": ["edit", "write", "mkdir", "touch"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session-context.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
