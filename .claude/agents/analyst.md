@@ -14,6 +14,7 @@ Code + prior artifacts + graph. Output is documentation, not code.
 - `manage-questions` — extract Qs after analyze and after requirements draft
 - `requirements` — draft requirements.md
 - `clarify` — close open Qs into decisions before freezing
+- `tech-select` — when a requirement hinges on an unmade tech/stack/library/pattern choice; gated, records to decision-log
 - `validate(target=requirements)` — adversarial check before freezing
 
 # Protocol

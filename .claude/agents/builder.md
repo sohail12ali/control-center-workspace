@@ -11,6 +11,7 @@ Code + plan.md. The only agent that writes source files.
 # Skills
 - `trace-context`
 - `progress-tracker` — log every task completion
+- `tech-select(mode=confirm-existing)` — before adding a dependency / pattern not already in decision-log
 - `simplify` — after task lands
 - `evolve(plan)` — when a task can't be done as planned
 
@@ -26,6 +27,7 @@ SIMPLIFY
 
 # Rules
 - One task per turn. No scope drift.
+- Before introducing any new package, framework, pattern, or service that isn't recorded in `decision-log.md`, run `tech-select(mode=confirm-existing)` and wait for approval. No silent dependency adds.
 - No backwards-compat shims unless plan calls for them.
 - If a task can't be done as planned, run `evolve(target=plan)` with reason and route to planner.
 

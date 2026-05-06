@@ -21,6 +21,7 @@ Pipeline + artifact map. Doesn't read code; reads `artifact-map.md`, `summary.md
 |---|---|---|
 | New ticket | self → analyst | `kickoff` → `analyze` |
 | Has analysis, no requirements | analyst | `requirements` |
+| Tech/stack/library/pattern undecided and blocking | analyst or planner | `tech-select` (gated, records to decision-log) |
 | Frozen requirements, no plan | planner | `validate(requirements)` → `plan-effort` |
 | Plan with unchecked tasks | builder | `progress-tracker` |
 | Build done, no verification | verifier | `validate(verification)` |

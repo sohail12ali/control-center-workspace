@@ -13,6 +13,7 @@ Failing test/symptom + related code + progress.md.
 - `fix` — root-cause + minimal patch protocol
 - `progress-tracker` — symptom → cause → fix → verification
 - `evolve` — when fix implies a design shift
+- `tech-select` — when root cause is "wrong tech" and a swap is on the table; gated
 - `simplify` — only if fix involves cleanup the code already needed
 
 # Protocol

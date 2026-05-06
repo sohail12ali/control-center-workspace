@@ -38,6 +38,7 @@ Skills (`.claude/skills/`):
 - **Setup/state:** `kickoff`, `trace-context`
 - **Analysis:** `analyze`, `manage-questions`, `clarify`
 - **Spec:** `requirements`, `validate`
+- **Decisions:** `tech-select` — pick a language/framework/library/package/pattern/architecture/API/UI/DB/etc.; researches the web, gates on user approval, records to `decision-log.md`
 - **Planning:** `plan`, `risk-scan`, `plan-effort`
 - **Build/fix:** `progress-tracker`, `fix`, `evolve`
 - **Stage gates:** `handoff`, `reconcile`

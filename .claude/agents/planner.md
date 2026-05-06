@@ -12,6 +12,7 @@ requirements.md + analysis.md + decision-log.md. No code edits.
 - `trace-context`
 - `validate(target=requirements)` — confirm frozen before planning
 - `plan` — strategy/approach/slices
+- `tech-select` — resolve any stack/framework/library/pattern choice the plan presupposes; gated, records to decision-log
 - `risk-scan` — surface and rate risks
 - `plan-effort` — task decomposition + estimates
 - `validate(target=plan)` — self-check before handoff
@@ -19,7 +20,7 @@ requirements.md + analysis.md + decision-log.md. No code edits.
 # Protocol
 1. `trace-context`
 2. `validate(target=requirements)`; if `block`, route to analyst
-3. `plan` — write Approach/Slices
+3. `plan` — write Approach/Slices. For each unmade tech/library/pattern choice the slices imply, run `tech-select` per topic before tasking it.
 4. `risk-scan` — fill Risks; reject any high×high without mitigation
 5. `plan-effort` — Tasks/Effort
 6. `validate(target=plan)`; fix `block` items in place
