@@ -8,6 +8,8 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[T01-summary]] — Prayer, Alarm & Quran Feature Enhancements — Complete — Noble Wave — 2026-05-06
+
 ## Archived
 
 ---
