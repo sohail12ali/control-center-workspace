@@ -4,6 +4,8 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
+- [[T02-summary]] — Make Noble Salah a real Flutter web target — Open — anjum@hu-manity.co — 2026-05-09
+
 ## Blocked
 
 ## Completed
