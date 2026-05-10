@@ -204,7 +204,7 @@ The app breaks on web because `main()` calls mobile-only platform APIs before `r
 - **Basis:** requirements FR-13, AC-24, AC-25; decision-log D3.
 - **Depends on:** T02-01
 
-### [ ] T02-18 — Implement custom service worker for app shell caching (2 h) [RE-OPENED 2026-05-09]
+### [x] T02-18 — Implement custom service worker for app shell caching (2 h) [RE-OPENED 2026-05-09]
 - **Context:** Flutter's generated `flutter_service_worker.js` is a deprecated self-unregistering stub (calls `self.registration.unregister()` on activate, caches nothing). Must be replaced with a real caching service worker. See decision-log Amendment 2026-05-09.
 - [ ] Create `web/service_worker.js` using the Cache API. On `install`, pre-cache the app shell asset list: `flutter_bootstrap.js`, `flutter.js`, `main.dart.js`, `manifest.json`, `favicon.png`, `icons/Icon-192.png`, `icons/Icon-512.png`. On `fetch`, serve cache-first for same-origin requests; network-first (pass-through) for CDN audio URLs.
 - [ ] In `web/index.html`, register `service_worker.js` via a `<script>` block (standard `navigator.serviceWorker.register('./service_worker.js')`) — do NOT use the deprecated `serviceWorkerSettings` approach in `flutter_bootstrap.js` (it loads the self-unregistering stub).

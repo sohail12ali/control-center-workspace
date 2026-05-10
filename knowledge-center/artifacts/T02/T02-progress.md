@@ -6,7 +6,7 @@ artifact: progress
 # Progress: T02
 
 ## Status Summary
-Stage: VERIFY — All 6 fixer blocks resolved (BLOCK-4, BLOCK-1, BLOCK-2, BLOCK-3, BLOCK-5, BLOCK-6). Test suite: 677 pass / 5 fail (all pre-existing). WASM build: exit 0, 1.86 MB gzipped initial load (under 8 MB NFR). User-side browser/deploy steps pending.
+Stage: VERIFY — **NEW BLOCKER (BLOCK-7):** `flutter build apk --debug` fails with `Unresolved reference 'BuildConfig'` at `MainActivity.kt:59` — `buildFeatures { buildConfig = true }` missing from `build.gradle.kts`. AC-03 / NFR-04 downgraded to FAIL. Routed to fixer. Test suite: 677 pass / 5 fail (all pre-existing). WASM build: exit 0, 1.86 MB gzipped. T02-18 still open (service worker). Browser/deploy steps pending.
 
 ## Dated Log
 
@@ -92,6 +92,15 @@ Stage: VERIFY — All 6 fixer blocks resolved (BLOCK-4, BLOCK-1, BLOCK-2, BLOCK-
 - Cause: `build/web/flutter_service_worker.js` (815 bytes) is Flutter's deprecated self-unregistering stub. On `activate` it calls `self.registration.unregister()` and caches nothing. `flutter_bootstrap.js` explicitly labels it deprecated with comment "Flutter's service worker is deprecated and will be removed in a future Flutter release." No real app-shell caching was ever implemented by the builder.
 - Fix: Resolution (b) applied — artifact correction only, no code written. T02-18 flipped from `[x]` to `[ ]` in plan.md. AC-26 and NFR-02 status updated from BLOCKED to NOT-YET-IMPLEMENTED in verification.md with cited evidence from `flutter_bootstrap.js`. Notes section updated. Real service worker (Workbox or custom Cache API) is builder scope — routed to planner via evolve.
 - Verification: `plan.md` T02-18 checkbox reads `[ ]`; `verification.md` AC-26 row reads NOT-YET-IMPLEMENTED with cited evidence; NFR-02 row updated to match. No code files modified.
+
+### 2026-05-09 — Reconcile (verifier second pass, post-fixer)
+
+- Done: Re-ran `flutter test` → 677 pass / 5 fail (unchanged; all 5 pre-existing). `tasbih_service_phrase_test T2.5` now passes (fixed by BLOCK-4). 4 confirmed failures: `islamic_calendar_screen_test.dart` (renders / today highlight / next-month chevron / event dot). 1 failure unconfirmed by `[E]` markers (counter discrepancy).
+- Done: Re-ran `flutter build apk --debug` → **EXIT 1**. Error: `Unresolved reference 'BuildConfig'` at `android/app/src/main/kotlin/com/noblewave/noblesalah/MainActivity.kt:59`. Root cause: `BuildConfig.DEBUG` referenced but `buildFeatures { buildConfig = true }` absent from `android/app/build.gradle.kts`. Regression introduced after previous PASS.
+- Done: Confirmed `flutter build web --base-href /noble-salah/` (non-WASM, via PowerShell) — exit 0, `<base href="/noble-salah/">` confirmed in `build/web/index.html` (timestamp 2026-05-09 22:02). AC-27 PASS confirmed.
+- Done: Confirmed `build/web/flutter_service_worker.js` = 815 bytes self-unregistering stub (calls `self.registration.unregister()` on activate, caches nothing). AC-26 NOT-YET-IMPLEMENTED confirmed.
+- Auto-fixed: AC-03 and NFR-04 updated to FAIL in verification.md. Test Results section updated (677/5, all pre-existing). Code-Level Pass Summary updated. Status Summary in progress.md updated.
+- **BLOCK-7 registered:** `BuildConfig` unresolved reference — fixer scope. `android/app/build.gradle.kts` needs `buildFeatures { buildConfig = true }` under `android {}`. File: `android/app/src/main/kotlin/.../MainActivity.kt:59`.
 
 ## Links
 

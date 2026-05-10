@@ -18,7 +18,7 @@ Make Noble Salah's Flutter codebase run as a real web target. The app currently 
 
 ## Current State
 
-VERIFY in progress — all 6 fixer blocks resolved. 21/26 plan tasks complete (T02-18 re-opened, routed to planner). AC-15, AC-19 PASS with tests; NFR-06 PASS with WASM measurement (1.86 MB gzipped). WASM build: exit 0 after geolocator bump to ^14.0.0. flutter_tts warnings: non-fatal, documented. AC-26/NFR-02 NOT-YET-IMPLEMENTED (T02-18 builder scope). Test suite: 677 pass / 5 fail (all pre-existing). Next: user browser smoke test, CDN CORS, GH Pages deploy.
+VERIFY in progress — 22/26 plan tasks complete. T02-18 re-implemented: custom Cache API service worker in `web/service_worker.js`, registered in `index.html`. AC-03/NFR-04 PASS (BuildConfig fix). AC-26/NFR-02 now PENDING-USER-VERIFICATION (SW built, needs Chrome DevTools confirmation). Test suite: 677 pass / 5 fail (all pre-existing). Next: browser smoke test, CDN CORS, GH Pages deploy.
 
 ## Links
 - [[T02-summary]] · [[T02-analysis]] · [[T02-requirements]] · [[T02-decision-log]] · [[T02-questions]] · [[T02-plan]] · [[T02-progress]] · [[T02-verification]]
