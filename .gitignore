@@ -62,3 +62,6 @@ dist/
 *.app/
 *.app.dSYM/
 .claude/worktrees/*
+
+# Claude Code transient state
+.claude/scheduled_tasks.lock

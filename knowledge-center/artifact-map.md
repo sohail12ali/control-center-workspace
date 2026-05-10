@@ -5,12 +5,14 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 ## Active
 
 - [[T02-summary]] — Make Noble Salah a real Flutter web target — Open — anjum@hu-manity.co — 2026-05-09
+- [[T03-summary]] — Setup Maestro-based testing — In Progress — anjum@hu-manity.co — 2026-05-09
 
 ## Blocked
 
 ## Completed
 
 - [[T01-summary]] — Prayer, Alarm & Quran Feature Enhancements — Complete — Noble Wave — 2026-05-06
+- [[T04-summary]] — Add Hadith Find (Books Tab) — Complete — anjum@hu-manity.co — 2026-05-10
 
 ## Archived
 
