@@ -18,7 +18,7 @@ Redesign the existing Salah Guide screen in Noble Salah (Flutter app) to be rich
 
 ## Current State
 
-SalahGuideScreen redesigned: two prominent category cards (Daily Prayers / Occasional Prayers) replace the flat list; new PrayerListScreen intermediary routes to RakatSelectionScreen. All slices A–D complete. dart analyze 0 errors; flutter build apk --debug exits 0.
+All slices A–D complete + athan ringtone fix applied: channel ID bumped to `athan_channel_v2`, explicit channel creation added to `NotificationService.initialize()`, `alarmClock` mode now default, `showWhenLocked`/`turnScreenOn` added to MainActivity. dart analyze 0 errors; flutter build apk --debug exits 0.
 
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]

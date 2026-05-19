@@ -195,5 +195,17 @@ Stage: VERIFY — All slices A–D complete including B05/C02/C03/C04; dart anal
 - Blocked: —
 - Next: verifier / owner review
 
+### 2026-05-19 (fixer — athan ringtone silent)
+- Done: Athan notification ringtone not playing — four-point fix applied
+  - Fix 1 (channel ID bump): renamed `'athan_channel'` → `'athan_channel_v2'` in all 3 call sites: `notification_service.dart:290`, `prayer_scheduler_service.dart:77`, `main.dart:117`. Android channels are immutable after creation; bumping the ID forces a fresh channel with correct sound settings on next launch.
+  - Fix 2 (explicit channel creation): added `createAthanChannel()` abstract method to `NotificationsPlugin` and implementation in `FlutterNotificationsPluginAdapter`; creates `AndroidNotificationChannel('athan_channel_v2', ..., playSound: true, enableVibration: true)` via `resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(...)`. Called from `NotificationService.initialize()` immediately after plugin init.
+  - Fix 3 (alarmClock default): changed `_athanPrefs?.alarmClockMode ?? false` → `?? true` in both `scheduleUpcomingDays` and `scheduleTestAlarm` in `prayer_scheduler_service.dart`. `alarmClock` mode bypasses Doze fully and is the most reliable delivery path for prayer alarms.
+  - Fix 4 (fullScreenIntent manifest): added `android:showWhenLocked="true"` and `android:turnScreenOn="true"` to `MainActivity` in `AndroidManifest.xml`. Required for `fullScreenIntent: true` to surface notifications over the lock screen.
+  - Test fakes updated: `createAthanChannel() async {}` stub added to `FakeNotificationsPlugin` (notification_service_test.dart) and `_SpyNotificationsPlugin` (notification_service_web_guard_test.dart) so existing tests compile.
+  - `dart analyze lib/` — 0 errors (pre-existing warnings/infos unchanged)
+  - `flutter build apk --debug` — exits 0, APK built at `build/app/outputs/flutter-apk/app-debug.apk`
+- Blocked: —
+- Next: verifier to confirm athan sound plays on device after reinstall (channel cache cleared by new ID)
+
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]
