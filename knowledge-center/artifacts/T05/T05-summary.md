@@ -18,7 +18,7 @@ Redesign the existing Salah Guide screen in Noble Salah (Flutter app) to be rich
 
 ## Current State
 
-All slices A–D complete. NFR-05 file-cap compliance enforced: occasional step sequence file split into 3 parts (_a/_b/_c) + barrel; fourRakatSteps() split to dedicated file. All guide files ≤ 600 lines. dart analyze 0 errors; flutter build apk --debug exits 0.
+SalahGuideScreen redesigned: two prominent category cards (Daily Prayers / Occasional Prayers) replace the flat list; new PrayerListScreen intermediary routes to RakatSelectionScreen. All slices A–D complete. dart analyze 0 errors; flutter build apk --debug exits 0.
 
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]

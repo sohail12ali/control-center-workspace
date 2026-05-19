@@ -182,5 +182,18 @@ Stage: VERIFY — All slices A–D complete including B05/C02/C03/C04; dart anal
 - Blocked: —
 - Next: verifier close-work
 
+### 2026-05-19 (builder — SalahGuideScreen category-card redesign)
+- Done: SalahGuideScreen redesigned — two prominent category cards replacing flat two-section list
+  - `lib/features/guides/salah_guide_screen.dart` rewritten (193 lines): `_SectionHeader` + `_PrayerTile` removed; new `_CategoryCard` widget with icon + label + subtitle + chevron
+  - Daily Prayers card: `Icons.wb_sunny_outlined`, subtitle "Fajr · Dhuhr · Asr · Maghrib · Isha", taps to `PrayerListScreen(title: 'Daily Prayers', prayers: kDailyPrayers)`
+  - Occasional Prayers card: `Icons.star_outline_rounded`, subtitle "Jumu'ah · Eid · Tarawih · and more", taps to `PrayerListScreen(title: 'Occasional Prayers', prayers: kOccasionalPrayers)`
+  - Created `lib/features/guides/prayer_list_screen.dart` (133 lines): receives `title` + `prayers` list; renders `GuideScreenHeader` + scrollable `_PrayerTile` list; each tile taps to `RakatSelectionScreen` (existing flow unchanged)
+  - `_PrayerTile` (indented Witr support) moved from `salah_guide_screen.dart` to `prayer_list_screen.dart` — correct home
+  - `dart analyze lib/features/guides/salah_guide_screen.dart lib/features/guides/prayer_list_screen.dart` — 0 errors
+  - `flutter build apk --debug` — exits 0
+  - Simplify: removed redundant inline comment from `prayer_list_screen.dart` map lambda
+- Blocked: —
+- Next: verifier / owner review
+
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]
