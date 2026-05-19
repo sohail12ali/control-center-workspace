@@ -18,7 +18,7 @@ Redesign the existing Salah Guide screen in Noble Salah (Flutter app) to be rich
 
 ## Current State
 
-All slices A–D complete + athan ringtone fix applied: channel ID bumped to `athan_channel_v2`, explicit channel creation added to `NotificationService.initialize()`, `alarmClock` mode now default, `showWhenLocked`/`turnScreenOn` added to MainActivity. dart analyze 0 errors; flutter build apk --debug exits 0.
+All slices A–D complete. Athan ringtone root cause fixed: channel `athan_channel_v3` now registered with `sound: RawResourceAndroidNotificationSound('athan_makkah')` at creation time (Android 8+ channel-immutability fix); ID bumped from v2 (v2 was registered without a sound URI and permanently silent). All 5 channel-ID references updated across notification_service.dart, prayer_scheduler_service.dart, main.dart. dart analyze 0 new errors; flutter build apk --debug exits 0. Pending: on-device verification that ringtone plays.
 
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]

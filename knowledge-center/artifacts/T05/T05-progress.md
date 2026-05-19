@@ -207,5 +207,16 @@ Stage: VERIFY — All slices A–D complete including B05/C02/C03/C04; dart anal
 - Blocked: —
 - Next: verifier to confirm athan sound plays on device after reinstall (channel cache cleared by new ID)
 
+### 2026-05-19 (fixer — athan_channel_v2 still silent: root cause confirmed + v3 patch)
+- Symptom: Notification UI fires but Athan ringtone is silent — problem persisted after v2 bump.
+- Cause: `AndroidNotificationChannel('athan_channel_v2', ...)` was registered **without** a `sound:` URI. Android 8+ (Oreo) permanently locks a channel's sound at first-creation time; `playSound: true` alone does not set a sound URI, so the channel defaulted to silent. The `sound:` field on per-notification `AndroidNotificationDetails` is silently discarded once the channel is created — channel-level setting wins on every delivery.
+- Fix:
+  - `notification_service.dart:createAthanChannel()` — added `sound: RawResourceAndroidNotificationSound('athan_makkah')` to `AndroidNotificationChannel` constructor; bumped channel ID to `'athan_channel_v3'` (old v2 channel locked-silent on existing installs cannot be mutated; new ID forces Android to register a fresh, correctly-configured channel on next app launch).
+  - Updated comment block in `NotificationService.initialize()` to describe v3 and the immutability rule.
+  - All `'athan_channel_v2'` string literals replaced with `'athan_channel_v3'` across `notification_service.dart` (lines 100, 311, 322), `prayer_scheduler_service.dart` (line 77), and `main.dart` (line 117) — 5 replacements, 3 files.
+- Verification: `dart analyze` — 0 new errors (22 pre-existing warnings/infos unchanged); `flutter build apk --debug` — exit 0, APK built at `build/app/outputs/flutter-apk/app-debug.apk`.
+- Blocked: —
+- Next: install APK on physical device, trigger test alarm, confirm ringtone plays.
+
 ## Links
 - [[T05-summary]] · [[T05-analysis]] · [[T05-requirements]] · [[T05-decision-log]] · [[T05-questions]] · [[T05-plan]] · [[T05-progress]] · [[T05-verification]]
