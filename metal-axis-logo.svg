@@ -1,0 +1,80 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Steel gradient (industrial gray to dark steel) -->
+    <linearGradient id="steelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8e8e8;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#a8a8a8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#5a5a5a;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Dark steel for main structure -->
+    <linearGradient id="darkSteel" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3a3a3a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1a1a;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Accent gradient (engineering blue) -->
+    <linearGradient id="accentBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e5a9e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d3a5c;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Radial gradient for metallic shine -->
+    <radialGradient id="metalShine" cx="30%" cy="30%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="200" height="200" fill="#ffffff"/>
+
+  <!-- Subtle background circle -->
+  <circle cx="100" cy="100" r="95" fill="#f8f8f8" stroke="#d0d0d0" stroke-width="1"/>
+
+  <!-- Structural I-Beam Vertical (left) -->
+  <g fill="url(#darkSteel)">
+    <rect x="65" y="50" width="8" height="100" rx="1"/>
+    <rect x="55" y="50" width="28" height="6" rx="1"/>
+    <rect x="55" y="144" width="28" height="6" rx="1"/>
+  </g>
+
+  <!-- Structural I-Beam Horizontal (bottom) -->
+  <g fill="url(#darkSteel)">
+    <rect x="50" y="96" width="100" height="8" rx="1"/>
+    <rect x="50" y="86" width="6" height="28" rx="1"/>
+    <rect x="144" y="86" width="6" height="28" rx="1"/>
+  </g>
+
+  <!-- Central junction with accent -->
+  <circle cx="100" cy="100" r="14" fill="url(#accentBlue)"/>
+  <circle cx="100" cy="100" r="10" fill="#ffffff" opacity="0.15"/>
+
+  <!-- Diagonal cross-bracing (structural element) -->
+  <g stroke="url(#steelGradient)" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.7">
+    <line x1="70" y1="70" x2="130" y2="130"/>
+    <line x1="130" y1="70" x2="70" y2="130"/>
+  </g>
+
+  <!-- Bolt circles at intersections -->
+  <g fill="url(#accentBlue)">
+    <circle cx="70" cy="70" r="4"/>
+    <circle cx="130" cy="70" r="4"/>
+    <circle cx="70" cy="130" r="4"/>
+    <circle cx="130" cy="130" r="4"/>
+  </g>
+
+  <!-- Corner plates (structural connection elements) -->
+  <g fill="url(#steelGradient)" opacity="0.5">
+    <rect x="50" y="50" width="8" height="8" rx="1"/>
+    <rect x="142" y="50" width="8" height="8" rx="1"/>
+    <rect x="50" y="142" width="8" height="8" rx="1"/>
+    <rect x="142" y="142" width="8" height="8" rx="1"/>
+  </g>
+
+  <!-- Metallic shine overlay -->
+  <ellipse cx="85" cy="80" rx="20" ry="15" fill="url(#metalShine)"/>
+
+  <!-- Professional outer border -->
+  <circle cx="100" cy="100" r="95" fill="none" stroke="url(#darkSteel)" stroke-width="1.5"/>
+</svg>
