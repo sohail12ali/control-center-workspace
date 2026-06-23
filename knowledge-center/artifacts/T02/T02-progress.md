@@ -6,9 +6,20 @@ artifact: progress
 # Progress: T02
 
 ## Status Summary
-Stage: VERIFY — **NEW BLOCKER (BLOCK-7):** `flutter build apk --debug` fails with `Unresolved reference 'BuildConfig'` at `MainActivity.kt:59` — `buildFeatures { buildConfig = true }` missing from `build.gradle.kts`. AC-03 / NFR-04 downgraded to FAIL. Routed to fixer. Test suite: 677 pass / 5 fail (all pre-existing). WASM build: exit 0, 1.86 MB gzipped. T02-18 still open (service worker). Browser/deploy steps pending.
+Stage: VERIFY — **BLOCK-7 FIXED (2026-06-23):** `buildFeatures { buildConfig = true }` confirmed in `build.gradle.kts`. `flutter build apk --debug` now exits 0. AC-03 / NFR-04 PASS. Web server running on localhost:5000 (flutter run -d web-server). Initial HTML loads, service worker registered, manifest present. Main JS bundle compiling. Test suite: 677 pass / 5 fail (all pre-existing). Next: Verify main bundle loads, browser smoke test (AC-01 through AC-28), service worker offline caching verification.
 
 ## Dated Log
+
+### 2026-06-23 — BLOCK-7 FIXED + Web Server Running
+
+- **BLOCK-7 FIXED:** Verified `buildFeatures { buildConfig = true }` is present in `android/app/build.gradle.kts` (line 83-85). Re-ran `flutter build apk --debug` → exit 0, `√ Built build\app\outputs\flutter-apk\app-debug.apk`. AC-03 / NFR-04 PASS.
+- **Web Server Running:** Started `flutter run -d web-server --web-port 5000 --web-hostname localhost`. Server initialization time: ~60 s. 
+- **Verification:**
+  - ✓ App HTML loads at `http://localhost:5000` with title "Noble Salah"
+  - ✓ Service worker registered in HTML (`<script src="service_worker.js"...`)
+  - ✓ Flutter bootstrap script being served
+  - ✓ App running in hot-reload dev mode (main.dart.js compiled dynamically)
+- **Next Step:** Browser smoke test to verify AC-01 through AC-28 (prayer times display, navigation, persistence, offline caching, etc.). All user-facing AC verification pending.
 
 ### 2026-05-09
 - Done: GROUND analysis complete. Full plugin audit (pubspec.yaml), call-site map in main.dart, storage layer assessment, feature web-vs-mobile map, Platform.isAndroid risk scan across 3 files. Wrote T02-analysis.md and T02-questions.md (8 open Qs).
