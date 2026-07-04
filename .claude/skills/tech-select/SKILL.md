@@ -1,6 +1,6 @@
 ---
 name: tech-select
-description: Decide a technology choice for a ticket — language, framework, library, package, design pattern, architecture style, API framework, UI framework, database, infra, auth, queue, cache, observability, build tool, test runner, etc. Researches the web for current best fits, surfaces 2-4 ranked options with tradeoffs, asks the user blocking questions via `manage-questions`, gates on explicit user approval, and records the final pick to `decision-log.md` with rationale and rejected alternatives. Use whenever an artifact needs a "what should we use for X?" answer — works for new projects (greenfield stack picks) and existing projects (adding/replacing a component).
+description: Decide a technology choice for a ticket — language, framework, library, package, design pattern, architecture style, API framework, UI framework, database, infra, auth, queue, cache, observability, build tool, test runner, etc. Researches the web for current best fits, surfaces 2-4 ranked options with tradeoffs, asks the user blocking questions via `questions`, gates on explicit user approval, and records the final pick to `decision-log.md` with rationale and rejected alternatives. Use whenever an artifact needs a "what should we use for X?" answer — works for new projects (greenfield stack picks) and existing projects (adding/replacing a component).
 ---
 
 # Inputs
@@ -12,7 +12,7 @@ description: Decide a technology choice for a ticket — language, framework, li
 
 # Storage
 - Reads: `{id}-summary.md`, `{id}-requirements.md`, `{id}-analysis.md`, `{id}-decision-log.md`, `{id}-questions.md`, plus any prior tech decisions in this or linked tickets (avoid contradictions).
-- Writes: `{id}-decision-log.md` (final decision), `{id}-questions.md` (blocking Qs via `manage-questions`), and a transient research block in `{id}-analysis.md` under `## Research / tech-select: {topic}` so the evidence is auditable.
+- Writes: `{id}-decision-log.md` (final decision), `{id}-questions.md` (blocking Qs via `questions`), and a transient research block in `{id}-analysis.md` under `## Research / tech-select: {topic}` so the evidence is auditable.
 
 # Steps
 
@@ -20,7 +20,7 @@ description: Decide a technology choice for a ticket — language, framework, li
 
 2. **Frame constraints.** Build a constraint set from (a) caller `constraints` input, (b) requirements (functional + non-functional, especially perf / scale / compliance / SLA), (c) existing stack already locked in earlier decisions, (d) team-skill / license / hosting hints in `summary.md`. List any **inferred** constraints separately and mark them `assumed:` — these become candidate questions.
 
-3. **Decide if questions are needed.** If a constraint is load-bearing for the choice and not stated, file it via `manage-questions(op=add, stage=current)` and also surface it in chat. **Do not proceed past step 5 with `open` blocking Qs.** Examples that almost always block: target deployment env, expected scale, team's primary language, data-shape (relational vs document vs time-series), self-hosted vs managed, license tolerance (GPL/AGPL?), budget ceiling.
+3. **Decide if questions are needed.** If a constraint is load-bearing for the choice and not stated, file it via `questions(op=add, stage=current)` and also surface it in chat. **Do not proceed past step 5 with `open` blocking Qs.** Examples that almost always block: target deployment env, expected scale, team's primary language, data-shape (relational vs document vs time-series), self-hosted vs managed, license tolerance (GPL/AGPL?), budget ceiling.
 
 4. **Research.**
    - Build a shortlist: start from `shortlist` input if given, else 4-6 candidates known to the agent. Explicitly include at least one "boring/default" choice and one "fit-for-constraint" specialist.
@@ -48,7 +48,7 @@ description: Decide a technology choice for a ticket — language, framework, li
    - The recommendation + runner-up with the "why this could be wrong" lines.
    - A numbered choice prompt: `1) accept recommendation  2) pick runner-up  3) pick other finalist  4) reopen — change constraints / add candidates  5) defer`.
 
-   **Do not write to `decision-log.md` until the user picks 1-3.** On `4` loop back to step 2 with the user's new input. On `5` mark the topic deferred via `manage-questions(op=defer)`.
+   **Do not write to `decision-log.md` until the user picks 1-3.** On `4` loop back to step 2 with the user's new input. On `5` mark the topic deferred via `questions(op=defer)`.
 
    In `mode=recommend`, skip the gate and return the ranked list only. In `mode=confirm-existing`, run the rubric against the user's proposed pick; if it fails a hard constraint or scores materially below an alternative, escalate to `interactive`.
 
@@ -73,7 +73,7 @@ description: Decide a technology choice for a ticket — language, framework, li
    ```
 
 9. **Propagate.**
-   - Resolve the corresponding question(s) via `manage-questions(op=resolve, decision=tech-{topic}-{slug})`.
+   - Resolve the corresponding question(s) via `questions(op=resolve, decision=tech-{topic}-{slug})`.
    - If the choice introduces a new risk, hand to `risk-scan`.
    - If the choice invalidates a frozen artifact (requirement, plan task), call `evolve` on that artifact — never silently rewrite it.
    - Update `summary.md` "Stack" / "Current State" line so future `trace-context` calls see the pick.

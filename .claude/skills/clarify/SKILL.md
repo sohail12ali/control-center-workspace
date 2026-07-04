@@ -8,11 +8,11 @@ description: Resolve open questions on an artifact through targeted user convers
 - `target` (optional): `requirements` | `plan` | `analysis` (default: whichever has open Qs)
 
 # Steps
-1. Pull all open questions from target file and `manage-questions` queue.
+1. Pull all open questions from the target file and the `questions` queue (`{T}-questions.md`).
 2. Group by theme; ask user the smallest set that unblocks the stage (≤5 at a time).
 3. For each answer, append to `decision-log.md`: Context / Choice / Alternatives / Rationale.
 4. Patch the target file to remove resolved ambiguity (replace placeholders, rewrite vague clauses with the metric the user gave).
-5. Update `manage-questions` queue: mark resolved, link to decision.
+5. Update the `questions` queue: mark resolved, link to the decision.
 
 # Output
 List of resolved Qs and the patched section refs.
@@ -20,4 +20,5 @@ List of resolved Qs and the patched section refs.
 # Rules
 - Don't invent answers; if the user defers, mark Q as `deferred` not resolved.
 - One decision per Q. Bundle only when Qs are truly the same axis.
-- After clarifying, re-run `validate(target)` before advancing stage.
+- After clarifying, re-run the relevant challenge skill (`challenge-requirements` / `challenge-plan`) or `criticize(target)` before advancing stage.
+- Full question lifecycle, types, and blocking rules: `.claude/skills/clarify/question-templates.md`.

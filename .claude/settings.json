@@ -1,16 +1,28 @@
 {
   "workspace": {
-    "path": "D:\\Workspace\\control-center-workspace",
-    "vault": "D:\\Workspace\\control-center-workspace\\knowledge-center",
-    "artifacts": "D:\\Workspace\\control-center-workspace\\knowledge-center\\artifacts",
-    "memory": "D:\\Workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
+    "path": "D:\\Workspace\\ai-workspace\\control-center-workspace",
+    "vault": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center",
+    "artifacts": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center\\artifacts",
+    "memory": "D:\\Workspace\\ai-workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
   },
   "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer"],
   "skills": [
-    "kickoff", "trace-context", "analyze", "requirements", "clarify",
-    "manage-questions", "validate", "plan", "plan-effort", "risk-scan",
-    "progress-tracker", "fix", "evolve", "reconcile", "handoff",
-    "standup", "close-work",
+    "harness-standards", "do", "caveman",
+    "kickoff", "trace-context", "template", "consolidate",
+    "analyze", "clarify", "questions",
+    "draft-requirements", "analyze-context", "identify-gaps",
+    "enrich-requirements", "iterate-requirements", "challenge-requirements", "freeze-requirements",
+    "extract-stories",
+    "tech-select",
+    "plan", "plan-effort", "risk-scan", "analyze-components",
+    "breakdown-tasks", "create-implementation-plan", "estimate-development",
+    "generate-effort-forecast", "replan", "challenge-plan",
+    "progress-tracker", "fix", "evolve",
+    "verify", "challenge-implementation", "criticize", "validate-artifacts",
+    "check-artifact-links", "trace", "generate-test-cases",
+    "bugs", "todos",
+    "reconcile", "handoff", "standup", "close-work",
+    "log-work", "work-summary", "optimize-cursor-artifacts", "project-layout",
     "simplify", "review", "security-review",
     "update-config", "keybindings-help", "loop", "schedule", "claude-api"
   ],
