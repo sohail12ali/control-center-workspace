@@ -33,7 +33,6 @@ migrate_working_dir/
 
 # VS Code related
 .vscode/
-*.code-workspace
 
 # Environment variables
 .env

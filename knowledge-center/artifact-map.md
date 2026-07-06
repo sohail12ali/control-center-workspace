@@ -4,6 +4,8 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
+- [[T001-summary]] — Harness Kit: Portable Agent Harness (IDE Extension) — Active (VERIFY: kanban-first default-UI gap fixed, 164/164 tests; manual VSIX/GUI confirmation still pending) — Sohail Ali — 2026-07-05
+
 ## Blocked
 
 ## Completed
