@@ -9,7 +9,9 @@ Use **`CURSOR.md`** as the full workspace guide (mirrors `CLAUDE.md` for Claude 
 
 ## Pipeline
 
-Stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY**. Routing and output contracts: `.claude/agents/harness.md` and sibling files in `.claude/agents/`.
+Stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY**. Routing and output contracts: `.claude/agents/harness.md` and sibling files in `.claude/agents/`. Always-on gate/voice core: `.claude/skills/harness-standards/core.md`.
+
+Free-form request with no clear stage? Use `.claude/skills/do/SKILL.md` — classifies into a lane and dispatches.
 
 ## Canonical paths (do not fork)
 

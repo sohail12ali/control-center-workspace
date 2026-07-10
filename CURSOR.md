@@ -4,9 +4,11 @@ This file provides guidance to **Cursor Agent** when working in this workspace. 
 
 ## Workspace overview
 
-**control-center-workspace** is a project-independent agentic harness for structured software development. It pairs an agent pipeline with an Obsidian knowledge vault and a structured ticket lifecycle.
+**control-center-workspace** is a project-independent agentic harness for structured software development. It pairs an agent pipeline with an Obsidian knowledge vault and a structured ticket lifecycle. It is a reusable template — nothing in it is coupled to any specific company, product, or tech stack.
 
 Add sub-projects as VS Code workspace folders. Each project gets its own ticket IDs and artifact subtree under `knowledge-center/artifacts/`.
+
+**Always-on core:** `.claude/skills/harness-standards/core.md` — the 6 gates, BE HONEST, default voice. Full norms: `.claude/skills/harness-standards/SKILL.md`.
 
 ## Workspace layout
 
@@ -14,6 +16,7 @@ Add sub-projects as VS Code workspace folders. Each project gets its own ticket 
 |------|---------|
 | `knowledge-center/` | Obsidian vault — all artifacts, wiki, and the artifact map |
 | `knowledge-center/artifacts/{TICKET}/` | Per-ticket work artifacts |
+| `knowledge-center/artifacts/_template/` | Source templates `kickoff` scaffolds from |
 | `knowledge-center/wiki/` | Durable reference docs and ADRs |
 | `.claude/skills/` | **Canonical** skill definitions (`SKILL.md` per skill) — use these paths when a skill applies |
 | `.claude/agents/` | Agent definitions (harness, analyst, planner, builder, verifier, fixer) — same files Cursor uses |
@@ -27,22 +30,25 @@ Pipeline stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY �
 
 | Agent | Stages | Role |
 |-------|--------|------|
-| `harness` | All | Orchestrator — routes to specialists |
-| `analyst` | GROUND, CLARIFY | Context analysis, requirements |
-| `planner` | CANONICAL | Approach, slices, risks → plan.md |
+| `harness` | All | Orchestrator — routes to specialists, runs `/do` dispatch |
+| `analyst` | GROUND, CLARIFY | Context analysis, pre-freeze requirements pipeline |
+| `planner` | CANONICAL | Components, tasks, effort, risk → plan.md |
 | `builder` | TEMPLATE, SIMPLIFY | Implements plan tasks one at a time |
 | `verifier` | VERIFY | Validates against acceptance criteria |
 | `fixer` | Any | Root-cause diagnosis and minimal patch |
 
+Exactly 6 agents — no additions without explicit user intent. Free-form requests: `/do {request}` (`.claude/skills/do/SKILL.md`) classifies into a lane and dispatches; pair with `/caveman` for terse output.
+
 Skills (read from **`.claude/skills/<name>/SKILL.md`** — single source of truth):
 
-- **Setup/state:** `kickoff`, `trace-context`
-- **Analysis:** `analyze`, `manage-questions`, `clarify`
-- **Spec:** `requirements`, `validate`
-- **Planning:** `plan`, `risk-scan`, `plan-effort`
+- **Setup/state:** `kickoff`, `trace-context`, `template`, `consolidate`
+- **Pre-freeze requirements:** `draft-requirements` → `analyze-context` → `identify-gaps` → `enrich-requirements` → `iterate-requirements` → `challenge-requirements` → `freeze-requirements` → `extract-stories`
+- **Planning:** `plan`, `plan-effort`, `analyze-components` (includes dependency graph), `breakdown-tasks`, `create-implementation-plan`, `estimate-development`, `generate-effort-forecast`, `replan`, `risk-scan`, `challenge-plan`
 - **Build/fix:** `progress-tracker`, `fix`, `evolve`
+- **Verification:** `verify`, `challenge-implementation`, `criticize`, `validate-artifacts`, `check-artifact-links` (includes requirements traceability), `trace`, `generate-test-cases`
+- **Tracking:** `questions`, `bugs`, `todos`, `clarify`
 - **Stage gates:** `handoff`, `reconcile`
-- **Workspace:** `graph-sync`, `standup`, `close-work`
+- **Workspace/ops:** `standup`, `close-work`, `log-work`, `work-summary`, `optimize-cursor-artifacts`, `project-layout`
 
 ### Rules
 

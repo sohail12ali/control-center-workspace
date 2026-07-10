@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "updated": "2026-07-04",
+  "renderScripts": {
+    "single": ".claude/skills/template/scripts/New-FromTemplate.ps1"
+  },
+  "logScripts": {
+    "ensureAuthor": ".claude/skills/log-work/scripts/Ensure-LogAuthor.ps1",
+    "newActivityDay": ".claude/skills/log-work/scripts/New-ActivityDay.ps1",
+    "appendWorkLog": ".claude/skills/log-work/scripts/Append-WorkLog.ps1"
+  },
+  "ticketArtifacts": {
+    "templatesDir": "knowledge-center/artifacts/_template",
+    "files": [
+      "summary.md",
+      "analysis.md",
+      "requirements.md",
+      "decision-log.md",
+      "questions.md",
+      "plan.md",
+      "progress.md",
+      "verification.md"
+    ],
+    "namingRule": "{TICKET}-{name}.md",
+    "note": "kickoff copies every _template/{name}.md to artifacts/{TICKET}/{TICKET}-{name}.md, replacing {ID} and {DATE} placeholders."
+  },
+  "skills": {
+    "log-work": {
+      "template": ".claude/skills/log-work/template.md",
+      "scriptsDir": ".claude/skills/log-work/scripts"
+    },
+    "template": {
+      "scriptsDir": ".claude/skills/template/scripts"
+    },
+    "analyze-components": {
+      "template": ".claude/skills/analyze-components/template.md"
+    },
+    "breakdown-tasks": {
+      "template": ".claude/skills/breakdown-tasks/template.md"
+    },
+    "estimate-development": {
+      "template": ".claude/skills/estimate-development/template.md"
+    },
+    "generate-effort-forecast": {
+      "template": ".claude/skills/generate-effort-forecast/template.md"
+    },
+    "challenge-plan": {
+      "template": ".claude/skills/challenge-plan/template.md"
+    }
+  }
+}

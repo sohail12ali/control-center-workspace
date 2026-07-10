@@ -11,10 +11,9 @@ description: Seed a new ticket. Creates artifacts/{ID}/ from _template, renames 
 
 # Steps
 1. Resolve target dir: `knowledge-center/artifacts/{id}[/{slice}[/{phase}]]/`. Refuse if it exists.
-2. For every file `{name}.md` in `knowledge-center/artifacts/_template/`, copy it to the target as `{id}-{name}.md`. Example: `summary.md` → `T013-summary.md`.
-3. In every copied file, replace `{ID}` with the ticket id and `{DATE}` with today (YYYY-MM-DD).
-4. In `{id}-summary.md`: also replace `{Title}` and set Owner.
-5. Append to `knowledge-center/artifact-map.md` under `## Active`:
+2. For every file `{name}.md` in `knowledge-center/artifacts/_template/`, render it to `{target}/{id}-{name}.md` via `template`'s `.claude/skills/template/scripts/New-FromTemplate.ps1` (or the equivalent copy+substitute mechanism it documents) — don't hand-roll placeholder substitution here, that mechanism is owned by `template`. Example: `summary.md` → `T013-summary.md`. This one call already replaces `{ID}`/`{DATE}`/`{TITLE}`/`{Title}` per `template`'s placeholder table.
+3. In `{id}-summary.md`: confirm `{Title}` and `{DATE}` resolved, and set Owner (not a generic placeholder `template` substitutes).
+4. Append to `knowledge-center/artifact-map.md` under `## Active`:
    `- [[{id}-summary]] — {title} — Open — {owner}`
 
 # Output

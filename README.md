@@ -39,19 +39,51 @@ control-center-workspace/
 │   ├── skills/                    # Skill scripts the agents call
 │   │   ├── kickoff/               # Seeds a new ticket
 │   │   ├── trace-context/         # Loads ticket state at turn start
+│   │   ├── harness-standards/     # Always-on gates + comms/evidence/test norms
+│   │   ├── do/                    # Free-form autonomous dispatch entry point
 │   │   ├── analyze/               # → analysis.md
-│   │   ├── requirements/          # → requirements.md
-│   │   ├── clarify/               # Resolves open questions
-│   │   ├── manage-questions/      # → questions.md
-│   │   ├── validate/              # Adversarial check
-│   │   ├── plan/                  # → plan.md (Approach/Slices)
-│   │   ├── plan-effort/           # → plan.md (Tasks/Effort)
+│   │   ├── draft-requirements/    # → requirements-draft.md (v0)
+│   │   ├── analyze-context/       # Grounds the draft in codebase + prior artifacts
+│   │   ├── identify-gaps/         # Surfaces missing stakeholders/rules/edge cases/NFRs + existing-feature overlap
+│   │   ├── enrich-requirements/   # Replaces placeholders with concrete facts
+│   │   ├── iterate-requirements/  # Applies a feedback round, bumps iteration
+│   │   ├── challenge-requirements/# Adversarial pre-freeze check
+│   │   ├── freeze-requirements/   # Final gate → requirements.md
+│   │   ├── extract-stories/       # → user stories with acceptance criteria
+│   │   ├── tech-select/           # Gated stack/library/pattern decision → decision-log.md
+│   │   ├── clarify/               # Resolves open questions into decisions
+│   │   ├── questions/             # → questions.md (open-question lifecycle)
+│   │   ├── bugs/                  # → open-bugs.md (defects/regressions)
+│   │   ├── todos/                 # → open-todos.md (misc tasks)
+│   │   ├── plan/                  # → plan.md (Approach/Slices; chains deeper skills)
+│   │   ├── plan-effort/           # → plan.md (Tasks/Effort, flat case)
+│   │   ├── analyze-components/    # Maps ticket scope to components + dependency graph/critical path
+│   │   ├── breakdown-tasks/       # Slices → atomic tasks with AC + effort
+│   │   ├── create-implementation-plan/ # Synthesizes phases → slices → tasks
+│   │   ├── estimate-development/  # Upfront T-shirt sizing / envelope estimate
+│   │   ├── generate-effort-forecast/   # Mid-build variance + remaining-effort forecast
+│   │   ├── replan/                # Re-break-down on scope/architecture change
 │   │   ├── risk-scan/             # → plan.md (Risks)
+│   │   ├── challenge-plan/        # Adversarial pre-build check
 │   │   ├── progress-tracker/      # → progress.md (every step)
 │   │   ├── fix/                   # Root-cause + patch
 │   │   ├── evolve/                # Amend frozen artifacts
 │   │   ├── reconcile/             # Detect artifact drift
 │   │   ├── handoff/               # Stage gate
+│   │   ├── verify/                # Scoped unit/integration/e2e/review/ready checks
+│   │   ├── challenge-implementation/ # Adversarial pre-verify check
+│   │   ├── criticize/             # Routes to challenge-* by stage
+│   │   ├── generate-test-cases/   # → traceable test-case artifact
+│   │   ├── validate-artifacts/    # Confirms all ticket artifacts are well-formed
+│   │   ├── check-artifact-links/  # Bidirectional cross-artifact links + requirements traceability
+│   │   ├── trace/                 # UP/DOWN link report for one file
+│   │   ├── template/              # Lists/applies vault + Cursor templates
+│   │   ├── consolidate/           # Artifact layout/naming migration
+│   │   ├── caveman/               # Terse output mode
+│   │   ├── log-work/              # Appends per-author daily activity log
+│   │   ├── work-summary/          # Read-only timesheet recap
+│   │   ├── optimize-cursor-artifacts/ # Token-reduction pass on config/skills
+│   │   ├── project-layout/        # Workspace/git conventions, multi-project routing
 │   │   ├── standup/               # Cross-ticket digest
 │   │   └── close-work/            # Finalize and archive
 │   ├── projects/control-center/
@@ -136,7 +168,7 @@ This section walks through each agent in the order it gets used during a ticket 
 
 **Inputs.** The ticket id. Optionally a stage hint.
 
-**Skills used.** `kickoff`, `trace-context`, `handoff`, `reconcile`, `standup`, `close-work`.
+**Skills used.** `kickoff`, `trace-context`, `handoff`, `reconcile`, `standup`, `close-work`. Also owns two entry points: `do` for free-form autonomous dispatch (`/do {request}` — classifies the request into a lane, routes it, and drives an iterate-until-done loop without you naming a stage), and `criticize` for adversarial-review routing (sends a request to `challenge-requirements` / `challenge-plan` / `challenge-implementation` depending on the stage).
 
 **Routing logic** (simplified — full table is in `.claude/agents/harness.md`):
 
@@ -174,18 +206,25 @@ This section walks through each agent in the order it gets used during a ticket 
 
 ### 1. Analyst — GROUND + CLARIFY
 
-**Role.** The only agent that reads code purely for understanding. Produces three artifacts: `analysis.md` (what's there), `requirements.md` (what we need), `decision-log.md` (what we decided), plus the `questions.md` queue.
+**Role.** The only agent that reads code purely for understanding. Produces `analysis.md` (what's there) via GROUND, then drives a granular pre-freeze pipeline through CLARIFY that ends in a frozen `requirements.md`, a `decision-log.md`, and a clean `questions.md` queue.
 
 **When it runs.** Right after `/kickoff`, and again whenever requirements need to be re-validated.
 
 **Inputs.** Ticket id, your intent (the title and any extra context you give).
 
-**Skills used.** `trace-context`, `analyze`, `manage-questions`, `requirements`, `clarify`, `validate(target=requirements)`.
+**Skills used.** `trace-context`, `analyze`, `draft-requirements`, `identify-gaps`, `enrich-requirements`, `iterate-requirements`, `challenge-requirements`, `freeze-requirements`, `extract-stories`, `clarify`, `questions`.
 
 **Protocol:**
 
 1. **GROUND** — runs `analyze`: surveys the relevant code with Glob+Grep, cites file:line for every claim, writes `T013-analysis.md` with Context / Current State / Key Findings / Research / Recommended Path.
-2. **CLARIFY** — drafts `T013-requirements.md` (functional, non-functional, acceptance criteria, out-of-scope). Anything ambiguous goes into `T013-questions.md`. Each resolved question gets a slug entry in `T013-decision-log.md`. When no questions remain blocking, runs `validate(target=requirements)` — if any `block` items, loops back.
+2. **CLARIFY** — drives the requirements pipeline, each stage a separate skill:
+   - `draft-requirements` writes a v0 `T013-requirements-draft.md` from your intent (functional, non-functional, business rules, edge cases — placeholders marked `〈TBD〉`).
+   - `identify-gaps` surfaces missing stakeholders, rules, edge cases, NFRs, data flows, integrations, compliance — plus, in the same pass, cross-checks the draft against existing features in the codebase for overlap/conflict/reuse.
+   - `enrich-requirements` replaces placeholders with concrete facts from the codebase.
+   - `iterate-requirements` applies a round of your feedback and bumps the iteration counter — repeat as needed.
+   - `questions`/`clarify` — anything still ambiguous goes into `T013-questions.md`; each resolved question gets a slug entry in `T013-decision-log.md`.
+   - `challenge-requirements` — adversarial pass for ambiguity/contradictions/untestable criteria. If any `block` items, loops back to the relevant step above.
+   - `freeze-requirements` — final gate; on pass, finalizes `T013-requirements.md` and hands off to `extract-stories`.
 
 **Example interaction:**
 
@@ -204,7 +243,7 @@ This section walks through each agent in the order it gets used during a ticket 
 > Open blockers: 0
 > Gaps: stakeholders=0 rules=0 edge=2 NFR=1 data=0 integration=0 compliance=0
 > Artifacts: T013-analysis.md
-> Next: requirements T013
+> Next: draft-requirements T013
 > ```
 >
 > `T013-analysis.md` now contains:
@@ -223,7 +262,7 @@ This section walks through each agent in the order it gets used during a ticket 
 > - Does the app need a smooth transition animation?
 > ```
 >
-> The analyst surfaces the open questions to you. After you answer, it runs `clarify` to record them in `decision-log.md` and finalizes `requirements.md`.
+> The analyst surfaces the open questions to you. After you answer, it runs `clarify` to record them in `decision-log.md`, folds them back into the draft via `enrich-requirements`, then runs `challenge-requirements` and `freeze-requirements` to finalize `requirements.md`.
 
 **Rule.** Cite file:line for every claim. Never invent unstated requirements. Never write `plan.md` or code.
 
@@ -233,19 +272,21 @@ This section walks through each agent in the order it gets used during a ticket 
 
 **Role.** Turns frozen requirements into an executable plan. Writes `plan.md` with approach, slices, tasks, effort, AC coverage, and risks.
 
-**When it runs.** Only after the analyst has frozen requirements (validate passes with no `block` items).
+**When it runs.** Only after the analyst's `freeze-requirements` gate has passed (no `block` items).
 
 **Inputs.** Ticket id. Reads `T013-requirements.md`, `T013-analysis.md`, `T013-decision-log.md`.
 
-**Skills used.** `trace-context`, `validate(target=requirements)`, `plan`, `risk-scan`, `plan-effort`, `validate(target=plan)`.
+**Skills used.** `trace-context`, `extract-stories`, `plan`, `risk-scan`, `plan-effort`, `challenge-plan` — plus, for multi-layer tickets, `analyze-components` (includes dependency graph), `breakdown-tasks`, `create-implementation-plan`, `estimate-development`, `generate-effort-forecast`, `replan`.
 
 **Protocol:**
 
-1. Re-validate requirements — if blocked, route back to analyst.
-2. `plan` — write Approach + Slices.
-3. `risk-scan` — fill the Risks table (Likelihood × Impact × Mitigation). Reject any high×high without a mitigation.
-4. `plan-effort` — decompose into tasks (1–4 h each), every task gets done-criteria + basis + dependencies.
-5. `validate(target=plan)` — adversarial self-check: every AC mapped to ≥1 task, every effort has a basis, dependencies are real.
+1. Confirm requirements frozen — if not, route back to analyst.
+2. `extract-stories` — pull user stories + acceptance criteria from frozen requirements.
+3. `plan` — write Approach + Slices, then decide structure using a concrete tiebreaker (1 component and ≤6 tasks → single-layer; otherwise multi-layer):
+   - **Single-layer** ticket (like the dark-mode example below): hand off directly to `plan-effort` — decompose into tasks (1–4 h each), every task gets done-criteria + basis + dependencies.
+   - **Multi-layer** ticket (spans several components, e.g. data + service + UI): chain `analyze-components` (maps components and builds the dependency graph/critical path in one pass) → `breakdown-tasks` → `estimate-development` → `create-implementation-plan` instead of the flat `plan-effort` list.
+4. `risk-scan` — fill the Risks table (Likelihood × Impact × Mitigation). Reject any high×high without a mitigation.
+5. `challenge-plan` — adversarial self-check: every AC mapped to ≥1 task, every effort has a basis, dependencies are real. Unresolved critical findings block handoff to builder; re-run after `replan` if scope shifts, and re-check totals with `generate-effort-forecast` mid-build.
 
 **Example interaction:**
 
@@ -355,16 +396,19 @@ This section walks through each agent in the order it gets used during a ticket 
 
 **Inputs.** Ticket id. Reads `T013-requirements.md` (acceptance criteria), `T013-plan.md` (done-criteria), code, test output.
 
-**Skills used.** `trace-context`, `reconcile`, `validate(target=verification)`, `progress-tracker`, `close-work`.
+**Skills used.** `trace-context`, `challenge-implementation`, `generate-test-cases`, `verify`, `check-artifact-links`, `reconcile`, `validate-artifacts`, `progress-tracker`, `close-work`.
 
 **Protocol:**
 
-1. Run the existing test suite. Capture pass/fail with file:line.
-2. For each acceptance criterion, walk the code path — write a row in `T013-verification.md` with Status (PASS / FAIL / PENDING) and Evidence (cited file:line, test name, screenshot link).
-3. Probe edge cases: empty input, large input, concurrent calls, malformed data.
-4. Run `reconcile` to catch artifact drift (plan ↔ progress ↔ verification).
-5. Run `validate(target=verification)` — adversarial check. Fails any green-by-default row.
-6. **Clean** → invoke `close-work`. **Unmet** → log a blocker in `progress.md` and route to **fixer**.
+1. `challenge-implementation` — adversarial pass for plan/trace drift before formal verify; unresolved critical findings block further verify.
+2. `generate-test-cases` — produce or refresh the traceable test-case artifact if it's missing or stale vs. current acceptance criteria; this becomes the test plan verify consumes.
+3. `verify` — run the scoped checks (unit/integration/e2e/review/ready). Capture pass/fail with file:line.
+4. For each acceptance criterion, walk the code path — write a row in `T013-verification.md` with Status (PASS / FAIL / PENDING) and Evidence (cited file:line, test name, screenshot link).
+5. Probe edge cases: empty input, large input, concurrent calls, malformed data.
+6. `check-artifact-links` — confirm the full requirements-to-evidence traceability chain and bidirectional links.
+7. Run `reconcile` to catch artifact drift (plan ↔ progress ↔ verification).
+8. `validate-artifacts` — confirm all ticket artifacts are complete and correctly structured. Fails any green-by-default row.
+9. **Clean** → invoke `close-work`. **Unmet** → log a blocker in `progress.md` and route to **fixer**.
 
 **Example interaction:**
 
@@ -455,9 +499,9 @@ A typical end-to-end sequence for ticket T013:
 You:        /kickoff T013 "Add dark-mode toggle"
 Harness:    seeds ticket → routes to analyst
 Analyst:    GROUND → writes T013-analysis.md
-Analyst:    CLARIFY → drafts T013-requirements.md, asks 2 questions
+Analyst:    CLARIFY → draft-requirements → identify-gaps → asks 2 questions
 You:        answers questions
-Analyst:    records in T013-decision-log.md → freezes requirements
+Analyst:    records in T013-decision-log.md → enrich/challenge → freeze-requirements
 Harness:    handoff CLARIFY→CANONICAL → routes to planner
 Planner:    writes T013-plan.md (2 slices, 6 tasks, 9h, 5/5 AC, 0 high×high risk)
 Harness:    handoff CANONICAL→TEMPLATE → routes to builder
@@ -616,16 +660,29 @@ Freeze gate: open
 Open blockers: 0
 Gaps: stakeholders=0 rules=0 edge=2 NFR=1 data=0 integration=0 compliance=0
 Artifacts: analysis.md
-Next: requirements T013
+Next: draft-requirements T013
 ```
 
-### Step 3 — CLARIFY (requirements + open questions)
+### Step 3 — CLARIFY (requirements pipeline + open questions)
 
 ```
-requirements T013
+draft-requirements T013
 ```
 
-The analyst drafts `requirements.md` with functional, non-functional, and acceptance criteria. If anything is ambiguous, it adds a row to `questions.md` and asks you. Once every question has a `## decision-slug` entry in `decision-log.md`, requirements are **frozen**.
+Requirements aren't a single-shot draft — they move through a granular, gated pipeline, each stage its own skill:
+
+```
+draft-requirements → analyze-context → identify-gaps
+  → enrich-requirements → iterate-requirements → challenge-requirements → freeze-requirements
+  → extract-stories
+```
+
+1. `draft-requirements` writes a v0 `requirements-draft.md` from your intent — functional, non-functional, business rules, edge cases, with `〈TBD〉` placeholders and open questions for every assumption.
+2. `analyze-context` / `identify-gaps` ground the draft in the codebase and surface missing stakeholders, rules, edge cases, NFRs, data flows, integrations, and compliance gaps — the same `identify-gaps` pass also cross-checks the draft against existing features for overlap, conflict, and reuse.
+3. `enrich-requirements` replaces placeholders with concrete facts — never invents data.
+4. Anything ambiguous adds a row to `questions.md` and asks you; `iterate-requirements` folds your answers back into the draft and bumps the iteration counter (repeat as needed).
+5. `challenge-requirements` red-teams the draft (ambiguity, contradictions, untestable criteria) — any `block` finding loops back to the relevant step above.
+6. `freeze-requirements` runs the final gate; on pass it writes `requirements.md` and hands off to `extract-stories`, which pulls user stories with acceptance criteria.
 
 ### Step 4 — CANONICAL (plan)
 
@@ -633,13 +690,14 @@ The analyst drafts `requirements.md` with functional, non-functional, and accept
 planner T013
 ```
 
-The planner reads frozen requirements and writes `plan.md`:
+The planner confirms requirements are frozen, runs `extract-stories` if not already done, then writes `plan.md`:
 - Approach (one paragraph)
 - Slices (vertical, deliverable units)
-- Tasks (numbered, sized 1–4 h, with done-criteria and basis)
-- Effort table
+- Tasks — `plan-effort` for a flat, single-layer ticket, or `analyze-components` (maps components and the dependency graph in one pass) → `breakdown-tasks` → `create-implementation-plan` for a multi-layer one (numbered, sized 1–4 h, with done-criteria and basis)
+- Effort table (optionally sanity-checked with `estimate-development` / `generate-effort-forecast`)
 - AC coverage table (every AC mapped to ≥1 task)
 - Risks table (likelihood × impact, mitigation)
+- `challenge-plan` — adversarial self-check before handoff to builder; unresolved critical findings block build
 
 ```
 ── Planner ──
@@ -684,7 +742,7 @@ After the slice lands, builder runs the `simplify` skill on changed files: dedup
 verifier T013
 ```
 
-The verifier walks every acceptance criterion, runs tests, cites file:line evidence, fills `verification.md`:
+The verifier first runs `challenge-implementation` (adversarial pass for plan/trace drift) and `generate-test-cases` (refresh the test-case artifact if stale), then walks every acceptance criterion, runs the scoped `verify` checks, cites file:line evidence, and fills `verification.md`. `check-artifact-links` confirms the full requirements-to-evidence traceability chain before `validate-artifacts` gives the final all-clear:
 
 ```
 ── Verifier ──
@@ -823,6 +881,31 @@ Don't silently rewrite. Use:
 /standup
 ```
 Active / blocked / at-risk / closed-this-period across the whole map. Useful at the start of a week.
+
+### Tracking questions, bugs, and todos
+Three lightweight, parallel skills — none block a stage unless a question/bug is explicitly `critical`/blocking:
+- `/questions T013` — open-question lifecycle (`open → answered → resolved → closed`) in `T013-questions.md`.
+- `/bugs T013` — QA failures, regressions, UAT defects in `T013-open-bugs.md`.
+- `/todos T013` — misc tasks, chores, follow-ups in `T013-open-todos.md` (or a shared file when not tied to a ticket).
+
+### Terse output
+```
+/caveman lite|full|ultra
+```
+Drops filler and hedging from chat responses (not from code, commits, or artifacts) while keeping paths, ids, and errors exact. `/do` defaults to `lite`. `stop caveman` returns to normal voice.
+
+### Free-form autonomous work
+```
+/do "add a retry to the sync job in my-app"
+```
+Skips manual stage-picking: classifies the request, matches skill(s)/agent(s), executes an iterate-until-done loop, and logs work on completion — still bound by the same 6 gates and ACT/ASK boundary as the rest of the harness.
+
+### Housekeeping skills
+- `/template` — list or apply a vault/Cursor template (the TEMPLATE gate's backing skill).
+- `/consolidate` — migrate a scattered multi-folder ticket to the flat `{TICKET}-{artifact}.md` convention.
+- `/log-work` / `/work-summary` — append to and read back per-author daily activity logs under `knowledge-center/logs/`.
+- `/optimize-cursor-artifacts` — trims verbose agents/skills/rules for token use without changing intent.
+- `project-layout` — the canonical reference for workspace/git conventions and multi-project routing (loaded by agents, not usually invoked directly).
 
 ### Resuming a stale ticket
 ```

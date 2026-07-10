@@ -18,7 +18,7 @@ description: Detect and fix drift between artifacts of one ticket — plan task 
 1. Run all checks; collect mismatches.
 2. For each: classify `auto-fixable` (status/index sync) vs `needs-decision` (criterion lost a task).
 3. Auto-fix in place; log to `progress.md`.
-4. For `needs-decision`: emit a Q via `manage-questions(op=add)` and route to `clarify` or `evolve`.
+4. For `needs-decision`: emit a Q via `questions(op=add)` and route to `clarify` or `evolve`.
 
 # Output
 Diff of fixes applied + list of unresolved drifts.

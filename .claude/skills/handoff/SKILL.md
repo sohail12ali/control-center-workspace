@@ -11,11 +11,11 @@ description: Formal stage transition with a gating checklist. Used by harness be
 | from → to | Required |
 |---|---|
 | GROUND → CLARIFY | analysis.md exists; recommended path stated |
-| CLARIFY → CANONICAL | requirements.md frozen; no `open` Qs blocking; validate(requirements) clean |
-| CANONICAL → TEMPLATE | plan.md has Approach + Tasks; validate(plan) clean; effort sums match |
+| CLARIFY → CANONICAL | requirements.md frozen (`freeze-requirements` passed); no `open`/`critical` Qs blocking; `challenge-requirements` clean |
+| CANONICAL → TEMPLATE | plan.md has Approach + Tasks; `challenge-plan` clean; effort sums match |
 | TEMPLATE → SIMPLIFY | all plan tasks `[x]`; progress.md current |
 | SIMPLIFY → VERIFY | simplify run on changed files; no new TODOs |
-| VERIFY → CLOSE | verification.md filled; every criterion has evidence; validate(verification) clean |
+| VERIFY → CLOSE | verification.md filled; every criterion has evidence; `verify` (scope=ready) and `validate-artifacts` clean |
 
 # Steps
 1. Run the matrix row for `from→to`.
