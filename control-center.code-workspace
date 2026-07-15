@@ -3,6 +3,9 @@
 		{
 			"name": "control center",
 			"path": "."
+		},
+		{
+			"path": "../noble-salah-flutter"
 		}
 	],
 	"settings": {}
