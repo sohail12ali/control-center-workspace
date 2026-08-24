@@ -4,7 +4,7 @@ Shared by `challenge-requirements` and any future stage-specific challenge skill
 
 ## Core principle
 
-**Find, don't fix.** Challenge passes surface issues only. Resolutions happen via the owning stage's repair command (e.g. `clarify` / `iterate-requirements` for requirements, `revise` for plan or implementation).
+**Find, don't fix.** Challenge passes surface issues only. Resolutions happen via the owning stage's repair command (e.g. `clarify` / `requirements iterate` for requirements, `replan` for plan, `fix` / `evolve` for implementation).
 
 Never silently rewrite source artifacts except the designated critique outputs (a draft's own Challenge Findings section, and `{T}-critique-report.md`).
 
@@ -72,7 +72,7 @@ Any skill that challenges a later stage (plan, implementation, etc.) should defi
 
 ## Open questions from critical findings
 
-When a **critical** finding needs a product/design decision, log it to `{T}-questions.md` with a stage matching where the finding was raised (e.g. `requirements`, `plan`) and priority `critical` (requirements) or `high` (later stages).
+When a **critical** finding needs a product/design decision, log it via `console/kanban.py tracker add {T} questions "..." --set type=<stage where raised, e.g. requirements|plan> --set priority=<critical (requirements) | high (later stages)>` (`{T}-questions.toml`).
 
 ---
 
@@ -80,7 +80,7 @@ When a **critical** finding needs a product/design decision, log it to `{T}-ques
 
 | Stage | Log file | Bump iteration? |
 |-------|----------|------------------|
-| Requirements | `{T}-iteration-log.md` | No — only `iterate-requirements` bumps |
+| Requirements | `{T}-iteration-log.md` | No — only `requirements iterate` bumps |
 | Later stages | that stage's own log/progress file, if any | No |
 
 ---

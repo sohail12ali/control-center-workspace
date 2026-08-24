@@ -7,7 +7,7 @@ artifact: task-breakdown
 
 Atomic tasks per slice, with acceptance criteria and effort. Task ID format: `{phase}-{slice}-{task}` (e.g. `2-3-2` = Phase 2, Slice 3, Task 2).
 
-**Produced by:** `breakdown-tasks`. **Consumed by:** `create-implementation-plan`, `generate-effort-forecast`.
+**Produced by:** `breakdown-tasks`. **Consumed by:** `breakdown-tasks` (implementation-plan synthesis step), `estimate(mode=forecast)`.
 
 ---
 

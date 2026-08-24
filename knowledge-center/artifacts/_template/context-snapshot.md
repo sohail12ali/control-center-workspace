@@ -12,8 +12,8 @@ scope: codebase + history
 > What exists today that this ticket touches, reuses, or conflicts with. Frozen facts only — no speculation. Every bullet cites a source.
 
 **Command reference:**
-- **Created/refreshed by:** `analyze-context {ID} [scope]`
-- **Consumed by:** `draft-requirements`, `identify-gaps`, `compare-with-existing`, `enrich-requirements`
+- **Created/refreshed by:** `analyze {ID} [scope]`
+- **Consumed by:** `requirements` (draft/enrich), `challenge-requirements`
 
 **Scopes:** `codebase` (existing code relevant to intent) · `history` (prior tickets / git log / past incidents) · `all` (default)
 
@@ -55,7 +55,7 @@ _One-line restatement of the stakeholder intent this snapshot was gathered for._
 
 ## 5. Preliminary Risks Spotted
 
-(Not exhaustive — `identify-gaps` expands these.)
+(Not exhaustive — `challenge-requirements` (gaps dimension) expands these.)
 
 - _risk — what would have to be true for it to bite_
 
@@ -77,4 +77,4 @@ Record every command / file / grep lookup used to build this snapshot.
 | | Read | | |
 
 ## Links
-- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-questions]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]
+- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]

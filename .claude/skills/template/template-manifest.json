@@ -16,13 +16,12 @@
       "analysis.md",
       "requirements.md",
       "decision-log.md",
-      "questions.md",
       "plan.md",
       "progress.md",
       "verification.md"
     ],
     "namingRule": "{TICKET}-{name}.md",
-    "note": "kickoff copies every _template/{name}.md to artifacts/{TICKET}/{TICKET}-{name}.md, replacing {ID} and {DATE} placeholders."
+    "note": "kickoff copies every _template/{name}.md to artifacts/{TICKET}/{TICKET}-{name}.md, replacing {ID} and {DATE} placeholders, then runs console/kanban.py ticket create to scaffold ticket.toml + empty {TICKET}-{questions,bugs,todos}.toml alongside them (see console/SKILL.md)."
   },
   "skills": {
     "log-work": {
@@ -38,11 +37,11 @@
     "breakdown-tasks": {
       "template": ".claude/skills/breakdown-tasks/template.md"
     },
-    "estimate-development": {
-      "template": ".claude/skills/estimate-development/template.md"
-    },
-    "generate-effort-forecast": {
-      "template": ".claude/skills/generate-effort-forecast/template.md"
+    "estimate": {
+      "template": {
+        "upfront": ".claude/skills/estimate/template-upfront.md",
+        "forecast": ".claude/skills/estimate/template-forecast.md"
+      }
     },
     "challenge-plan": {
       "template": ".claude/skills/challenge-plan/template.md"

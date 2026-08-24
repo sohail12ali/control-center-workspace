@@ -8,7 +8,7 @@ created: "{DATE}"
 
 User stories describe features from the user perspective with clear acceptance criteria and links to implementation tasks.
 
-**Created by:** `extract-stories {ID}` · **Validated by:** `trace-requirements {ID}` · **Verified by:** `check-artifact-links {ID}`
+**Created by:** `requirements {ID} stories` · **Validated by:** `validate-artifacts {ID} links` · **Verified by:** `validate-artifacts {ID} links`
 
 ## Story Format
 
@@ -70,4 +70,4 @@ Related Tasks: {task list}
 | US-1 | | |
 
 ## Links
-- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-user-stories]] · [[{ID}-decision-log]] · [[{ID}-questions]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]
+- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-user-stories]] · [[{ID}-decision-log]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]

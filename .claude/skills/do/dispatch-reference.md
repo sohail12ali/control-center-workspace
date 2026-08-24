@@ -39,7 +39,7 @@ Low-confidence or genuinely ambiguous classification → treat as a blocking unk
 
 For non-trivial investigations only. Skip for simple one-answer lookups — a single targeted read is enough.
 
-1. **Fan-out** — run 2–3 parallel read angles (e.g. grep + artifact read + `trace`).
+1. **Fan-out** — run 2–3 parallel read angles (e.g. grep + artifact read + `validate-artifacts trace`).
 2. **Challenge** — for each finding, actively seek contradicting evidence ("can I find a counter-example or a more recent state that disproves this?"). Drop findings that don't survive; flag contested ones.
 3. **Synthesize** — one answer built only from surviving findings, with `file:line` citations.
 
@@ -51,13 +51,13 @@ Runs when lane = B, or to confirm fuzzy A/C/E. Source of truth: **live skill cat
 
 1. **Extract intent** — action verb(s) + object (e.g. "estimate effort", "map dependencies", "check artifact links").
 2. **Score by `description`** (purpose + trigger), not name alone. Prefer the skill naming the exact artifact/phase.
-3. **Disambiguate by specificity** — e.g. `generate-effort-forecast` (mid-build, task-level) over `estimate-development` (upfront, order-of-magnitude); `check-artifact-links` over `validate-artifacts` when only link integrity is in question. Redirect in description → lane E.
+3. **Disambiguate by specificity** — e.g. `estimate(mode=forecast)` (mid-build, task-level) over `estimate(mode=upfront)` (upfront, order-of-magnitude); `validate-artifacts links` over the default structure scope when only link integrity is in question. Redirect in description → lane E.
 4. **Single vs multi-skill:**
    - **One skill** — default when one description clearly covers the whole request.
    - **Multi-skill** — when any of:
-     - **Independent subtasks** — e.g. `analyze-components` + `risk-scan` for a scope-impact question (parallel load if no dependency).
-     - **Explicit pipeline handoff** — e.g. `freeze-requirements` → `extract-stories`.
-     - **Complementary surfaces** — different layers/artifacts, no overlap (e.g. `generate-test-cases` + `check-artifact-links` for coverage plus traceability).
+     - **Independent subtasks** — e.g. `analyze-components` + `plan risk` for a scope-impact question (parallel load if no dependency).
+     - **Explicit pipeline handoff** — e.g. `requirements freeze` → `requirements stories`.
+     - **Complementary surfaces** — different layers/artifacts, no overlap (e.g. `verify cases` + `validate-artifacts links` for coverage plus traceability).
    - Order: dependencies first; parent reconciles outputs. Cap ~3 unless pipeline specifies more. Do **not** stack skills that solve the same slice — pick the most specific one.
 5. **Confidence gate** — top not a clear win → ASK with the 2 closest skills as closed choices.
 
@@ -70,7 +70,7 @@ Record chosen skill(s), runner-up, reason → `🧭 DISPATCH`.
 After the lane is set, decide the **executor**: inline, or one/more agents spawned via the **Agent** tool. Source of truth is the **live agent catalog** (`available agent types` injected this session) — never invent an agent type.
 
 1. **Inline vs delegate** — execute inline for short, single-surface work that fits the main context. **Delegate to a subagent** when the work is (a) a whole role-phase, (b) read-heavy enough to flood context (broad searches → `Explore`), (c) independently parallelizable, or (d) better isolated (worktree edits that would conflict).
-2. **Pick the agent by role**, most-specific first — use the Step 2c table in [SKILL.md](SKILL.md). Prefer a named role agent (`analyst`/`planner`/`builder`/`verifier`/`fixer`) over `general-purpose`; use `Explore` for read-only sweeps and `Plan` for architecture/plan questions. CCW has no `deployer` role — deploy/publish work is never agent-spawned autonomously; it is a lane B/E skill invocation gated by ASK.
+2. **Pick the agent by role**, most-specific first — use the Step 2c table in [SKILL.md](SKILL.md). Prefer a named role agent (`analyst`/`planner`/`builder`/`verifier`/`fixer`/`deployer`) over `general-purpose`; use `Explore` for read-only sweeps and `Plan` for architecture/plan questions. `deployer` is never auto-triggered by a clean verify — it only runs on an explicit deploy/publish request, still gated by ASK.
 3. **Lane A defers to kickoff** — `/kickoff {ID} full` already orchestrates analyst→planner→builder→verifier with fixer handoffs. Do **not** hand-spawn those roles in parallel to it; let kickoff own the chain.
 4. **Parallel fan-out** — independent subtasks (read angles, layer-by-layer analysis, parallel skill surfaces) → spawn **multiple Agent calls in one message**. Same turn can combine multi-skill load + multi-agent spawn when subtasks don't depend on each other. Cap at loop bounds (handoff/spawn depth ≤2); parent aggregates before next PLAN.
 5. **Spawn threshold (heavy build)** — large multi-file, multi-layer builds → parallel child `builder`s by layer/slice; below that, one agent or inline.
@@ -94,7 +94,7 @@ Record chosen agent(s), parallel-vs-serial, and reason → surfaced in `🌿 SPA
 - **Scale** — >10 files or a risky refactor (harness-standards §9 equivalent).
 - **Wrong tree** — edits outside the intended project root, or into a sub-project's tree when the request was scoped to this workspace's own artifacts (and vice versa).
 
-**⛔ Inherited hard stops (link, don't restate):** unresolved **open**/**blocker** items in `{ID}-questions.md` or a failed harness gate → stop at the affected gate. Canonical: `.claude/skills/kickoff/SKILL.md` + `harness.md`.
+**⛔ Inherited hard stops (link, don't restate):** unresolved **open**/**blocker** items in `{ID}-questions.toml` or a failed harness gate → stop at the affected gate. Canonical: `.claude/skills/kickoff/SKILL.md` + `harness.md`.
 
 **Conflict-split:** a request that both reads and demands a gated action ("fix and push") splits — ACT the fix, ASK before push. Never bundle work past a gate.
 
@@ -117,7 +117,7 @@ EVALUATE→ run the termination table below; if none fire, re-PLAN with the new 
 - **Define DONE first.** The success criterion is set before the first PLAN; if it isn't measurable, that's a blocking unknown → ASK (Step 1), don't loop blindly. A task list (`TaskCreate`) is the loop's persisted state — it survives context compaction and is what a `🔁 RESUME?` reattaches to.
 - **One increment per turn**, then re-evaluate — never batch past a gate or assume the goal is done after a single action when work remains.
 - **Verify before Done.** The `Goal achieved` row requires the criterion's *actual check to have passed this run* (re-build, re-run tests/ACs, re-read the artifact, `verifier` for code) — not an inference from the last action. An unrun or failed check is **not** Done: loop again, or `ASK-GATE` if not autonomously fixable.
-- **Retry-with-memory (N=3).** A failed increment is never re-fired unchanged. On `✗`, note the failing tactic and root cause (in-conversation, or in `{ID}-questions.md` as a `blocker` if the ticket will be resumed later); re-attempt with a **different tactic** up to **3 varied attempts**; before re-planning any increment, check for a prior noted failure on the same goal-step and adopt its learning rather than repeating a known-bad approach. 3rd failure → `escalated` + `ASK-GATE: stuck`.
+- **Retry-with-memory (N=3).** A failed increment is never re-fired unchanged. On `✗`, note the failing tactic and root cause (in-conversation, or in `{ID}-questions.toml` as a `blocker` if the ticket will be resumed later); re-attempt with a **different tactic** up to **3 varied attempts**; before re-planning any increment, check for a prior noted failure on the same goal-step and adopt its learning rather than repeating a known-bad approach. 3rd failure → `escalated` + `ASK-GATE: stuck`.
 - **Delegated loops nest**: lane A's `/kickoff` and a spawned agent each run their own inner loop; `/do`'s outer loop tracks only handoff/spawn depth and overall termination.
 - **Recurring/watch tasks** (poll a build, retry until green, run every N min) are driven by the **`/loop`** skill — the canonical recurring driver. Use `/loop {interval} /do {task}` for a **fixed cadence**, or invoke `/loop` with **no interval** to let the model **self-pace** (it schedules its own next wake). Reach for a one-off scheduled wakeup only for a single deferred re-entry that isn't a real loop. Schedule the next wake and exit cleanly; do **not** sleep-spin inside one turn. Each wake is one self-contained `/do` increment that re-checks the success criterion and terminates when met.
 
@@ -127,7 +127,7 @@ After every tool call or file write, capture the micro-feedback line and evaluat
 |---|---|
 | Goal achieved **and success criterion re-verified this run** (build green, ACs pass, artifact re-read, answer cited) | **Done** → Step 4 |
 | Increment failed **3 varied attempts** (or same tool+args fired twice, no change) | **Stuck** → emit `ASK-GATE: stuck` — the 3 tactics tried, what didn't change |
-| Context window >80% estimated consumed | **Checkpoint** → note current state as `blocker: context-budget` (in `{ID}-questions.md` if ticketed), emit `ASK-GATE: budget — N steps remain unfinished`, then Step 4 with partial log |
+| Context window >80% estimated consumed | **Checkpoint** → note current state as `blocker: context-budget` (in `{ID}-questions.toml` if ticketed), emit `ASK-GATE: budget — N steps remain unfinished`, then Step 4 with partial log |
 | Hard-stop hit (open blocker, failed gate) | **Abort** → persist progress, list deferred actions, Step 4 |
 | Handoff depth > 2 | **Escalate** → surface to user, do not recurse further |
 

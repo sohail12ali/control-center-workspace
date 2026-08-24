@@ -1,187 +1,79 @@
 ---
 name: log-work
-description: Appends work or milestone lines to per-author daily log files (knowledge-center/logs/YYYY-MM/YYYY-MM-DD.{slug}.md). Auto-creates author.local from Git. Use at agent session end, /log-work, or after kickoff/close-work/deploy.
+description: Per-author daily activity log, both directions — append work/milestone lines to knowledge-center/logs/YYYY-MM/YYYY-MM-DD.{slug}.md (auto-creates author.local from Git; use at session end, /log-work, or after kickoff/close-work/deploy), and mode summary produces the read-only business timesheet by ticket (≥8 h/day, author-filtered unless --all) that /work-summary used to provide. The console's Work tab reads these same files.
 ---
 
 # /log-work
 
-Write to **`knowledge-center/logs/{YYYY-MM}/{YYYY-MM-DD}.{author_slug}.md`** — **one file per author per calendar day**. No shared daily file. Two append types:
+**When:** After meaningful work ships (session end, task/slice done, kickoff, close-work, deploy) — append. `/log-work summary [date|range] [--all]` — timesheet recap (read-only).
+**Path (both modes):** `knowledge-center/logs/{YYYY-MM}/{YYYY-MM-DD}.{author_slug}.md` — one file per author per day. Never `log.md`, `log/`, or `activity/`; never mix harness-internal logs into these files. The console Work tab reads them as-is.
 
-| Type | Where in file | When |
-|------|---------------|------|
-| **Work** (default) | `## Work` → bullet | Timesheet line after a slice, deploy, or analysis pass |
-| **Milestone** | After `# {date}`, before `## Work` — `## [{date}] …` block | Kickoff, close-work, harness stage transitions |
+## Author resolution (both modes)
 
-**Tone:** Write like a human developer on a timesheet — what feature was built, what bug was fixed, what analysis concluded, what test or build passed. Concrete outcomes only (≤120 chars). **Never** log which skill ran, which agent was invoked, or process steps (iterations, freeze gates, artifact maps).
+Run `.claude/skills/log-work/scripts/Ensure-LogAuthor.ps1` (returns `{Name, Slug, Path}`): 1) `--author=`/`--slug=` overrides · 2) `knowledge-center/logs/author.local` (line 1 name, line 2 slug; gitignored) · 3) auto-create from `git config user.name` · 4) `$env:USERNAME` · 5) git email local-part. Slug: lowercase, spaces/underscores → hyphen, strip non `[a-z0-9-]`. Never overwrite an existing `author.local`.
 
-## Setup (auto on first use)
-
-`knowledge-center/logs/author.local` is **gitignored** and **auto-created** on first append from `git config user.name` (see Author resolution). Manual override: create `author.local` with two lines — display name, slug.
-
-**Helper:** `.claude/skills/log-work/scripts/Ensure-LogAuthor.ps1` — returns `{ Name, Slug, Path }` JSON; creates `author.local` only when missing.
-
-## Layout
-
-```text
-knowledge-center/logs/
-  author.local            # gitignored — auto-created
-  YYYY-MM/
-    YYYY-MM-DD.{slug}.md  # per-author daily log (milestones + work)
-```
-
-**Do not use:** `log.md`, `log/`, `activity/`. Internal harness operation logs (if any) belong in their own path — never mix them into per-author daily files.
-
-## Categories
-
-Every work line must include one category tag. Valid values:
-
-| Tag | Use for |
-|-----|---------|
-| `[Development]` | Code, data layer, builds, services |
-| `[Code Review]` | Review passes, feedback applied |
-| `[Testing]` | UAT, unit tests, smoke tests |
-| `[Design]` | Architecture, requirements, spec |
-| `[Documentation]` | Docs, artifact updates, reference material |
-| `[Internal]` | Harness setup, config, tooling |
-
-## Example daily file
-
-```markdown
----
-date: 2026-05-25
-author: Jane Doe
-author_slug: jane-doe
-type: daily-log
----
-
-# 2026-05-25
-
-## [2026-05-25] T042 kickoff rate-limit middleware
-
-- Ticket T042
-- Rate-limit middleware scope for the public API
-
-## Work
-
-- **T042** [Development] ~3.5h Rate-limit middleware added with sliding window and build green
-```
-
-## Human voice — good vs bad
-
-| Bad (process / meta) | Good (outcome) |
-|----------------------|----------------|
-| `Authored log-sync skill` | `Added sync workflow for release notes into changelog` |
-| `@analyst pre-freeze pass 10 FRs 13 BRs` | `T042 rate-limit middleware requirements drafted and frozen` |
-| `Persisted artifact map to vault` | `T038 partial-export bug documented with repro steps` |
-| `Iteration 2 applied 6 stakeholder answers` | `T042 rate-limit scope updated per stakeholder feedback` |
-| `Full analyst pass context snapshot gap analysis` | `T042 rate-limit gaps identified and documented` |
-
-## Invoke without the slash command
-
-| User says | Action |
-|-----------|--------|
-| Log my work on T042 | `/log-work T042` + distill from chat |
-| Record 4h on T038 today | `/log-work T038 ~4h …` |
-
-## Usage
+## Append — work line (default)
 
 ```
-/log-work T042
 /log-work T042 ~3.5h Rate-limit middleware and sliding window for the public API.
-/log-work Internal ~1h Daily log per-author file layout and author auto-provision.
+/log-work Internal ~1h Daily log per-author file layout.
 /log-work 2026-05-26 T038 Closed clubbing analysis for same-day exports.
-/log-work --author="Jane Doe" T036 ~2h Priority rules for the queue worker.
-/log-work --author="Jane Doe" --slug=jane-doe T036 ~2h Priority rules for the queue worker.
-
-/log-work --milestone "T042 | kickoff — rate-limit middleware"
-/log-work --milestone "T038 | closed — export redirect" --date=2026-05-23
+/log-work --milestone "T042 | kickoff — rate-limit middleware" [--date=…]
 ```
 
-| Parameter | Notes |
-|-----------|-------|
-| `{T}` or text | **Work:** ticket id (`T042`, `Internal`) + business line |
-| `~{N}h` | Optional hour hint on work bullets |
-| `YYYY-MM-DD` | Date (default **today**) |
-| `--author=` | Override display name |
-| `--slug=` | Override author slug (default derived from name) |
-| `--milestone "title"` | Insert `## [{date}] {title}` block + bullets from chat (not a work bullet) |
-| `--date=` | With `--milestone` only |
+1. Resolve date (default today), author, path. If the file is missing, create via `scripts/New-ActivityDay.ps1` (uses `template.md` here).
+2. Append under `## Work` (create the section at end of file if absent): `- **{T}** [{Category}] ~{h} {text}` (`~h` optional; no nested author headings — author lives in frontmatter).
+3. **Category (required):** `[Development]` code/builds/services · `[Code Review]` · `[Testing]` · `[Design]` architecture/requirements/spec · `[Documentation]` · `[Internal]` harness/config/tooling.
+4. **Text rules (enforced):** human outcome only, ≤120 chars — feature built, bug fixed, analysis result, test/build outcome. Forbidden: agent names, skill/command names, process meta (iterations, freeze gates, artifact maps), phase-slice-task IDs, semicolons/colons/apostrophes/middle dots/em dashes; join items with "and". Example — bad: `@analyst pre-freeze pass 10 FRs`; good: `T042 rate-limit middleware requirements drafted and frozen`.
+5. **Idempotent:** same slug + ticket + ≥70% similar text today → skip. Prefer `scripts/Append-WorkLog.ps1` for atomic append; no git, no artifact deep-reads.
 
-## Author resolution
+## Append — milestone block (`--milestone`, kickoff/close)
 
-Run **`.claude/skills/log-work/scripts/Ensure-LogAuthor.ps1`** (or equivalent logic) before append:
-
-| Priority | Source |
-|----------|--------|
-| 1 | `--author=` (+ derive slug unless `--slug=`) |
-| 2 | `knowledge-center/logs/author.local` — line 1 = display name, line 2 = slug |
-| 3 | **Auto-create:** `git config user.name` (repo-local then global); derive slug; **write** `author.local` (two lines, UTF-8) |
-| 4 | `$env:USERNAME` or `$env:USER` + derived slug; write `author.local` |
-| 5 | `git config user.email` — local-part as slug, email as display; write `author.local` |
-
-**Slug derivation:** lowercase; trim; spaces/underscores → single hyphen; strip non `[a-z0-9-]`; collapse repeated hyphens. Example: `Jane Doe` → `jane-doe`. Store slug in `author.local` line 2 so renames stay stable.
-
-**Never overwrite** an existing `author.local`.
-
-## Append procedure
-
-### Work line (default)
-
-1. Resolve **date**, **author name**, and **author slug** (Ensure-LogAuthor).
-2. Path: `knowledge-center/logs/{YYYY-MM}/{YYYY-MM-DD}.{author_slug}.md`.
-3. If missing: run `.claude/skills/log-work/scripts/New-ActivityDay.ps1` (uses `template.md` in this skill folder).
-4. Ensure **`## Work`** section exists at end of file; append bullet directly under it (no nested `## {Author}` — author is in frontmatter only).
-5. Append: `- **{T}** [{Category}] ~{h} {text}` (`~h` optional). Category required — pick from the Categories table above.
-6. **Text rules (enforced):**
-   - **Human outcome only** — feature built, bug fixed, analysis result, test or build outcome
-   - **Forbidden:** agent names (`@analyst`, `@builder`), skill/command names (`/log-work`, `kickoff`, `pre-freeze`), process meta (`iteration N`, `freeze gate`, `artifact map`, `vault intake`, `distill from chat`)
-   - No task IDs in text (no phase-slice-task patterns) — plain business descriptions only
-   - No semicolons, colons, apostrophes, middle dots, or em dashes in the text content
-   - Join multiple items with "and" instead of semicolons
-7. **Idempotent:** same author slug + ticket + ≥70% similar text in today's author file → skip.
-8. **Prefer** `.claude/skills/log-work/scripts/Append-WorkLog.ps1` for atomic append; otherwise one file write — no git, no artifact deep-reads.
-
-### Milestone block (`--milestone` or agent kickoff/close)
-
-1. Same per-author path: `knowledge-center/logs/{YYYY-MM}/{YYYY-MM-DD}.{author_slug}.md`; create if missing.
-2. Insert **after** `# {date}` line, **before** first `## Work` or at top of body if no Work yet.
-3. Format:
-
+Insert after `# {date}`, before the first `## Work`, newest first:
 ```markdown
-## [YYYY-MM-DD] {title}
+## [YYYY-MM-DD] {T} | opened — {title}
 
 - Ticket {T}
-- (2 to 5 bullets, scope, business tone, no colons or semicolons)
+- (2-5 bullets, business tone, no colons/semicolons)
+```
+`kickoff` → title `{T} | opened`; `close-work` → `{T} | closed` + closure summary. One work line or one milestone per agent pass unless asked for more. List `log-work` in the completion Skills footer when appended.
+
+## mode: summary (timesheet recap — read-only)
+
+```
+/log-work summary [YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD | {T}] [--all] [--author="…"] [--hours=8] [--append]
 ```
 
-4. **Newest milestone first** (prepend below `# {date}`).
-5. **`kickoff`:** title `{T} | opened` + bullets from scaffold steps.
-6. **`close-work`:** title `{T} | closed` + closure summary from the ticket's summary artifact.
+1. Glob `logs/{YYYY-MM}/{YYYY-MM-DD}.*.md` per date. Default: current author's file only; `--all`: one timesheet block per `author_slug`.
+2. Read `## Work` bullets (primary) and milestone blocks (context/fallback). Merge order: chat → per-author file(s) → light artifacts. No git unless all empty. Ask at most once.
+3. Hours per author per day: user overrides → weight 1-5 → proportional split → round 0.25h → sum ≥ `--hours` (default 8.0). `--append` backfills missing lines via the append mode.
+4. Output — post only the timesheet block(s), no search narration:
 
-## Speed (required)
+```
+Work summary
+Date 2026-05-21
+Author Jane Doe
+Total hours 8.0
 
-- **One** work line or **one** milestone block per agent pass unless user asks for more.
-- Do not read deep artifact folders or architecture notes just to write the log.
-- List **`log-work`** in completion **Skills:** when appended.
+Development
 
-## Agent-end
+Ticket T036
+Hours 3.0
+- Rate-limit middleware implemented with sliding window and unit tests build green
 
-| Agent / skill | Append |
-|---------------|--------|
-| **kickoff** | Milestone `opened` + `/log-work {T}` work line |
-| **analyst** | Work line after kickoff, freeze, major requirements pass — **outcome only**, not agent name |
-| **builder** | Work line after a task or slice — **what shipped**, not task id |
-| **fixer** | Milestone on close + work line |
-| **verifier / close-work** | Work line after verification passes or the ticket closes |
+Testing
+
+Ticket T036
+Hours 1.5
+- UAT smoke test for export flow complete
+
+Total hours 8.0
+```
+
+Body rules: group by category (hours descending), then one block per ticket (hours descending); dash bullets, one plain sentence each, no decorative symbols (no middle dots, em dashes, asterisks, hashes, semicolons, colons, apostrophes, pipes), no task IDs, "and" joins items; each bullet shows what shipped; end with Total hours ≥ the floor and equal to the sum.
 
 ## Related
 
-| Command / doc | Purpose |
-|---------------|---------|
-| `/work-summary` | Timesheet from per-author daily files |
-| `project-layout/SKILL.md` | `logs/` layout and append rules |
-| `.claude/skills/log-work/scripts/Ensure-LogAuthor.ps1` | Resolve or auto-create author.local |
-| `.claude/skills/log-work/scripts/New-ActivityDay.ps1` | Create empty per-author daily file |
-| `.claude/skills/log-work/scripts/Append-WorkLog.ps1` | Atomic work-line append |
+`scripts/Ensure-LogAuthor.ps1` · `scripts/New-ActivityDay.ps1` · `scripts/Append-WorkLog.ps1` · `template.md` (this folder) · console Work tab (reads these files) · `progress-tracker` (per-ticket status lives there, not here).
 
-**Version:** 1.0 — ported from lc-wms-cursor-config, genericized for control-center-workspace
+**Version:** 2.0 — absorbed work-summary as mode summary | **Updated:** 2026-08-23

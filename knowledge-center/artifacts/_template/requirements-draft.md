@@ -10,17 +10,17 @@ last_updated: "{DATE}"
 
 # Requirements Draft: {ID}
 
-> Working requirements document. **Not frozen.** Expect revisions each iteration until `freeze-requirements {ID}` passes.
+> Working requirements document. **Not frozen.** Expect revisions each iteration until `requirements {ID} freeze` passes.
 
 **Command reference:**
-- **Created by:** `draft-requirements {ID}`
-- **Grounded by:** `analyze-context {ID}` → writes `{ID}-context-snapshot.md`
-- **Gaps surfaced by:** `identify-gaps {ID}`
+- **Created by:** `requirements {ID} draft`
+- **Grounded by:** `analyze {ID}` → writes `{ID}-context-snapshot.md`
+- **Gaps surfaced by:** `challenge-requirements {ID} (gaps dimension)`
 - **Challenged by:** `challenge-requirements {ID}` (adds ⚠ markers below)
-- **Enriched by:** `enrich-requirements {ID} [source]`
-- **Cross-checked by:** `compare-with-existing {ID}`
-- **Iterated by:** `iterate-requirements {ID} "feedback"`
-- **Frozen by:** `freeze-requirements {ID}` → produces `{ID}-requirements-summary.md`
+- **Enriched by:** `requirements {ID} enrich [source]`
+- **Cross-checked by:** `challenge-requirements {ID} (overlap/conflict/reuse dimension)`
+- **Iterated by:** `requirements {ID} iterate "feedback"`
+- **Frozen by:** `requirements {ID} freeze` → produces `{ID}-requirements-summary.md`
 
 **Legend:** `⚠` challenge finding · `〈TBD〉` placeholder awaiting enrichment or stakeholder answer · `[[link]]` grounded fact with source
 
@@ -118,7 +118,7 @@ Number each `BR-{n}`. Each is atomic.
 
 ## 9. Interactions with Existing Features
 
-(Populated by `compare-with-existing {ID}`)
+(Populated by `challenge-requirements {ID} (overlap/conflict/reuse dimension)`)
 
 | Existing feature | Interaction | Risk | Action |
 |---|---|---|---|
@@ -136,7 +136,7 @@ Number each `BR-{n}`. Each is atomic.
 
 ## 12. Open Questions (mirrored)
 
-Mirrored from [[{ID}-questions]]. Blocker questions must be resolved before freeze.
+Mirrored from `{ID}-questions.toml` (`console/kanban.py tracker list {ID} questions`). Blocker questions must be resolved before freeze.
 
 - Q{n}: _text_ — status: open | answered | resolved
 
@@ -154,7 +154,7 @@ Current iteration: **{iteration}**
 
 ---
 
-## Freeze Checklist (run by `freeze-requirements`)
+## Freeze Checklist (run by `requirements freeze`)
 
 - [ ] All `〈TBD〉` placeholders replaced or explicitly deferred
 - [ ] All ⚠ findings resolved or explicitly accepted with rationale
@@ -164,7 +164,7 @@ Current iteration: **{iteration}**
 - [ ] Every new/changed entity has a canonical reference or creation plan
 - [ ] Out-of-scope list is non-empty
 - [ ] Stakeholder sign-off recorded
-- [ ] `{ID}-requirements-summary.md` generated for `extract-stories` consumption
+- [ ] `{ID}-requirements-summary.md` generated for `requirements stories` consumption
 
 ## Links
-- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-questions]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]
+- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]

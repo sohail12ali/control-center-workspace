@@ -1,0 +1,25 @@
+# Disabled by default in the generic template. A fork enables this and edits
+# lanes/labels for its own migration workflow without touching any code.
+[board]
+kind    = "migrations"
+label   = "Migrations"
+enabled = false
+
+[[lanes]]
+id = "mapped"
+label = "Mapped"
+
+[[lanes]]
+id = "in-progress"
+label = "In Progress"
+
+[[lanes]]
+id = "parity"
+label = "Parity Check"
+
+[[lanes]]
+id = "done"
+label = "Done"
+
+[card]
+show_trackers = ["questions", "bugs", "todos"]

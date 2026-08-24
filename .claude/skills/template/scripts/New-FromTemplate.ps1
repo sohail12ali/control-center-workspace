@@ -4,7 +4,7 @@
   Renders a markdown template to a target path with placeholder substitution.
 
 .EXAMPLE
-  .\.claude\skills\template\scripts\New-FromTemplate.ps1 -TemplatePath 'knowledge-center/artifacts/_template/questions.md' -OutputPath 'knowledge-center/artifacts/T042/T042-questions.md' -Ticket 'T042'
+  .\.claude\skills\template\scripts\New-FromTemplate.ps1 -TemplatePath 'knowledge-center/artifacts/_template/decision-log.md' -OutputPath 'knowledge-center/artifacts/T042/T042-decision-log.md' -Ticket 'T042'
 #>
 [CmdletBinding()]
 param(

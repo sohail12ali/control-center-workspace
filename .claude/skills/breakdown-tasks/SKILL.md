@@ -1,31 +1,31 @@
 ---
 name: breakdown-tasks
-description: Break slices into atomic tasks with acceptance criteria and effort estimates, one component per task. Use after analyze-components (which includes the dependency graph) when a slice needs finer-grained tasks than plan-effort's flat list provides — typically for multi-layer tickets.
+description: Multi-layer decomposition — break slices into atomic tasks with acceptance criteria and effort (one component per task), then synthesize requirements + components + tasks into the master phases → slices → tasks implementation plan. Use after analyze-components for tickets needing finer-grained tasks than plan's flat list; produces {T}-task-breakdown.md and {T}-implementation-plan.md, ready for challenge-plan.
 ---
 
-# Inputs
-- `id` (required): ticket id
-- `slice` (optional): specific slice; processes all slices if omitted
+# /breakdown-tasks
 
-# Steps
-1. For each slice in `plan.md` (or the named slice):
-   - Break into 2-5 atomic tasks, ideally one component per task.
-   - Task ID format: `{phase}-{slice}-{task}` (e.g. `2-3-2`).
-   - Each task: description, component(s) it builds (link to `{T}-components.md`), requirement/AC it satisfies, testable acceptance criteria, effort estimate (0.5/1/1.5/2/3h — no micro-tasks, no mega-tasks), status, blocking notes.
-2. Write `knowledge-center/artifacts/{T}/{T}-task-breakdown.md` from `template.md`: per-phase sections, per-slice subsections, per-task rows.
-3. Add an effort summary table (by phase, by total).
-4. Cross-check totals against `{T}-effort-estimate.md` if it exists (from `estimate-development`); flag if task totals exceed the estimate's upper bound by >10%.
+**When:** Multi-layer planning chain, after `analyze-components`, when a slice needs finer-grained tasks than `plan`'s flat list.
+**Order:** analyze-components → **breakdown-tasks** → challenge-plan, then build. Called by `plan`; `estimate(mode=forecast)` follows once tasks have actuals.
+**Inputs:** `id` (required); `slice` (optional — all slices if omitted).
 
-# Output
-Path to `{T}-task-breakdown.md`, task count, total effort hours. Ready for `create-implementation-plan`.
+## Steps — breakdown
 
-# Rules
-- Task IDs must follow `{phase}-{slice}-{task}`.
-- Every task links to ≥1 component and ≥1 requirement/acceptance criterion.
-- Acceptance criteria must be testable/observable, not vague.
-- Note blocking dependencies between tasks explicitly (e.g. "depends on 1b-1").
-- If totals diverge materially from `{T}-effort-estimate.md`, don't silently accept — flag via `replan`.
-- Template: `template.md` in this folder.
+1. For each slice in `plan.md` (or the named slice), break into 2-5 atomic tasks, ideally one component per task. Task ID `{phase}-{slice}-{task}` (e.g. `2-3-2`). Each task: description, component(s) built (link to `{T}-components.md`), requirement/AC satisfied, testable acceptance criteria, effort (0.5/1/1.5/2/3h — no micro- or mega-tasks), status, explicit blocking notes ("depends on 1b-1").
+2. Write `{T}-task-breakdown.md` from `template.md` (this folder): per-phase sections, per-slice subsections, per-task rows, plus an effort summary table (by phase, total).
+3. Cross-check totals against `{T}-effort-estimate.md` if it exists; task totals >10% over its upper bound → don't silently accept, flag via `replan`.
 
-**Delegates to:** none.
-**Called by:** `plan` (after `analyze-components`). **Follow-on:** `create-implementation-plan`, `generate-effort-forecast`.
+## Steps — implementation plan (synthesis)
+
+4. Synthesize `requirements.md` (scope, AC) + `plan.md` (Approach/Slices/Risks) + `{T}-components.md` + `{T}-task-breakdown.md` into `{T}-implementation-plan.md`: ticket summary; phases with human-readable descriptions (not table-only); per-phase slices; per-slice tasks with file-touch lists matching actual repo paths (never pad or guess); per level: effort, acceptance criteria, components, requirements satisfied.
+5. Cross-link every level bidirectionally: requirements ↔ plan, components ↔ tasks, tasks ↔ implementation-plan.
+6. Confirm implementation-plan effort totals equal the breakdown's summary — reconcile before finishing, no silent drift.
+
+## Output
+
+- `{T}-task-breakdown.md` — every task links to ≥1 component and ≥1 requirement/AC; effort summary table.
+- `{T}-implementation-plan.md` — the master plan artifact (components/tasks are inputs, not duplicates).
+
+Report paths, phase/slice/task counts, total effort. Ready for `challenge-plan`, then build.
+
+**Version:** 2.0 — absorbed create-implementation-plan as the synthesis step | **Updated:** 2026-08-23

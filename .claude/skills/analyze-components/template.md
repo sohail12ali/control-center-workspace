@@ -7,7 +7,7 @@ artifact: components
 
 Tracks every component this ticket touches, its dependencies, and its build status. Layers below are examples — rename/remove/add to match what this project actually has (e.g. a CLI-only project might have just "core logic" and "CLI layer").
 
-**Produced by:** `analyze-components` (which also builds the dependency graph below in the same pass). **Consumed by:** `breakdown-tasks`, `create-implementation-plan`.
+**Produced by:** `analyze-components` (which also builds the dependency graph below in the same pass). **Consumed by:** `breakdown-tasks` (tasks + implementation-plan synthesis).
 
 ---
 

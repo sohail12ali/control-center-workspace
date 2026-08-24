@@ -5,24 +5,21 @@
     "artifacts": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center\\artifacts",
     "memory": "D:\\Workspace\\ai-workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
   },
-  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer"],
+  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer", "deployer"],
   "skills": [
     "harness-standards", "do", "caveman",
-    "kickoff", "trace-context", "template", "consolidate",
+    "kickoff", "trace-context", "template", "consolidate", "console",
     "analyze", "clarify", "questions",
-    "draft-requirements", "analyze-context", "identify-gaps",
-    "enrich-requirements", "iterate-requirements", "challenge-requirements", "freeze-requirements",
-    "extract-stories",
+    "requirements", "challenge-requirements",
     "tech-select",
-    "plan", "plan-effort", "risk-scan", "analyze-components",
-    "breakdown-tasks", "create-implementation-plan", "estimate-development",
-    "generate-effort-forecast", "replan", "challenge-plan",
+    "plan", "analyze-components", "breakdown-tasks", "estimate",
+    "replan", "challenge-plan",
     "progress-tracker", "fix", "evolve",
     "verify", "challenge-implementation", "criticize", "validate-artifacts",
-    "check-artifact-links", "trace", "generate-test-cases",
     "bugs", "todos",
-    "reconcile", "handoff", "standup", "close-work",
-    "log-work", "work-summary", "optimize-cursor-artifacts", "project-layout",
+    "reconcile", "handoff", "standup", "close-work", "invoke-project-skill",
+    "ticket-draft", "investigate",
+    "log-work", "optimize-cursor-artifacts", "project-layout",
     "simplify", "review", "security-review",
     "update-config", "keybindings-help", "loop", "schedule", "claude-api"
   ],
@@ -36,6 +33,21 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/session-context.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/console-refresh.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/console-refresh.sh"
           }
         ]
       }

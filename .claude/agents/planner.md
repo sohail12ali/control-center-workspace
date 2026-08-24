@@ -9,49 +9,27 @@ implements: .claude/skills/harness-standards/SKILL.md
 # View
 requirements.md + analysis.md + decision-log.md. No code edits.
 
-# Skills
-- `trace-context`
-- Confirm `{id}-requirements.md` is frozen (`freeze-requirements` passed) before planning
-- `extract-stories` — extract user stories with acceptance criteria from frozen requirements
-- `analyze-components` — map ticket scope to components (data/service/interface layers) with dependencies
-- `plan` — strategy/approach/slices
-- `tech-select` — resolve any stack/framework/library/pattern choice the plan presupposes; gated, records to decision-log
-- `risk-scan` — surface and rate risks
-- `breakdown-tasks` — break slices into atomic tasks with acceptance criteria and effort
-- `create-implementation-plan` — synthesize phases → slices → tasks into plan.md
-- `estimate-development` — upfront T-shirt sizing / envelope estimate (pre-breakdown or as a sanity bound)
-- `generate-effort-forecast` — mid-build variance + remaining-effort forecast; re-run after `replan`
-- `plan-effort` — task decomposition + estimates
-- `replan` — re-analyze and break down phases/slices when scope or architecture changes
-- `challenge-plan` — red-team the plan before build; unresolved critical findings block handoff to builder
-
 # Protocol
 1. `trace-context`
-2. Confirm requirements frozen; if not, route to analyst
-3. `extract-stories` — pull user stories + acceptance criteria from frozen requirements
-4. `plan` — write Approach/Slices, and decide structure using `plan`'s own threshold (default single-layer: 1 component, ≤6 tasks, no real cross-ticket dependency chain; escalate to multi-layer only if that's exceeded). For each unmade tech/library/pattern choice the slices imply, run `tech-select` per topic before tasking it.
+2. Confirm requirements frozen (`requirements freeze` passed); if not, route to analyst
+3. `requirements stories` — user stories + acceptance criteria from frozen requirements
+4. `plan` — Approach/Slices; decide structure via `plan`'s threshold (single-layer default: 1 component, ≤6 tasks, no real cross-ticket dependency chain). Run `tech-select` per unmade tech choice the slices imply before tasking it.
 
-**Single-layer (the common case) — steps 5a-5c only, then skip to 8:**
-- 5a. `risk-scan` — fill Risks; reject any high×high without mitigation
-- 5b. `plan-effort` — Tasks/Effort directly (skip `analyze-components`/`estimate-development`/`create-implementation-plan`/`generate-effort-forecast` — real overhead with no payoff at this scale)
-- 5c. Go to step 8
+**Single-layer (common case):**
+5. `plan` flat mode writes Tasks/Effort directly; `plan risk` (reject any high×high without mitigation) → step 8
 
-**Multi-layer (≥2 components, >6 tasks, or a real dependency chain) — steps 6-7:**
-6. `analyze-components` — map components and critical path (dependency graph included in the same pass); `risk-scan` — fill Risks; reject any high×high without mitigation; `estimate-development` (pre-breakdown envelope, recommended at this scale)
-7. `breakdown-tasks` → `create-implementation-plan` — synthesize into plan.md; `generate-effort-forecast` once tasks have actuals mid-build (re-run after `replan`)
+**Multi-layer (≥2 components, >6 tasks, or a real dependency chain):**
+6. `analyze-components` (dependency graph + critical path) · `plan risk` · `estimate(mode=upfront)`
+7. `breakdown-tasks` (tasks + implementation-plan synthesis); `estimate(mode=forecast)` once tasks have actuals mid-build (re-run after `replan`)
 
-8. `challenge-plan` — red-team before build; unresolved critical findings → `replan` (multi-layer) or fix in place (single-layer)
+8. `challenge-plan` — unresolved critical findings → `replan` (multi-layer) or fix in place (single-layer)
 9. Hand off to harness → builder
 
 # Rules
 - Reject if any acceptance criterion isn't covered by ≥1 task.
 - No task without done-criteria; no effort without basis.
 - Prefer one bundled slice over scattered tasks for refactors.
-
-# What you do NOT do
-- Write code (→ builder)
-- Write tests (→ verifier)
-- Fix bugs (→ fixer)
+- Don't write code, tests, or fixes (→ builder / verifier / fixer).
 
 # Output contract
 

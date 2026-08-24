@@ -29,7 +29,7 @@ last_updated: "{DATE}"
 
 | Date | Gap ID | Action | Owner |
 |------|--------|--------|-------|
-| {DATE} | — | Initial pass from `identify-gaps` | — |
+| {DATE} | — | Initial pass from `challenge-requirements` (gaps) | — |
 
 ---
 
@@ -79,4 +79,4 @@ last_updated: "{DATE}"
 | — | — | — | — |
 
 ## Links
-- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-questions]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]
+- [[{ID}-summary]] · [[{ID}-analysis]] · [[{ID}-requirements-draft]] · [[{ID}-context-snapshot]] · [[{ID}-gap-analysis]] · [[{ID}-iteration-log]] · [[{ID}-decision-log]] · [[{ID}-plan]] · [[{ID}-progress]] · [[{ID}-verification]]

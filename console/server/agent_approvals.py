@@ -1,0 +1,152 @@
+"""Ask a human before a gated tool runs.
+
+The Claude CLI has no way to show its own permission prompt in a headless
+stream-json session, so the only supported seam is a **PreToolUse hook**: a
+command the CLI runs before the tool, whose JSON verdict it obeys. The hook
+blocks for as long as it likes, and its ``permissionDecision: "deny"`` becomes
+the tool's result. That gives the shape here:
+
+    CLI  --spawns-->  hooks/pretooluse.py  --POST-->  console  --SSE-->  browser
+                              ^                                            |
+                              +---------- verdict <----- POST -------------+
+
+The hook process, the parked HTTP thread, and the agent's tool call all block
+together on one ``threading.Event`` per question; the browser's answer (or the
+timeout) releases all three. Every failure mode is fail-closed: no live
+session, unreachable console, malformed payload, or silence all become a deny
+with a reason the agent can read.
+
+Which tools are gated is config, not code — ``gated_tools`` on the backend row
+in ``console/config/agents.toml``. An empty list means no settings file is
+written and the CLI runs exactly as before this module existed.
+"""
+
+import json
+import os
+import sys
+import threading
+import uuid
+
+DEFAULT_TIMEOUT = 300  # seconds a question may wait before it is denied
+
+HOOK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "hooks", "pretooluse.py")
+
+
+class Pending:
+    __slots__ = ("key", "chat", "tool", "tool_input", "tool_use_id",
+                 "event", "decision", "reason", "by")
+
+    def __init__(self, key, chat, tool, tool_input, tool_use_id):
+        self.key = key
+        self.chat = chat
+        self.tool = tool
+        self.tool_input = tool_input
+        self.tool_use_id = tool_use_id
+        self.event = threading.Event()
+        self.decision = ""
+        self.reason = ""
+        self.by = ""
+
+
+class Approvals:
+    """Registry of questions in flight. One per server process."""
+
+    def __init__(self):
+        self._pending = {}
+        self._session_allow = {}  # chat id -> set of tool names allowed for it
+        self._lock = threading.Lock()
+
+    def request(self, chat, tool, tool_input, tool_use_id, publish,
+                timeout=DEFAULT_TIMEOUT):
+        """Park the calling thread until a human answers or the timeout hits.
+
+        Returns ``(decision, reason)`` where decision is ``allow`` or ``deny``.
+        """
+        with self._lock:
+            if tool in self._session_allow.get(chat, ()):
+                return "allow", "%s was allowed for this chat" % tool
+
+        key = uuid.uuid4().hex[:12]
+        p = Pending(key, chat, tool, tool_input, tool_use_id)
+        with self._lock:
+            self._pending[key] = p
+
+        publish({"type": "approval.request", "key": key, "tool": tool,
+                 "input": tool_input, "tool_use_id": tool_use_id,
+                 "timeout": timeout})
+
+        answered = p.event.wait(timeout=timeout)
+        with self._lock:
+            self._pending.pop(key, None)
+
+        if not answered:
+            publish({"type": "approval.decided", "key": key, "tool": tool,
+                     "decision": "deny", "by": "timeout"})
+            return "deny", (
+                "No one answered within %ds, so the console denied this %s "
+                "call. Nothing was run. Ask again if it is still needed."
+                % (timeout, tool))
+        if p.decision == "deny":
+            return "deny", p.reason or "A human denied this %s call." % tool
+        return "allow", p.reason or ""
+
+    def decide(self, key, decision, by="", reason=""):
+        """Answer a pending question: ``allow``, ``allow-session`` or ``deny``."""
+        if decision not in ("allow", "allow-session", "deny"):
+            raise ValueError("unknown decision %r" % decision)
+        with self._lock:
+            p = self._pending.get(key)
+            if p is None:
+                raise ValueError(
+                    "that approval is no longer pending — it may have timed "
+                    "out or already been answered")
+            if decision == "allow-session":
+                self._session_allow.setdefault(p.chat, set()).add(p.tool)
+            p.decision = "allow" if decision.startswith("allow") else "deny"
+            p.reason = reason
+            p.by = by
+        p.event.set()
+        return p
+
+    def forget(self, chat):
+        """Deny everything a chat still has in flight, so its hook processes
+        are not left blocked when the session ends."""
+        with self._lock:
+            stale = [p for p in self._pending.values() if p.chat == chat]
+            self._session_allow.pop(chat, None)
+        for p in stale:
+            p.decision = "deny"
+            p.reason = "the session ended before this was answered"
+            p.event.set()
+
+
+REGISTRY = Approvals()
+
+
+def settings_payload(hook_cmd, gated, timeout=DEFAULT_TIMEOUT):
+    """The ``--settings`` JSON that installs the gate for one session."""
+    return {
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "^(" + "|".join(gated) + ")$",
+                "hooks": [{"type": "command", "command": hook_cmd,
+                           "timeout": timeout + 30}],
+            }],
+        },
+    }
+
+
+def write_settings(chats_dir, sid, gated, port, timeout=DEFAULT_TIMEOUT):
+    """Write ``{sid}.settings.json`` next to the transcript; returns its path.
+
+    The hook command re-runs this exact interpreter so nothing about PATH is
+    assumed, and both paths are quoted because the CLI runs the command
+    through a shell.
+    """
+    hook_cmd = '"%s" "%s" --chat %s --port %d' % (
+        sys.executable, HOOK_SCRIPT, sid, int(port))
+    path = os.path.join(chats_dir, sid + ".settings.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(settings_payload(hook_cmd, gated, timeout), f, indent=2)
+    return path

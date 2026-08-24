@@ -1,92 +1,59 @@
 ---
 name: todos
-description: Capture and track miscellaneous tasks, chores, ideas, and follow-ups — optionally tied to a ticket {T}, or fully general. Lighter-weight than bugs and questions; no blocking semantics.
+description: Capture and track miscellaneous tasks, chores, ideas, and follow-ups — optionally tied to a ticket {T}, or fully general. Lighter-weight than bugs and questions; no blocking semantics. Every todo is a CLI-mutated TOML tracker, ticket-scoped ones under the ticket and general ones under the reserved `_shared` scope, so a todo can be moved in or out of a ticket at any time.
 ---
 
 # /todo
 
 **Usage:**
 ```
-/todo "description"                          # quick-capture a general todo (no ticket)
-/todo {T} "description"                      # quick-capture a todo scoped to ticket {T}
-/todo add "description" --type=chore --due=2026-07-10 --priority=medium
-/todo {T} add "description" --type=idea
-/todos                                        # list all general todos
-/todos {T}                                    # list todos for ticket {T}
-/todo doing TD-3                              # mark TD-3 in progress
-/todo done TD-3                               # mark TD-3 done
-/todo snooze TD-3 2026-07-15                  # push due date, keep open
-/todo drop TD-3 "reason"                      # won't do
-/todo promote TD-3 {T}                        # escalate a general todo into a ticket-scoped one (or into bugs/questions)
+/todo "description"                 # quick-capture general (no ticket)
+/todo {T} "description"             # quick-capture scoped to {T}
+/todo [{T}] add "description" --type=chore --due=2026-07-10 --priority=medium
+/todos [{T}]                        # list general / ticket todos
+/todo doing|done TD-3
+/todo snooze TD-3 2026-07-15        # push due date, keep open
+/todo drop TD-3 "reason"
+/todo promote TD-3 {T}              # move general → ticket (or into bugs/questions)
 ```
 
-**When:** Anytime — a stray thought mid-build, a "come back to this" during review, a chore not worth its own ticket, an idea worth not losing. If it turns out to block progress or need an audit trail, `promote` it to `bugs` or `questions` instead.
+**When:** Anytime — stray thought, "come back to this", chore, idea. If it starts blocking or needs an audit trail, `promote` to `bugs`/`questions`.
 
-**Canonical storage:**
-- Ticket-scoped: `knowledge-center/artifacts/{T}/{T}-open-todos.md`
-- General (no ticket): `knowledge-center/artifacts/_shared/general-todos.md`
-
-Both use the same layout; the general file omits `{T}` from frontmatter and title.
+**Storage (one write path for every todo):**
+- Ticket-scoped: `knowledge-center/artifacts/{T}/{T}-todos.toml`
+- General: `knowledge-center/artifacts/_shared/_shared-todos.toml` (reserved `_shared` scope)
+Both mutated only via `console/kanban.py` (or the console's Todos tab), never hand-edited (see `consolidate/SKILL.md`). Moving a todo in/out of a ticket is a plain remove+add between trackers.
 
 ## Steps
 
-1. **Resolve target** — if `{T}` is given (or inferable from current context), use the ticket file; otherwise use the general file. Never guess a ticket silently — ask if ambiguous.
-2. **Load** the target file if present; scaffold a minimal frontmatter block if missing.
-3. **Tidy** — silently clean up spelling/grammar and reword the raw input into one clear sentence. Preserve code identifiers and paths verbatim. Skip silently if already clean.
-4. **Enrich (light touch)** — one quick, targeted lookup (grep the vault and, if a file/ticket is named or inferable, the relevant codebase). Add at most one `Context:` line if something relevant turns up; skip if nothing surfaces quickly — never block capture on this.
-5. **Quick-capture** — append a `TD-{n}` entry with `type=task`, `priority=medium`, no due date.
-6. **add** — same as quick-capture but accepts `--type`, `--priority`, `--due` flags.
-7. **list** — group by status (open, doing, done, dropped); flag overdue items (due date past, status not done/dropped).
-8. **doing / done / drop** — update status; `drop` requires a one-line reason.
-9. **snooze** — update the due date only; status unchanged.
-10. **promote** — move the entry into `{T}-open-todos.md` (from general), or hand off to `bugs add` / `questions add` if it turns out to be a defect or a decision needing an audit trail. Remove from the source file and link to the new location.
+1. **Resolve scope** — `{T}` given or inferable → ticket tracker; else `_shared`. Never guess a ticket silently — ask if ambiguous.
+2. **Tidy** — silently reword the raw input into one clear sentence; preserve code identifiers/paths verbatim.
+3. **Enrich (light)** — one quick grep of vault/codebase; add at most one `Context:` line; never block capture on this.
+4. **Quick-capture / add** — `python console/kanban.py tracker add {T|_shared} todos "..." [--set context="..." --set type=... --set priority=... --set due=...]` (defaults: `type=task`, `priority=medium`, no due).
+5. **list** — `python console/kanban.py tracker list {T|_shared} todos`; group by status; flag overdue (due past, not done/dropped).
+6. **doing / done / drop** — `python console/kanban.py tracker update {T|_shared} todos {id} --set status=<doing|done|dropped> [--set done_on=<today>] [--set drop_reason="..."]`. `drop` requires a one-line reason.
+7. **snooze** — `--set due=<date>` only; status unchanged.
+8. **promote** — between trackers: remove from source + add to target (the Todos tab's per-row move control does this; id is per-file, so it changes). To `bugs`/`questions`: `tracker add {T} <bugs|questions> "..."`, then set the source todo `dropped` with `--set drop_reason="promoted to <D-n|Qn>"`. Link the new location from the old.
 
-## Type taxonomy
+## Types
 
-| Type | Meaning |
-|------|---------|
-| task | Default — a discrete piece of work |
-| idea | Worth exploring later, not yet scoped |
-| chore | Small maintenance/cleanup |
-| investigate | Needs a spike before it's actionable |
-| follow-up | Circle back after something else lands (link it) |
-| reminder | Time-boxed nudge, often has a due date |
+task (default) · idea · chore · investigate · follow-up · reminder.
 
-Default type when unspecified: **task**.
+## Priority / status
 
-## Priority (soft, not a release gate)
+`low · medium (default) · high` — a sort key only, never blocks. Status: `open → doing → done`, or `→ dropped` (with reason).
 
-`low` · `medium` (default) · `high`. Priority is a sort key only — it never blocks anything. If an item needs real blocking semantics, `promote` it to `questions` (decision) or `bugs` (defect).
+## Item fields (both trackers)
 
-## Status lifecycle
-
-```
-open -> doing -> done
-  |
-  -> dropped   (won't do — record reason)
-```
-
-## Entry format
-
-```markdown
-#### TD-{n} [{type}] {short description} — {status}
-
-- **Captured:** {YYYY-MM-DD} | **By:** {user|agent} | **Priority:** {low|medium|high}
-- **Due:** {YYYY-MM-DD or —} | **Links:** {optional file/artifact references}
-- **Context:** {optional one-line auto-enrichment}
-- **Done:** {YYYY-MM-DD} — {optional closing note}
-```
-
-Minimal quick-capture form: `#### TD-{n} [task] {short description} — open`. Omit `Due`/`Links`/`Context` when not applicable.
+`id` (`TD-{n}`), `status`, `type`, `priority`, `captured_by`, `captured_on`, `due`, `context`, `text`, `done_on`, `drop_reason`.
 
 ## Rules
 
-- Not a harness gate — todos never block a stage. If an item starts blocking progress, `promote` it into `questions` or `bugs`, which do gate.
-- `{T}-open-todos.md` lives at the ticket root next to the ticket's other artifacts; `_shared/general-todos.md` for anything not tied to a ticket.
-- `{short description}` is the tidied wording, not the raw input — most todos stay one line plus captured metadata.
+- Todos never gate a stage — blocking items get promoted to `questions`/`bugs`.
+- `{T}-todos.toml` lives at the ticket root next to `ticket.toml`; `_shared/_shared-todos.toml` holds everything else.
+- `text` is the tidied wording, not the raw input.
+- Never hand-edit any todos tracker — always via `console/kanban.py` or the Todos tab.
 
-## Delegates to
+**Delegates to:** planner/builder (todo becomes real ticket work → fold into `{T}-plan.md`), `console` (storage/CLI), `bugs`, `questions`.
 
-Planner/builder (when a todo becomes real ticket work — fold it into `{T}-plan.md` at that point rather than duplicating it), `bugs` (when a todo turns out to be a defect), `questions` (when a todo turns out to be an undecided design/scope question).
-
-**Version:** 1.0-generic | **Updated:** 2026-07-04
+**Version:** 2.1 — lean rewrite; general todos fully on the `_shared` CLI path | **Updated:** 2026-08-23

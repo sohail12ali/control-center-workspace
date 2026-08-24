@@ -1,0 +1,21 @@
+# Disabled by default in the generic template. A fork enables this and edits
+# lanes/labels for its own release workflow without touching any code.
+[board]
+kind    = "releases"
+label   = "Releases"
+enabled = false
+
+[[lanes]]
+id = "staged"
+label = "Staged"
+
+[[lanes]]
+id = "approved"
+label = "Approved"
+
+[[lanes]]
+id = "shipped"
+label = "Shipped"
+
+[card]
+show_trackers = []

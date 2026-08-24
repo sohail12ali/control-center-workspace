@@ -1,41 +1,30 @@
 ---
 name: kickoff
-description: Seed a new ticket. Creates artifacts/{ID}/ from _template, renames each file to {ID}-{name}.md, fills frontmatter (id, date, owner), and adds a row to artifact-map.md under Active. Use at the start of any new work item, before any analysis or planning.
+description: Seed a new ticket. Creates artifacts/{ID}/ from _template, renames each file to {ID}-{name}.md, fills frontmatter (id, date, owner), scaffolds ticket.toml + empty tracker .toml files via the console CLI, and adds a row to artifact-map.md under Active. Use at the start of any new work item, before any analysis or planning.
 ---
 
+# /kickoff
+
+**When:** Start of any new work item, before analysis or planning. Ticket-draft hands off here once id + scope are decided.
+
 # Inputs
-- `id` (required): ticket id (e.g. `T013`, `FEATURE-AUTH`)
-- `title` (required): short title
-- `owner` (optional): defaults to git user
-- `slice`, `phase` (optional): for nested hierarchy
+- `id` (required) · `title` (required) · `owner` (optional, defaults to git user)
+- `kind` (optional, default `tickets`): console board kind (`tickets` | `investigations`; `migrations`/`releases` if a fork enabled them)
+- `slice`, `phase` (optional): nested hierarchy
 
 # Steps
-1. Resolve target dir: `knowledge-center/artifacts/{id}[/{slice}[/{phase}]]/`. Refuse if it exists.
-2. For every file `{name}.md` in `knowledge-center/artifacts/_template/`, render it to `{target}/{id}-{name}.md` via `template`'s `.claude/skills/template/scripts/New-FromTemplate.ps1` (or the equivalent copy+substitute mechanism it documents) — don't hand-roll placeholder substitution here, that mechanism is owned by `template`. Example: `summary.md` → `T013-summary.md`. This one call already replaces `{ID}`/`{DATE}`/`{TITLE}`/`{Title}` per `template`'s placeholder table.
-3. In `{id}-summary.md`: confirm `{Title}` and `{DATE}` resolved, and set Owner (not a generic placeholder `template` substitutes).
-4. Append to `knowledge-center/artifact-map.md` under `## Active`:
-   `- [[{id}-summary]] — {title} — Open — {owner}`
+1. Resolve target dir `knowledge-center/artifacts/{id}[/{slice}[/{phase}]]/`. Refuse if it exists.
+2. Render every `{name}.md` in `knowledge-center/artifacts/_template/` to `{target}/{id}-{name}.md` via `template`'s `New-FromTemplate.ps1` (owns `{ID}`/`{DATE}`/`{TITLE}`/`{Title}` substitution — don't hand-roll it).
+3. In `{id}-summary.md`: confirm placeholders resolved; set Owner.
+4. Console sync: `python console/kanban.py ticket create {id} --title "{title}" --kind {kind} --owner {owner}` — writes `ticket.toml` (lane `open`) + empty `{id}-questions.toml`/`{id}-bugs.toml`/`{id}-todos.toml`. If `console/` is absent, skip and note it — don't fail kickoff.
+5. Append to `knowledge-center/artifact-map.md` under `## Active`: `- [[{id}-summary]] — {title} — Open — {owner}`
 
 # Output
-Path of created `{id}-summary.md`. Caller decides next stage (usually `analyze`).
-
-# Filename convention
-Every artifact file inside a ticket directory MUST be named `{ID}-{artifact}.md`. This makes filenames globally unique across the vault, so Obsidian wikilinks like `[[T013-summary]]` resolve unambiguously from anywhere — wiki pages, the artifact-map, sibling tickets, or other artifacts.
-
-Standard files seeded:
-- `{id}-summary.md`
-- `{id}-analysis.md`
-- `{id}-requirements.md`
-- `{id}-decision-log.md`
-- `{id}-questions.md`
-- `{id}-plan.md`
-- `{id}-progress.md`
-- `{id}-verification.md`
-
-# Linking convention
-Every artifact ends with a `## Links` block listing every sibling artifact in the ticket. This forms a fully-connected cluster in Obsidian's graph view — each ticket renders as a tight node group. The template already includes this block; do not strip or shorten it.
+Path of `{id}-summary.md`. Standard files seeded: `{id}-{summary,analysis,requirements,decision-log,plan,progress,verification}.md` + `ticket.toml` and tracker TOMLs (via `console`, not `_template/`). Caller decides next stage (usually `analyze`).
 
 # Rules
-- Never overwrite an existing artifact directory.
-- Don't create code yet; this is artifact scaffolding only.
-- Always rename files on copy — `_template/summary.md` becomes `{id}-summary.md`, not `summary.md` inside the new directory.
+- Never overwrite an existing artifact directory. Artifact scaffolding only — no code.
+- Always rename on copy: `_template/summary.md` → `{id}-summary.md`, never bare `summary.md`.
+- Filename + `## Links` block conventions are canonical in `consolidate/SKILL.md` — templates already include the Links block; don't strip it.
+
+**Version:** 1.1 — lean rewrite | **Updated:** 2026-08-23

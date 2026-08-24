@@ -5,39 +5,34 @@ description: List and apply ticket-artifact and harness templates (Harness Stage
 
 # /template
 
-## Usage
+**When:** `/template` | `/template list` (show locations) | `/template use <name>` (path + placeholders for one template). Any new file type must derive from a template — stop if none exists.
 
-```
-/template
-/template list
-/template use <name>
-```
+## Steps
 
-- **`/template`** or **`list`** — Show available template locations and how to pick one.
-- **`use <name>`** — Open/copy guidance for a specific template (by short name below).
+1. **CANONICAL** — use the on-disk template: `knowledge-center/artifacts/_template/*.md` for ticket artifacts; fall back to a skill-owned `.claude/skills/<id>/template.md`. Never invent template bodies in chat. Registry: `.claude/skills/template/template-manifest.json`.
+2. **Render** — single file via `.claude/skills/template/scripts/New-FromTemplate.ps1`; full new-ticket scaffold via `kickoff` (copies every `_template/*.md` in one pass).
+3. Ticket-scoped markdown: set frontmatter (`tags`, `status`, `ticket`) and link `{TICKET}` per the filename/linking convention (`consolidate`).
+4. Replace every placeholder occurrence — never leave one raw in a saved file:
 
-## Canonical locations (SSOT)
+| Placeholder | Value |
+|---|---|
+| `{ID}` / `{T}` | ticket id |
+| `{DATE}` / `{YYYY-MM-DD}` | today |
+| `{TITLE}` / `{Title}` | ticket title |
 
-Ticket artifact shapes live under `knowledge-center/artifacts/_template/` — one file per artifact type, copied and renamed to `{TICKET}-{name}.md` by `kickoff`. Render single files with `.claude/skills/template/scripts/New-FromTemplate.ps1`. Registry: `.claude/skills/template/template-manifest.json`.
+## Locations
 
-| Area | Path | Notes |
-|------|------|-------|
-| Ticket artifact templates | `knowledge-center/artifacts/_template/*.md` | `summary`, `analysis`, `requirements`, `decision-log`, `questions`, `plan`, `progress`, `verification` |
-| Skill-owned workflow templates | `.claude/skills/<id>/template.md` | Skills that need a bespoke file shape (e.g. `log-work`) keep their own template next to the skill |
-| Render script | `.claude/skills/template/scripts/New-FromTemplate.ps1` | Placeholder substitution for a single file |
-| Full ticket scaffold | `kickoff` skill | Copies every `_template/*.md` into a new ticket directory in one pass — see `.claude/skills/kickoff/SKILL.md` |
+| Area | Path |
+|---|---|
+| Ticket artifact templates | `knowledge-center/artifacts/_template/*.md` — `summary`, `analysis`, `requirements`, `decision-log`, `questions`, `plan`, `progress`, `verification` |
+| Skill-owned workflow templates | `.claude/skills/<id>/template.md` |
+| Render script | `.claude/skills/template/scripts/New-FromTemplate.ps1` |
+| Registry | `.claude/skills/template/template-manifest.json` |
+| Full ticket scaffold | `kickoff` skill |
 
-## Behavior
+## Output
 
-1. **CANONICAL** — Prefer the ticket-artifact template on disk (`knowledge-center/artifacts/_template/*.md`); fall back to a skill-owned `template.md` for skills that define their own artifact shape. Do not invent template bodies in chat.
-2. **Render** — Use `.claude/skills/template/scripts/New-FromTemplate.ps1` for single files; use the `kickoff` skill for a full new-ticket tree.
-3. When creating **ticket-scoped** markdown, set frontmatter (`tags`, `status`, `ticket`) and link `{TICKET}` per the filename and linking convention in `CLAUDE.md`.
-4. Placeholders: `{ID}` / `{T}` (ticket id), `{DATE}` / `{YYYY-MM-DD}` (today), `{TITLE}` / `{Title}` (ticket title). Replace all occurrences — never leave a raw placeholder in a saved file.
-5. Output: markdown table of paths + one-line purpose; if `use` requested, print the template path and key placeholders to replace.
-
-## Harness
-
-End with:
+Chat: markdown table of template paths + one-line purpose; for `use <name>`, print the template path and key placeholders. Files created from templates follow `{TICKET}-{name}.md` naming per `consolidate`. End with:
 
 ```text
 ── Harness stages ──
@@ -48,10 +43,4 @@ SIMPLIFY: single template per artifact type
 TRACE: output paths for created files + links to `{TICKET}` hub if applicable
 ```
 
-## Related
-
-| Command / doc | Purpose |
-|----------------|---------|
-| `kickoff` | Full ticket scaffold from `_template/` |
-| `consolidate` | Canonical naming, wikilink, and structure rules for artifacts once created |
-| `.claude/skills/template/template-manifest.json` | Registry of template paths and scripts |
+**Version:** 1.1 — lean rewrite | **Updated:** 2026-08-23

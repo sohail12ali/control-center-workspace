@@ -10,6 +10,8 @@
       "Bash(pip3 *)",
       "Bash(bash .claude/hooks/session-context.sh)",
       "Bash(chmod +x .claude/hooks/session-context.sh)",
+      "Bash(bash .claude/hooks/console-refresh.sh)",
+      "Bash(chmod +x .claude/hooks/console-refresh.sh)",
       "Bash(mkdir -p *)",
       "Bash(touch *)",
       "Bash(grep *)",

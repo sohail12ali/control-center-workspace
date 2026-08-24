@@ -1,75 +1,48 @@
 ---
 name: verify
-description: Verifies implementation against acceptance criteria via scoped unit, integration, e2e, review, or ready checks. Use with /verify {T} [scope] after slice implementation or before merge.
+description: Verifies implementation against acceptance criteria via scoped unit, integration, e2e, review, or ready checks, and designs the traceable test-case artifact (scope cases — unit/integration/e2e/negative/boundary/edge with AC traceability) that the other scopes consume. Use /verify {T} [scope] after slice implementation, before merge, or with scope cases after requirements freeze to produce {T}-test-cases.md.
 ---
 
 # /verify
 
-**Usage:** `/verify [T] [scope]` — `[T]` ticket id (optional if context clear), `[scope]` one of the scopes below.
-
-**When:** After slice implementation, to validate quality and completeness before merge.
-
-**Choosing the default scope (per `harness-standards` test policy — don't run a full/slow suite for routine work):**
-- No `[scope]` given, routine mid-slice check → default to **`review`** only (fastest reliable signal for "did this change look right").
-- No `[scope]` given, but the calling context is a merge/release gate (e.g. `close-work`'s pre-close check, or the user says "ready to merge") → default to **`ready`**.
-- `[scope]` explicitly given → always honor it, including `all`.
-- Never silently escalate to `all` "to be safe" — that's the harness-standards violation this rule exists to prevent. If unsure which the caller wants, ask instead of guessing wide.
-
-**Test plan input:** unit/integration/e2e scopes verify against `{T}-test-cases.md` (produced by `generate-test-cases`). If absent or stale vs. current acceptance criteria, generate it first, then verify against case IDs `TC-U/I/E/N/B/X-*`.
+**When:** After slice implementation or before merge — `/verify {T} [scope]`; `scope cases` runs after requirements freeze (before/during verification) to produce the test plan.
+**Order:** `challenge-implementation` first (adversarial pass); unit/integration/e2e scopes verify against `{T}-test-cases.md` (scope `cases` produces it).
+**Scope default** (per `harness-standards` test policy): routine mid-slice → `review`; merge/release gate → `ready`; explicit scope always honored, incl. `all`. Never silently escalate to `all`.
 
 ## Scopes
 
 | Scope | Checks |
 |-------|--------|
+| `cases` | Design the test-case artifact from requirements/stories (below) |
 | `unit` | Isolated component/unit logic per the test-case artifact |
 | `integration` | Component-to-component interactions, real dependencies |
 | `e2e` | Full user/consumer workflows end-to-end |
 | `review` | Structured code review by changed surface, severity-graded |
 | `ready` | Pre-release audit — all of the above plus security and performance |
-| `all` | Run all applicable scopes in sequence — explicit only, see default-scope rule above |
+| `all` | All applicable scopes in sequence — explicit only |
 
-**Delegate test-framework specifics to the target project's own CLAUDE.md.** This skill does not run any particular build tool or test runner by name — resolve the target project (via `invoke-project-skill` when the ticket is in a nested repo), then:
-- Run the project's own build command.
-- Run the project's own test suite for the scope in play (unit/integration/e2e as the project defines it).
-- Follow the project's own test-naming and structure conventions — do not impose a naming scheme this skill invented.
+## Steps — run scopes (unit/integration/e2e/review/ready/all)
 
-## Steps
+1. Resolve `{T}`; for unit/integration/e2e/ready load `{T}-test-cases.md` — run scope `cases` first if missing or stale vs current AC; verify against `TC-U/I/E/N/B/X-*` ids.
+2. Resolve the target project; read its own CLAUDE.md for actual build/test commands — never invent a framework/runner/naming convention. Nested repo → `invoke-project-skill`.
+3. Run the project's own build + test suite for the requested scope; capture pass/fail counts and coverage if reported.
+4. `review`/`ready`: walk changed files by surface (data / API-service / UI / config — whatever the diff touches); grade issues by severity.
+5. Classify every failure — **fixable**: typos, missing guards, style within policy, missing selector the AC implies, assertion mismatch after documented behavior change, artifact link/metadata drift. **Blocker**: spec vs implementation conflict, architecture/contract change needing sign-off, green-forcing change, scope creep/missing requirements.
+6. Write `{T}-verification.md` — criterion, status, evidence. Emit the output contract.
 
-1. Resolve `{T}` and load `{T}-test-cases.md` if the scope needs it (unit/integration/e2e/ready). Generate it first if missing or stale.
-2. Resolve the target project. If nested, delegate the build/test invocation via `invoke-project-skill`; read that project's CLAUDE.md for its actual commands first.
-3. Run the checks for the requested scope; capture pass/fail counts and coverage if the project's tooling reports it.
-4. For `review`/`ready`, walk changed files by surface (data layer, API/service layer, UI, config/scripts — whatever surfaces the diff touches) and grade issues by severity.
-5. Classify every failure or finding as **fixable** or **blocker** (see table below).
-6. Write results to `{T}-verification.md` (or the ticket's equivalent) — criterion, status, evidence.
-7. Emit the output contract.
+## Steps — scope cases (design the test plan)
 
-## Fixable vs blocker
+1. Load `{T}-requirements.md` (AC) and, if present, `{T}-user-stories.md` / `{T}-components.md` for surfaces in scope (`/verify {T} cases [slice]`).
+2. Per AC derive ≥1 positive case, plus negative/boundary/edge where the criterion implies validation, thresholds, concurrency, or real-world consequences (money, access control, irreversible actions). Layer: unit `TC-U-*` · integration `TC-I-*` · e2e `TC-E-*` · negative/boundary/edge `TC-N/B/X-*`.
+3. Traceability matrix: every AC → case ids; uncovered ACs flagged as gaps, never dropped silently.
+4. Test data: seed/cleanup per scenario; reference reusable setup scripts by path; scripts dev-only, idempotent, never destructive against real/shared data.
+5. Write from `.claude/skills/verify/test-cases-template.md` to `{T}-test-cases.md`; link from `{T}-summary.md`/artifact map.
 
-| Fixable | Blocker |
-|---------|---------|
-| Typos, missing null/guard checks, style/lint within policy | Spec vs. implementation conflict |
-| Missing selector/identifier the AC already implies | Architecture or contract change needing sign-off |
-| Test assertion mismatch after an intentional, documented behavior change | Change made only to force an unrelated check green |
-| Artifact link or metadata drift | Scope creep or missing requirements |
-
-**Fixable** → handoff to `fix` (small, bounded surface; re-run the failing check after).
-**Blocker** → report with a mitigation plan; escalate to the planning stage (`evolve` / re-plan) — do not weaken a check to pass it.
-
-## Verification checklist
-
-```
-Verification: {T} — scope: {scope}
-- [ ] Acceptance criteria traced to code or tests
-- [ ] Project's own build command run (touched surfaces)
-- [ ] Project's own test suite run for the requested scope
-- [ ] Code review surfaces covered (data / API / UI / security as applicable)
-- [ ] Each failure classified: fixable vs blocker
-- [ ] Fixable → fix handoff; re-run failed checks
-- [ ] Blocker → user + evolve/re-plan; no check weakened to pass
-- [ ] Output contract filled
-```
+**Case ids:** `TC-{layer}-{NNN}` (`U/I/E/N/B/X`), sequential within layer, stable — append on revision, never renumber. Each row: scenario, expected result, type, priority (P0 must pass before merge / P1 / P2), test-data ref. Unit rows follow the target project's own test-naming convention.
 
 ## Output
+
+`{T}-verification.md` (criterion / status / evidence) — or `{T}-test-cases.md` for scope cases.
 
 ```
 ── Verification: {T} ──
@@ -80,14 +53,19 @@ Quality: {grade A/B/C/F}
 Blockers: {list, or none}
 Status: done | needs review | blocked
 ```
+```
+── Verification (cases): {T} ──
+Cases:    U {n} · I {n} · E {n} · N/B/X {n}  (total {N})
+Coverage: {mapped}/{total} ACs ({%}) | gaps: {list | none}
+Priority: P0 {n} · P1 {n} · P2 {n}
+Next:     verify {T} {scope}
+```
 
-## Rules
+## Gate
 
-- Required checks (when in scope): unit validates acceptance criteria, integration validates component interactions, e2e validates user workflows if a UI/consumer surface is in scope, review validates standards.
-- All blockers resolved before merge.
-- Fixable issues may be auto-repaired only within a small, bounded file set — otherwise route to the planning stage.
-- Never invent or assume a stack's test framework, naming convention, or tooling — read the target project's own CLAUDE.md / testing docs first.
+- All blockers resolved before merge. Fixable → `fix` (bounded file set, re-run the failing check); blocker → mitigation plan, escalate to `evolve`/re-plan — never weaken a check to pass it.
+- Static-only verification must be labeled as such (code verified, feature not exercised).
 
-**Delegates to:** `fix` (fixable issues), planner/`evolve` (blockers), `invoke-project-skill` (nested repo build/test), `generate-test-cases` (missing/stale test plan).
+**Delegates to:** `fix`, planner/`evolve`, `invoke-project-skill`.
 
-**Version:** 2.0-generic | **Updated:** 2026-07-04
+**Version:** 3.0 — absorbed generate-test-cases as scope cases | **Updated:** 2026-08-23

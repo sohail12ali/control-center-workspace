@@ -23,12 +23,13 @@ wiki/                                      — durable knowledge
 | `{T}-analysis.md` | GROUND, CLARIFY |
 | `{T}-requirements.md` | CLARIFY, CANONICAL |
 | `{T}-decision-log.md` | CLARIFY, CANONICAL |
-| `{T}-questions.md` | CLARIFY |
+| `{T}-questions.toml` | CLARIFY |
 | `{T}-plan.md` | CANONICAL, TEMPLATE |
 | `{T}-progress.md` | TEMPLATE → VERIFY |
 | `{T}-verification.md` | VERIFY |
+| `ticket.toml` | All — console/CLI state |
 
-Optional: `{T}-architecture.md`, `{T}-risks.md`, `{T}-notes.md`, `{T}-test-plan.md`
+Optional: `{T}-architecture.md`, `{T}-risks.md`, `{T}-notes.md`, `{T}-test-plan.md`, `{T}-bugs.toml`, `{T}-todos.toml`, `{T}-release.md`, `ticket-scripts/`
 
 ## Filename convention
 

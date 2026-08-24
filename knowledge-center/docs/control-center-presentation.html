@@ -1,0 +1,379 @@
+<title>Control Center Field Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f5f7f8;
+    --surface: #ffffff;
+    --surface-2: #eef2f4;
+    --ink: #182026;
+    --ink-2: #55616b;
+    --ink-3: #8a959e;
+    --line: #dfe6ea;
+    --accent: #0e7490;
+    --accent-soft: #e3f1f5;
+    --accent-ink: #ffffff;
+    --gate: #b45309;
+    --gate-soft: #fdf2e3;
+    --ok: #15803d;
+    --ok-soft: #e8f5ec;
+    --code-bg: #eef2f4;
+    --shadow: 0 1px 3px rgba(24, 32, 38, .07), 0 8px 24px rgba(24, 32, 38, .05);
+    --display: "Sora", "Segoe UI", system-ui, sans-serif;
+    --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10151a;
+      --surface: #171e25;
+      --surface-2: #1d2630;
+      --ink: #e8edf1;
+      --ink-2: #9aa7b1;
+      --ink-3: #6b7783;
+      --line: #263039;
+      --accent: #38bdd4;
+      --accent-soft: #12333c;
+      --accent-ink: #071417;
+      --gate: #f0a13c;
+      --gate-soft: #2e2211;
+      --ok: #4ade80;
+      --ok-soft: #10281a;
+      --code-bg: #1d2630;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10151a;
+    --surface: #171e25;
+    --surface-2: #1d2630;
+    --ink: #e8edf1;
+    --ink-2: #9aa7b1;
+    --ink-3: #6b7783;
+    --line: #263039;
+    --accent: #38bdd4;
+    --accent-soft: #12333c;
+    --accent-ink: #071417;
+    --gate: #f0a13c;
+    --gate-soft: #2e2211;
+    --ok: #4ade80;
+    --ok-soft: #10281a;
+    --code-bg: #1d2630;
+    --shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.6;
+  }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0 0 .5em; }
+  h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 700; letter-spacing: -.015em; }
+  h2 { font-size: clamp(22px, 3vw, 30px); font-weight: 700; letter-spacing: -.01em; }
+  h3 { font-size: 17px; font-weight: 600; }
+  p { margin: 0 0 1em; max-width: 68ch; }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+  code { background: var(--code-bg); border-radius: 4px; padding: .1em .38em; }
+  a { color: var(--accent); }
+
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
+  }
+  .lead { font-size: 18px; color: var(--ink-2); }
+
+  /* nav */
+  nav {
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--line); backdrop-filter: blur(6px);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 18px; height: 52px; overflow-x: auto; }
+  nav b { font-family: var(--display); font-size: 14px; white-space: nowrap; }
+  nav a {
+    font-size: 13px; color: var(--ink-2); text-decoration: none; white-space: nowrap;
+  }
+  nav a:hover, nav a:focus-visible { color: var(--accent); outline: none; }
+
+  /* hero */
+  header.hero { padding: 72px 0 56px; }
+  .hero .sub { font-size: 19px; color: var(--ink-2); max-width: 60ch; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 18px; box-shadow: var(--shadow);
+  }
+  .stat b { font-family: var(--display); font-size: 22px; display: block; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12.5px; color: var(--ink-2); }
+
+  /* cards */
+  .grid { display: grid; gap: 16px; }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .card p { font-size: 14.5px; color: var(--ink-2); margin: 0; }
+  .card h3 { display: flex; align-items: center; gap: 8px; }
+
+  /* pipeline diagram */
+  .pipe { display: flex; gap: 0; overflow-x: auto; padding: 22px 2px 12px; align-items: stretch; }
+  .stage {
+    min-width: 138px; flex: 1; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 13px 14px 11px; box-shadow: var(--shadow); position: relative;
+  }
+  .stage .n {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    letter-spacing: .1em;
+  }
+  .stage b { font-family: var(--display); font-size: 14.5px; display: block; margin: 2px 0 3px; }
+  .stage .who { font-size: 12px; color: var(--accent); font-weight: 600; }
+  .stage .out { font-size: 11.5px; color: var(--ink-2); font-family: var(--mono); margin-top: 6px; word-break: break-word; }
+  .gatechip {
+    align-self: center; flex: none; margin: 0 6px; padding: 3px 9px;
+    background: var(--gate-soft); color: var(--gate); border: 1px solid var(--gate);
+    border-radius: 99px; font-family: var(--mono); font-size: 10px; letter-spacing: .06em;
+    white-space: nowrap;
+  }
+  .pipe-note { font-size: 13px; color: var(--ink-2); }
+  .pipe-note b { color: var(--gate); }
+
+  /* gates list */
+  .gates { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .gate {
+    background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .gate b { font-family: var(--display); font-size: 14px; }
+  .gate p { font-size: 13.5px; color: var(--ink-2); margin: 4px 0 0; }
+  .gate.honest { border-left-color: var(--gate); }
+
+  /* tables */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--ink-3); }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  /* terminal */
+  .term {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; font-family: var(--mono); font-size: 13.5px; line-height: 1.75;
+    overflow-x: auto; white-space: pre;
+  }
+  .term .c { color: var(--ink-3); }
+  .term .k { color: var(--accent); font-weight: 500; }
+
+  /* lanes strip */
+  .lanes { display: flex; gap: 8px; flex-wrap: wrap; }
+  .lane {
+    flex: 1; min-width: 110px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; text-align: center;
+  }
+  .lane b { font-family: var(--display); font-size: 13px; display: block; }
+  .lane span { font-size: 11px; color: var(--ink-2); font-family: var(--mono); }
+  .lane.hot { border-color: var(--gate); }
+  .lane.done { border-color: var(--ok); }
+
+  /* approval mock */
+  .approval {
+    border: 1px solid var(--gate); background: var(--gate-soft); border-radius: 12px;
+    padding: 16px 18px; max-width: 520px;
+  }
+  .approval .head { display: flex; gap: 8px; align-items: center; font-weight: 600; color: var(--gate); margin-bottom: 8px; font-size: 14px; }
+  .approval .head .tool { background: var(--surface); border: 1px solid var(--gate); border-radius: 99px; padding: 1px 9px; font-family: var(--mono); font-size: 11px; }
+  .approval pre { background: var(--surface); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12px; margin: 0 0 12px; overflow-x: auto; }
+  .approval .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--body); font-size: 13px; font-weight: 600; border-radius: 8px;
+    padding: 7px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: default;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.danger { color: #c22; }
+
+  .flow { font-family: var(--mono); font-size: 12.5px; line-height: 2; color: var(--ink-2); overflow-x: auto; white-space: pre; }
+
+  ul.tight { margin: 0 0 1em; padding-left: 20px; }
+  ul.tight li { margin-bottom: 6px; max-width: 68ch; }
+  ul.tight li::marker { color: var(--accent); }
+
+  footer { padding: 40px 0 64px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13.5px; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+
+<nav><div class="wrap">
+  <b>Control Center</b>
+  <a href="#what">What it is</a>
+  <a href="#pipeline">Pipeline</a>
+  <a href="#gates">Gates</a>
+  <a href="#ticket">Ticket</a>
+  <a href="#console">Console</a>
+  <a href="#chats">Agent chats</a>
+  <a href="#start">Start</a>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">control-center-workspace</div>
+  <h1>Control Center Field Guide</h1>
+  <p class="sub">One pipeline, seven agents, and a paper trail you can audit months later. The harness turns free-form asks into staged, gated, evidence-backed delivery — and the Delivery Console makes every ticket, tracker, and agent run visible on a local board.</p>
+  <div class="stats">
+    <div class="stat"><b>7</b><span>agents, one job each</span></div>
+    <div class="stat"><b>39</b><span>skills — lean directive contracts</span></div>
+    <div class="stat"><b>6</b><span>gates every ticket passes</span></div>
+    <div class="stat"><b>1</b><span>write path for board state</span></div>
+  </div>
+</div></header>
+
+<section id="what"><div class="wrap">
+  <div class="eyebrow">Three parts</div>
+  <h2>What it is</h2>
+  <p class="lead">A project-independent workspace that sits <em>next to</em> your code. Nothing in it is coupled to a company, product, or stack.</p>
+  <div class="grid g3">
+    <div class="card">
+      <h3>The harness <code>.claude/</code></h3>
+      <p>Agent and skill definitions shared by Claude Code and Cursor. Every skill states only what to produce, in which layout, in which order — the model supplies the rest.</p>
+    </div>
+    <div class="card">
+      <h3>The vault <code>knowledge-center/</code></h3>
+      <p>An Obsidian vault. One directory per ticket, every artifact named <code>{TICKET}-{artifact}.md</code>, every file ending in a <code>## Links</code> block so tickets render as connected clusters in the graph.</p>
+    </div>
+    <div class="card">
+      <h3>The console <code>console/</code></h3>
+      <p>A local web board + CLI — stdlib Python, vanilla JS, zero dependencies. It renders what the agents write, and it is the <em>only</em> writer of ticket and tracker TOML.</p>
+    </div>
+  </div>
+</div></section>
+
+<section id="pipeline"><div class="wrap">
+  <div class="eyebrow">The workflow</div>
+  <h2>Six stages, seven agents</h2>
+  <p>Every ticket moves left to right. A stage transition only happens through the <code>handoff</code> gate; a failed gate routes to remediation instead of advancing.</p>
+  <div class="pipe">
+    <div class="stage"><span class="n">01</span><b>GROUND</b><span class="who">analyst</span><div class="out">{T}-analysis.md</div></div>
+    <span class="gatechip">gate</span>
+    <div class="stage"><span class="n">02</span><b>CLARIFY</b><span class="who">analyst</span><div class="out">{T}-requirements.md<br>{T}-decision-log.md</div></div>
+    <span class="gatechip">freeze</span>
+    <div class="stage"><span class="n">03</span><b>CANONICAL</b><span class="who">planner</span><div class="out">{T}-plan.md<br>(+ breakdown)</div></div>
+    <span class="gatechip">critique</span>
+    <div class="stage"><span class="n">04</span><b>TEMPLATE</b><span class="who">builder</span><div class="out">source code<br>{T}-progress.md</div></div>
+    <span class="gatechip">gate</span>
+    <div class="stage"><span class="n">05</span><b>SIMPLIFY</b><span class="who">builder</span><div class="out">refined source</div></div>
+    <span class="gatechip">gate</span>
+    <div class="stage"><span class="n">06</span><b>VERIFY</b><span class="who">verifier</span><div class="out">{T}-verification.md</div></div>
+    <span class="gatechip">ASK</span>
+    <div class="stage"><span class="n">—</span><b>Deploy</b><span class="who">deployer</span><div class="out">{T}-release.md</div></div>
+  </div>
+  <p class="pipe-note">The <b>fixer</b> can be pulled in at any stage when something breaks: reproduce → root-cause → minimal patch → validating test. The <b>harness</b> agent orchestrates the whole line and never writes code itself. Deploying is <b>always ASK-gated</b> — a clean verify never ships anything on its own.</p>
+  <p>Don't want to name stages? <code>/do "add a retry to the sync job"</code> classifies the request into a lane, routes it through the same pipeline, and iterates until a defined DONE check passes.</p>
+</div></section>
+
+<section id="gates"><div class="wrap">
+  <div class="eyebrow">Always on</div>
+  <h2>The six gates, plus one rule that outranks them</h2>
+  <div class="gates">
+    <div class="gate"><b>GROUND</b><p>Never assume. Survey code and prior artifacts before drafting anything.</p></div>
+    <div class="gate"><b>CLARIFY</b><p>Ask every open question before producing output. Critical questions block the freeze.</p></div>
+    <div class="gate"><b>CANONICAL</b><p>Every fact lives in exactly one file. Search before creating; link instead of copying.</p></div>
+    <div class="gate"><b>TEMPLATE</b><p>Every file type derives from a template in <code>_template/</code>. No template, no file.</p></div>
+    <div class="gate"><b>SIMPLIFY</b><p>The minimum that works. No speculative abstraction, no extra indirection.</p></div>
+    <div class="gate"><b>VERIFY</b><p>Every "done" claim carries cited evidence — build, test, file:line.</p></div>
+    <div class="gate honest"><b>BE HONEST</b><p>Failures reported with output, skips named, uncertainty labeled. Bad news early. This rule crosses every stage.</p></div>
+  </div>
+</div></section>
+
+<section id="ticket"><div class="wrap">
+  <div class="eyebrow">The unit of work</div>
+  <h2>A ticket, end to end</h2>
+  <div class="grid g2">
+    <div>
+      <div class="term"><span class="c"># seed → analyse → plan → build → verify → close</span>
+<span class="k">/kickoff T013</span> "Add dark-mode toggle"
+<span class="k">analyst T013</span>    <span class="c"># analysis + requirements pipeline</span>
+<span class="k">planner T013</span>    <span class="c"># plan.md — flat or multi-layer chain</span>
+<span class="k">builder T013</span>    <span class="c"># one task per turn, progress logged</span>
+<span class="k">verifier T013</span>   <span class="c"># evidence per acceptance criterion</span>
+<span class="k">close-work T013</span> <span class="c"># gates pass → board lane → done</span></div>
+      <p style="margin-top:14px">The requirements pipeline is one skill with five ops — <code>requirements draft | enrich | iterate | freeze | stories</code> — with <code>challenge-requirements</code> red-teaming the draft between passes (gaps, contradictions, untestable criteria, and overlap with existing features).</p>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Artifact</th><th>Job</th></tr></thead>
+      <tbody>
+        <tr><td><code>T013-summary.md</code></td><td>One-page status, updated by every agent</td></tr>
+        <tr><td><code>T013-analysis.md</code></td><td>Findings with file:line citations</td></tr>
+        <tr><td><code>T013-requirements.md</code></td><td>Frozen FRs, NFRs, acceptance criteria</td></tr>
+        <tr><td><code>T013-decision-log.md</code></td><td>Every decision, with rationale</td></tr>
+        <tr><td><code>T013-plan.md</code></td><td>Tasks, effort, risks, AC coverage</td></tr>
+        <tr><td><code>T013-progress.md</code></td><td>Dated log of every action</td></tr>
+        <tr><td><code>T013-verification.md</code></td><td>PASS/FAIL per criterion + evidence</td></tr>
+        <tr><td><code>ticket.toml</code> + trackers</td><td>Board state — console CLI only, never hand-edited</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</div></section>
+
+<section id="console"><div class="wrap">
+  <div class="eyebrow">The visible half</div>
+  <h2>The Delivery Console</h2>
+  <p class="lead"><code>python console/kanban.py serve</code> → a board at <code>127.0.0.1:8790</code>. Or <code>export</code> a static snapshot that opens from <code>file://</code>.</p>
+  <div class="lanes" aria-label="Ticket board lanes">
+    <div class="lane"><b>Open</b><span>kickoff</span></div>
+    <div class="lane"><b>In&nbsp;Progress</b><span>build · wip 3</span></div>
+    <div class="lane hot"><b>Blocked</b><span>blocker logged</span></div>
+    <div class="lane"><b>Verify</b><span>verification</span></div>
+    <div class="lane done"><b>Done</b><span>close-work</span></div>
+  </div>
+  <p style="margin-top:14px">Pipeline events move the card: <code>kickoff</code> creates it in <em>open</em>, the first build task moves it to <em>in-progress</em>, <code>close-work</code> lands it in <em>done</em>. The board never drifts from the artifacts because both are written by the same CLI.</p>
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card"><h3>Boards</h3><p>Tickets and Investigations ship on; Migrations and Releases are config-present, off by default. Lanes, WIP limits, and tones are TOML.</p></div>
+    <div class="card"><h3>Overview · Analytics · Work</h3><p>Attention buckets, lane funnel, throughput and ageing charts (every chart has a table twin), and a timesheet read straight from the daily logs.</p></div>
+    <div class="card"><h3>Todos · Vault · Settings</h3><p>Every todo across every ticket; the vault's wikilink graph; per-browser prefs — five themes with four-colour sampled swatches, tab visibility, voice.</p></div>
+  </div>
+</div></section>
+
+<section id="chats"><div class="wrap">
+  <div class="eyebrow">Humans in the loop</div>
+  <h2>Agent chats — launch, steer, approve</h2>
+  <div class="grid g2">
+    <div>
+      <p>The Agents tab runs a real CLI as a live session: pick a backend, a permission mode, a persona, a skill, and a <strong>model</strong> — a curated shortlist (aliases like <code>opus</code>, pinned ids like <code>claude-fable-5</code>) plus a custom-id box for anything else. Messages steer mid-turn; interrupt stops a turn without killing the session.</p>
+      <p><strong>The approval gate.</strong> Gated tools — Bash, file writes, WebFetch, subagents, plan exits — are held by a PreToolUse hook until you answer in the chat. Silence denies, fail-closed, after 300&nbsp;seconds.</p>
+      <div class="flow">CLI ──spawns──▶ hook ──POST──▶ console ──SSE──▶ browser
+                      ▲                              │
+                      └────── verdict ◀── POST ──────┘</div>
+      <p style="margin-top:10px"><strong>Voice.</strong> Read-aloud speaks each finished reply (off by default). Announce — on by default — says <em>"The agent is done."</em> at turn end and <em>"Permission needed for Bash"</em> when a run parks on you, so a blocked run is never silent.</p>
+    </div>
+    <div>
+      <div class="approval" role="img" aria-label="Permission needed card with Allow once, Allow for this chat, and Deny buttons">
+        <div class="head">⚠ Permission needed <span class="tool">Bash</span></div>
+        <pre>{
+  "command": "python -m pytest tests/ -q"
+}</pre>
+        <div class="btns">
+          <span class="btn primary">Allow once</span>
+          <span class="btn">Allow for this chat</span>
+          <span class="btn danger">Deny</span>
+        </div>
+      </div>
+      <p style="margin-top:12px; font-size:13.5px; color:var(--ink-2)">The card every gated tool call becomes. <em>Allow for this chat</em> whitelists that tool for the session; in acceptEdits mode, file edits skip the card so the mode means what it says.</p>
+    </div>
+  </div>
+</div></section>
+
+<section id="start"><div class="wrap">
+  <div class="eyebrow">Getting started</div>
+  <h2>Three steps</h2>
+  <ul class="tight">
+    <li><strong>Add your project</strong> as a sibling folder and list it in <code>control-center-workspace.code-workspace</code>. Tickets reference your code by path; the harness never moves it.</li>
+    <li><strong>Serve the console</strong> — <code>python console/kanban.py serve</code> — and open the vault in Obsidian if you like graphs with your Markdown.</li>
+    <li><strong>Start work</strong>: <code>/kickoff T001 "…"</code> for a scoped ticket, <code>/ticket-draft</code> when you're not sure it deserves one, <code>/investigate</code> when you're not sure it's even a bug, or <code>/do "…"</code> to let the dispatcher decide.</li>
+  </ul>
+  <p>Everything an agent claims is backed by an artifact; everything on the board is backed by TOML the CLI wrote; everything you approved is on the record. That's the whole idea.</p>
+</div></section>
+
+<footer><div class="wrap">
+  Reference: <code>CLAUDE.md</code> (session contract) · <code>README.md</code> (full walkthrough) · <code>console/README.md</code> (console architecture) · <code>.claude/skills/*/SKILL.md</code> (the contracts themselves)
+</div></footer>

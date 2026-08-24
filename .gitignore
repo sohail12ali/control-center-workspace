@@ -61,3 +61,8 @@ dist/
 *.app/
 *.app.dSYM/
 .claude/worktrees/*
+
+# Delivery Console (console/)
+__pycache__/
+console/.cache/
+*.toml.lock

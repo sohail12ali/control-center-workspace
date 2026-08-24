@@ -5,9 +5,9 @@ description: Routes adversarial critique to stage-specific challenge skills (req
 
 # /criticize
 
-**Usage:** `/criticize [T] [stage]` — `[T]` ticket id (optional if context clear), `[stage]` one of `requirements` | `plan` | `implementation` | `all`.
+**When:** Free-form "find issues" / "red-team" / "critique" requests, or an ambiguous challenge ask — `/criticize [T] [stage]`, stage ∈ `requirements` | `plan` | `implementation` | `all`. Prefer the explicit stage skill (e.g. `challenge-plan`) when the stage is already known.
 
-**When:** Free-form "find issues", "red-team", or "critique" requests, or an ambiguous challenge ask. Prefer the explicit stage skill (e.g. `challenge-plan`) when the stage is already known.
+**Order:** Router only — dispatches to `challenge-requirements` / `challenge-plan` / `challenge-implementation`; never performs the walk itself.
 
 ## Stage routing
 
@@ -18,12 +18,7 @@ description: Routes adversarial critique to stage-specific challenge skills (req
 | `implementation` | `challenge-implementation {T} [slice]` | Post-build, pre-verify |
 | `all` | Run applicable stages in order; skip empty | Explicit or full-ticket audit |
 
-**Auto-detect** (when `[stage]` omitted):
-
-1. `{T}-requirements.md` exists and is not frozen → `requirements`
-2. `{T}-plan.md` exists and no build is in progress → `plan`
-3. Code changes exist for `{T}` → `implementation`
-4. Otherwise → ask once for stage
+**Auto-detect** when `[stage]` omitted: `{T}-requirements.md` exists unfrozen → `requirements`; `{T}-plan.md` exists and no build in progress → `plan`; code changes exist for `{T}` → `implementation`; otherwise ask once.
 
 ## Steps
 
@@ -45,14 +40,15 @@ Gate:      clear | blocked — {N} critical unresolved
 Next:      {stage-specific repair command}
 ```
 
+## Gate
+
+`blocked — {N} critical unresolved` until critical findings resolve; otherwise clear.
+
 ## Rules
 
-- `.claude/skills/challenge-standards/rules.md` — finding format, severity, and kinds (canonical, shared)
-- `.claude/skills/challenge-requirements/SKILL.md` — requirements delegate
-- `.claude/skills/challenge-plan/SKILL.md` — plan delegate
-- `.claude/skills/challenge-implementation/SKILL.md` — implementation delegate
-- This skill is a router only — it never performs the walk itself.
+- `.claude/skills/challenge-standards/rules.md` — finding format, severity, kinds (canonical, shared)
+- Stage delegates: `.claude/skills/challenge-requirements/SKILL.md`, `.claude/skills/challenge-plan/SKILL.md`, `.claude/skills/challenge-implementation/SKILL.md`
 
 **Delegates to:** analyst (requirements), planner (plan), verifier (implementation).
 
-**Version:** 1.0-generic | **Updated:** 2026-07-04
+**Version:** 1.1 — lean rewrite | **Updated:** 2026-08-23
