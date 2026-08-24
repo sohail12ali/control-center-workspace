@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "control center",
+			"path": "."
+		},
+		{
+			"name": "example project",
+			"path": "../example-project-relative-path"
+		}
+	],
+	"settings": {}
+}

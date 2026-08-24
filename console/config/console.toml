@@ -1,0 +1,26 @@
+[general]
+data_root      = "knowledge-center/artifacts"
+id_pattern     = "^[A-Z][A-Za-z0-9-]{1,31}$"
+host           = "127.0.0.1"
+port           = 8790
+enabled_boards = ["tickets", "investigations"]
+# "migrations"/"releases" boards stay config-driven under config/boards/
+# (disabled by default, same as the boards list); "projects" and "files" tabs
+# are intentionally not implemented at all in this generic template.
+#
+# Which non-board TABS exist is NOT set here — it comes from which plugin rows
+# are enabled in config/plugins.toml, so a tab and the routes behind it are
+# switched together and can never disagree.
+
+[agents]
+# Backend command templates for the Agents tab. {prompt} is substituted with
+# the user's message (shell-escaped); {cwd} is the resolved workspace root.
+# A project can add/edit entries here without touching code.
+[agents.backends.claude]
+label = "Claude Code"
+command = "claude"
+args = ["-p", "{prompt}", "--permission-mode", "plan"]
+[agents.backends.cursor-agent]
+label = "Cursor Agent"
+command = "cursor-agent"
+args = ["-p", "{prompt}"]

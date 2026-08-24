@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Delivery Console</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="sr-only" href="#view">Skip to content</a>
+<div id="app">
+  <header class="topbar">
+    <div class="brandrow">
+      <div class="brand">
+        <h1 id="brandTitle">Delivery Console</h1>
+        <span class="brand-sub" id="brandSub"></span>
+      </div>
+      <div class="searchwrap">
+        <input id="search" type="search" placeholder="Find a ticket…" aria-label="Search tickets" autocomplete="off">
+        <kbd>/</kbd>
+      </div>
+      <span class="grow"></span>
+      <span class="statuspill" id="connPill" title="Connection to the console server">
+        <span class="dot"></span><span class="stext" id="connText">live</span>
+      </span>
+      <button class="btn sm iconly" id="refreshBtn" title="Reload this tab" aria-label="Reload this tab"></button>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Console sections"></nav>
+  </header>
+  <main id="view" role="tabpanel" tabindex="-1"></main>
+</div>
+
+<!-- Icons first: core.js and every tab build DOM with them. -->
+<script src="icons.js"></script>
+<script src="core.js"></script>
+<!-- Chat plumbing: markdown, voice, SSE store, transcript renderer. Loaded
+     before the tabs so agents.js can use them at registration time. -->
+<script src="chat-md.js"></script>
+<script src="voice.js"></script>
+<script src="chat-store.js"></script>
+<script src="chat-render.js"></script>
+<!-- Tabs self-register into Console.tab(); order here is load order only,
+     nav order comes from the server manifest. -->
+<script src="board.js"></script>
+<script src="overview.js"></script>
+<script src="todos.js"></script>
+<script src="work.js"></script>
+<script src="analytics.js"></script>
+<script src="vault.js"></script>
+<script src="agents.js"></script>
+<script src="about.js"></script>
+<script src="settings.js"></script>
+<!-- Router last: it needs every tab to have registered. -->
+<script src="app.js"></script>
+</body>
+</html>

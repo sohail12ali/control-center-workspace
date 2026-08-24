@@ -1,0 +1,69 @@
+# Plugin registry — one [[plugin]] row per feature module.
+#
+# Adding a feature is two steps: (1) give a module under console/server/
+# a `PLUGIN = Plugin(...)` with an `apply(ctx)`, (2) add its row here.
+# Nothing else changes — in particular httpd.py never learns the new name,
+# because it asks the router, and the router is filled by whatever loaded.
+#
+# `enabled = false` skips a row entirely: the module is never imported, its
+# routes don't exist, and its tab is absent from /api/config (so the nav
+# doesn't show a tab that would 404). Use it to say "this deployment does
+# not do that".
+#
+# NOT the same as the Settings tab's toggles. Those are per-user, stored in
+# one browser, and only hide a tab from one person. This file is committed
+# and applies to everyone who pulls the checkout. Don't unify them.
+#
+# Load order comes from each module's own `requires`, not from this file's
+# ordering — a module's dependencies are a property of the code.
+#
+# Loader: console/server/plugins/registry.py
+
+[[plugin]]
+id = "boards"
+module = "features.boards_feature"
+enabled = true
+
+[[plugin]]
+id = "overview"
+module = "features.overview_feature"
+enabled = true
+
+# First-run setup steps, ending at the requirements pipeline. Disable once a
+# workspace is established and the card stops earning its place on Overview.
+[[plugin]]
+id = "onboarding"
+module = "features.onboarding_feature"
+enabled = true
+
+[[plugin]]
+id = "agents"
+module = "features.agents_feature"
+enabled = true
+
+[[plugin]]
+id = "work"
+module = "features.work_feature"
+enabled = true
+
+[[plugin]]
+id = "analytics"
+module = "features.analytics_feature"
+enabled = true
+
+[[plugin]]
+id = "todos"
+module = "features.todos_feature"
+enabled = true
+
+[[plugin]]
+id = "vault"
+module = "features.vault_feature"
+enabled = true
+
+# The nav manifest itself. Disabling this leaves the frontend with no tab
+# list to boot from, so it is effectively required.
+[[plugin]]
+id = "shell"
+module = "features.shell_feature"
+enabled = true

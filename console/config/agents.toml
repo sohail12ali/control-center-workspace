@@ -1,0 +1,172 @@
+# Agent backends — which CLIs the Agents tab can talk to.
+#
+# Adding a backend is CONFIG, NOT CODE. Copy a [[backend]] block, point it at
+# an executable, declare its transport, and it appears in the composer. The two
+# rows below have no special status; delete them and the tab offers whatever
+# remains.
+#
+# transport — the one field that changes what the UI offers:
+#
+#   stream_json  ONE process for the whole chat, stdin held open as a
+#                JSON-lines channel. Supports STEERING (a message admitted
+#                mid-turn) and a true interrupt.
+#   resume       ONE process PER TURN, continued via a resume flag. Streams
+#                output, but stdin is not a channel, so a message can only be
+#                QUEUED for the next turn.
+#   oneshot      one process, one prompt, no continuation.
+#
+# The UI reads `steerable` from the transport and hides the steer control
+# where the CLI cannot do it, rather than offering a button that lies.
+#
+# Placeholders in the *_args templates: {prompt} {mode} {model} {persona}
+# {settings} {resume_id} {dir}. An arg whose placeholder resolves to empty is
+# dropped along with the flag in front of it, so optional flags simply vanish
+# instead of being passed as "".
+#
+# prompt_prefix_style — how a chosen skill/persona is referenced:
+#   slash   "@persona /skill text"  (CLI has slash commands)
+#   inline  a sentence naming the SKILL.md path (CLI has no slash commands)
+#   none    the text, untouched
+#
+# NOTE: full-bypass permission modes are deliberately not listed. Turning the
+# approval gate off is a decision for a terminal you are sitting in front of,
+# not a button on a web page. A fork that wants one adds it here and owns it.
+
+# ---------------------------------------------------------------- claude ----
+[[backend]]
+id = "claude"
+label = "Claude Code"
+command = "claude"
+transport = "stream_json"
+prompt_prefix_style = "slash"
+
+# --include-partial-messages is what makes token streaming possible at all;
+# --replay-user-messages echoes our own sends back, which is how a steer is
+# confirmed as admitted rather than merely written.
+session_args = [
+  "-p",
+  "--input-format", "stream-json",
+  "--output-format", "stream-json",
+  "--include-partial-messages",
+  "--replay-user-messages",
+  "--verbose",
+  "--permission-mode", "{mode}",
+  "--model", "{model}",
+  "--agent", "{persona}",
+  "--settings", "{settings}",
+]
+add_dir_args = ["--add-dir", "{dir}"]
+
+modes = ["plan", "default", "acceptEdits"]
+default_mode = "plan"
+
+# Tools the PreToolUse approval hook gates behind a human in the chat — the
+# "Permission needed" card. Empty list = no gate (the CLI runs as before).
+# In acceptEdits mode the file-edit tools are auto-allowed server-side so the
+# mode blurb stays truthful; everything else still asks.
+gated_tools = [
+  "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
+  "WebFetch", "Task", "ExitPlanMode", "KillShell",
+]
+approval_timeout = 300
+
+# Models offered in the composer's Model picker — A SHORTLIST, NOT A
+# CATALOGUE. claude accepts any alias or pinned id, and the composer keeps a
+# custom-id option beside the picker, so anything not listed is one paste
+# away. Ids are passed verbatim to `--model` (exact, no date suffixes); the
+# UI's own "(backend default)" entry means "send no --model flag at all".
+# `[backend.model_labels]` / `[backend.model_hints]` below dress the ids up.
+models = [
+  "opus",
+  "sonnet",
+  "haiku",
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+]
+
+[backend.mode_blurbs]
+plan = "read-only — investigates and proposes, never writes"
+default = "gated tools ask you in the chat (Permission needed card)"
+acceptEdits = "file writes apply without asking; shell and the rest still ask"
+
+[backend.model_labels]
+opus = "Opus (alias)"
+sonnet = "Sonnet (alias)"
+haiku = "Haiku (alias)"
+claude-fable-5 = "Fable 5"
+claude-opus-5 = "Opus 5"
+claude-opus-4-8 = "Opus 4.8"
+claude-opus-4-7 = "Opus 4.7"
+claude-opus-4-6 = "Opus 4.6"
+claude-sonnet-5 = "Sonnet 5"
+claude-sonnet-4-6 = "Sonnet 4.6"
+claude-haiku-4-5 = "Haiku 4.5"
+
+[backend.model_hints]
+opus = "tracks the newest Opus"
+sonnet = "tracks the newest Sonnet"
+haiku = "tracks the newest Haiku"
+claude-fable-5 = "pinned — most capable"
+claude-opus-5 = "pinned"
+claude-opus-4-8 = "pinned"
+claude-opus-4-7 = "pinned"
+claude-opus-4-6 = "pinned"
+claude-sonnet-5 = "pinned"
+claude-sonnet-4-6 = "pinned"
+claude-haiku-4-5 = "pinned"
+
+# ---------------------------------------------------------- cursor-agent ----
+[[backend]]
+id = "cursor-agent"
+label = "Cursor Agent"
+command = "cursor-agent"
+transport = "resume"
+# cursor-agent has no slash-command system, so a skill is named by its path.
+prompt_prefix_style = "inline"
+
+# `--trust` is REQUIRED for any headless run: cursor-agent refuses to start in
+# a directory it has not been told to trust and prints "Workspace Trust
+# Required" instead of doing anything. It answers that prompt for this
+# workspace — it does NOT loosen what the agent may then do, which is still
+# governed by `--mode` below. The flags cursor-agent also suggests there,
+# `--yolo` and `-f`, DO bypass the action gate and are deliberately not used.
+turn_args = [
+  "-p", "{prompt}",
+  "--output-format", "stream-json",
+  "--trust",
+  "--mode", "{mode}",
+  "--model", "{model}",
+]
+resume_args = [
+  "-p", "{prompt}",
+  "--output-format", "stream-json",
+  "--trust",
+  "--resume", "{resume_id}",
+  "--mode", "{mode}",
+  "--model", "{model}",
+]
+
+modes = ["ask", "plan", "default"]
+default_mode = "plan"
+[backend.mode_blurbs]
+ask = "read-only Q&A — explains, never edits"
+plan = "analyse and propose; no edits"
+default = "prompts before anything unsafe"
+
+# ------------------------------------------------------------- examples -----
+# A third CLI, or a local script, needs nothing but a row. Enable and edit:
+#
+# [[backend]]
+# id = "my-runner"
+# label = "My runner"
+# command = "./scripts/my-runner.sh"
+# transport = "oneshot"
+# enabled = false
+# prompt_prefix_style = "none"
+# oneshot_args = ["--task", "{prompt}"]

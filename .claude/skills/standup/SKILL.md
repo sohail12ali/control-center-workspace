@@ -3,24 +3,21 @@ name: standup
 description: Cross-ticket digest from artifact-map + per-ticket summaries. Active / Blocked / At-risk / Closed-this-period. Use daily, at sprint boundaries, or when context is unclear.
 ---
 
-# Inputs
-- `since` (optional): ISO date or `1d` / `7d` / `30d` (default `1d`)
-- `tags` (optional): filter by `summary.md` tags (e.g. `urgent`)
+# /standup
 
-# Steps
-1. Read `knowledge-center/artifact-map.md` for ticket inventory.
-2. For each ticket, read `summary.md` (Status, tags, Current State) and last entry of `progress.md`.
-3. Group:
-   - **Active**: Status=In Progress, last progress within `since`
-   - **Stale**: Status=In Progress, last progress older than `since`
-   - **Blocked**: Status=Blocked
-   - **At-risk**: any unmitigated high×high risk in plan.md (via `risk-scan`)
-   - **Closed**: Status=Complete, closed within `since`
+**When:** Daily, at sprint boundaries, or when cross-ticket context is unclear.
+
+Inputs: `since` (ISO date or `1d`/`7d`/`30d`, default `1d`) · `tags` (filter by `summary.md` tags, e.g. `urgent`).
+
+## Steps
+
+1. Read `knowledge-center/artifact-map.md` for the ticket inventory.
+2. Per ticket, read `summary.md` (Status, tags, Current State) and the last `progress.md` entry — summaries only, never full artifacts; this skill is fast by design.
+3. Group: **Active** (In Progress, progress within `since`) · **Stale** (In Progress, older than `since`) · **Blocked** (Status=Blocked) · **At-risk** (unmitigated high×high risk in plan.md § Risks) · **Closed** (Complete, closed within `since`).
 4. Render a one-screen table.
 
-# Output
-Markdown digest. Optionally writes to `knowledge-center/standups/{DATE}.md` if user asks.
+## Output
 
-# Rules
-- Read summaries, not full artifacts. This skill is fast by design.
-- Don't auto-write the standup file; output to chat unless requested.
+Markdown digest to chat. Write `knowledge-center/standups/{DATE}.md` only if the user asks — never auto-write.
+
+**Version:** 1.1 — lean rewrite | **Updated:** 2026-08-23

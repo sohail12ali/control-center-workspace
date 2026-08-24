@@ -1,0 +1,27 @@
+[board]
+kind    = "investigations"
+label   = "Investigations"
+enabled = true
+blurb   = "Pre-ticket triage — is it a bug, a feature, config or data?"
+
+[[lanes]]
+id = "open"
+label = "Open"
+
+[[lanes]]
+id = "in-progress"
+label = "Investigating"
+
+[[lanes]]
+id = "resolved"
+label = "Resolved"
+terminal = true
+tone = "ok"
+
+[[lanes]]
+id = "closed"
+label = "Closed"
+terminal = true
+
+[card]
+show_trackers = ["questions"]

@@ -1,16 +1,25 @@
 {
   "workspace": {
-    "path": "D:\\Workspace\\control-center-workspace",
-    "vault": "D:\\Workspace\\control-center-workspace\\knowledge-center",
-    "artifacts": "D:\\Workspace\\control-center-workspace\\knowledge-center\\artifacts",
-    "memory": "D:\\Workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
+    "path": "D:\\Workspace\\ai-workspace\\control-center-workspace",
+    "vault": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center",
+    "artifacts": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center\\artifacts",
+    "memory": "D:\\Workspace\\ai-workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
   },
-  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer"],
+  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer", "deployer"],
   "skills": [
-    "kickoff", "trace-context", "analyze", "requirements", "clarify",
-    "manage-questions", "validate", "plan", "plan-effort", "risk-scan",
-    "progress-tracker", "fix", "evolve", "reconcile", "handoff",
-    "standup", "close-work",
+    "harness-standards", "do", "caveman",
+    "kickoff", "trace-context", "template", "consolidate", "console",
+    "analyze", "clarify", "questions",
+    "requirements", "challenge-requirements",
+    "tech-select",
+    "plan", "analyze-components", "breakdown-tasks", "estimate",
+    "replan", "challenge-plan",
+    "progress-tracker", "fix", "evolve",
+    "verify", "challenge-implementation", "criticize", "validate-artifacts",
+    "bugs", "todos",
+    "reconcile", "handoff", "standup", "close-work", "invoke-project-skill",
+    "ticket-draft", "investigate",
+    "log-work", "optimize-cursor-artifacts", "project-layout",
     "simplify", "review", "security-review",
     "update-config", "keybindings-help", "loop", "schedule", "claude-api"
   ],
@@ -24,6 +33,21 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/session-context.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/console-refresh.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/console-refresh.sh"
           }
         ]
       }

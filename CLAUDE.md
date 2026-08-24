@@ -1,64 +1,71 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working in this workspace.
+Guidance for Claude Code in this workspace. This file states only three things: the **layout** artifacts must land in, the **order** work must run in, and how everything stays **in sync with the Delivery Console**. Detail lives in the referenced skills — one fact, one file.
 
 ## Workspace Overview
 
-**control-center-workspace** is a project-independent agentic harness for structured software development. It pairs Claude Code's agent pipeline with an Obsidian knowledge vault and a structured ticket lifecycle.
+**control-center-workspace** is a project-independent agentic harness for structured software development: Claude Code agent pipeline + Obsidian knowledge vault + a structured ticket lifecycle + the Delivery Console. Reusable template — nothing here is coupled to a company, product, or stack. Sub-projects join as VS Code workspace folders; each gets its own ticket IDs and artifact subtree.
 
-Add sub-projects as VS Code workspace folders. Each project gets its own ticket IDs and artifact subtree under `knowledge-center/artifacts/`.
+**Always-on core (auto-imported):** @.claude/skills/harness-standards/core.md — the 6 gates, BE HONEST, default voice. Full norms: `.claude/skills/harness-standards/SKILL.md`.
 
-## Workspace Layout
+## Layout
 
 | Path | Purpose |
 |------|---------|
-| `knowledge-center/` | Obsidian vault — all artifacts, wiki, and the artifact map |
-| `knowledge-center/artifacts/{TICKET}/` | Per-ticket work artifacts |
-| `knowledge-center/wiki/` | Durable reference docs and ADRs |
-| `.claude/agents/` | Agent definitions (harness, analyst, planner, builder, verifier, fixer) |
-| `.claude/skills/` | Skill scripts invoked by agents |
-| `.claude/projects/control-center/memory/` | Persistent memory across sessions |
-| `.cursor/` | Cursor Agent: `CURSOR.md`, `AGENTS.md`, `.cursor/rules/`, `.cursor/hooks.json` — see `CURSOR.md` (agents/skills stay under `.claude/`) |
+| `knowledge-center/` | Obsidian vault — artifacts, wiki, artifact map |
+| `knowledge-center/artifacts/{TICKET}/` | Per-ticket artifacts (`_template/` is the source; `_shared/` holds unscoped trackers) |
+| `knowledge-center/investigations/` | Pre-ticket dossiers (`investigate`) |
+| `knowledge-center/wiki/` · `logs/{YYYY-MM}/` | Durable docs/ADRs · per-author daily logs (`log-work`) |
+| `console/` | Delivery Console — boards + tabs + CLI (`console` skill); editor-agnostic |
+| `.claude/agents/` · `.claude/skills/` | 7 agents · 39 skills |
+| `.claude/projects/control-center/memory/` | Persistent memory |
+| `.cursor/` | Cursor Agent mirror — see `CURSOR.md` |
 
-## Agentic Pipeline
+**Filename convention (canonical: `consolidate`):** every artifact is `{TICKET}-{artifact}.md`, flat in the ticket dir, ending with a `## Links` block listing all siblings. Exceptions: `ticket.toml` + `{TICKET}-{questions,bugs,todos}.toml` are **CLI-mutated only** via `console/kanban.py` — never hand-edited; optional `ticket-scripts/`. Artifact-map rows use `[[{TICKET}-summary]]`.
 
-Pipeline stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY**
+## Order — the pipeline
 
-| Agent | Stages | Role |
-|-------|--------|------|
-| `harness` | All | Orchestrator — routes to specialists |
-| `analyst` | GROUND, CLARIFY | Context analysis, requirements |
-| `planner` | CANONICAL | Approach, slices, risks → plan.md |
-| `builder` | TEMPLATE, SIMPLIFY | Implements plan tasks one at a time |
-| `verifier` | VERIFY | Validates against acceptance criteria |
-| `fixer` | Any | Root-cause diagnosis and minimal patch |
+Stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY** (gates in core.md).
 
-Skills (`.claude/skills/`):
+| Agent | Stages | Skill order it runs |
+|-------|--------|---------------------|
+| `harness` | all | orchestrates: `trace-context` → `handoff` per transition → delegate → `reconcile`/`close-work` |
+| `analyst` | GROUND, CLARIFY | `analyze` → `requirements draft` → `challenge-requirements` → `requirements enrich` → `clarify`/`questions` → `requirements iterate`× → `requirements freeze` |
+| `planner` | CANONICAL | `requirements stories` → `plan` (flat) or `analyze-components` → `breakdown-tasks` (+`estimate`) → `challenge-plan` |
+| `builder` | TEMPLATE, SIMPLIFY | task-by-task from plan; `tech-select(confirm-existing)` before new deps; `progress-tracker` per task; `simplify` |
+| `verifier` | VERIFY | `challenge-implementation` → `verify cases` → `verify {scope}` → `validate-artifacts` (+links) → `reconcile` → `close-work` |
+| `fixer` | any | `fix` → `progress-tracker`; `evolve` on design shifts |
+| `deployer` | after close-work | ASK-gated: `invoke-project-skill` → sub-project publish → `log-work` |
 
-- **Setup/state:** `kickoff`, `trace-context`
-- **Analysis:** `analyze`, `manage-questions`, `clarify`
-- **Spec:** `requirements`, `validate`
-- **Decisions:** `tech-select` — pick a language/framework/library/package/pattern/architecture/API/UI/DB/etc.; researches the web, gates on user approval, records to `decision-log.md`
-- **Planning:** `plan`, `risk-scan`, `plan-effort`
-- **Build/fix:** `progress-tracker`, `fix`, `evolve`
-- **Stage gates:** `handoff`, `reconcile`
-- **Workspace:** `graph-sync`, `standup`, `close-work`
+Exactly **7 agents** — no additions without explicit user intent. Free-form entry point: **`/do {request}`** (lanes, ACT/ASK boundary: `do` skill). Terse mode: `/caveman`.
 
-### Rules
+## Skills
 
-- For multi-step work, delegate to `harness`. It routes to specialists which invoke skills.
-- One artifact directory per ticket: `knowledge-center/artifacts/{TICKET}/`
-- Use `kickoff` (not manual copy) to seed a new ticket from `_template/`. It also adds the artifact-map row.
-- Cross-file refs use Obsidian `[[wikilinks]]`.
-- Every agent starts every turn with `trace-context`.
-- Every stage transition goes through `handoff`.
-- Any artifact change post-freeze goes through `evolve` (never silent rewrite).
-- Memory lives at `.claude/projects/control-center/memory/`.
+39 skills; the live catalog (`.claude/skills/*/SKILL.md` frontmatter) is the source of truth — each description carries its triggers, ops/modes, and chain position. Never invent ids; the pipeline order lives in the agent protocols above.
 
-### Filename and linking convention
+## Console sync
 
-- Every artifact file inside a ticket directory MUST be named `{TICKET}-{artifact}.md`. Example for ticket `T013`: `T013-summary.md`, `T013-analysis.md`, `T013-requirements.md`, `T013-decision-log.md`, `T013-questions.md`, `T013-plan.md`, `T013-progress.md`, `T013-verification.md`.
-- This makes filenames globally unique across the vault, so Obsidian wikilinks like `[[T013-summary]]` resolve unambiguously from anywhere.
-- Every artifact ends with a `## Links` block listing every sibling artifact in the ticket. This forms a fully-connected cluster in Obsidian's graph view.
-- Skills that reference artifact files conceptually (e.g., "write to analysis.md") implicitly mean `{TICKET}-analysis.md` inside the ticket directory.
-- Artifact-map rows use `[[{TICKET}-summary]]`, not `[[{TICKET}/summary]]`.
+- Ticket + tracker state lives in TOML under the ticket dir, mutated **only** via `console/kanban.py` (directly or through `kickoff`/`questions`/`bugs`/`todos`/`close-work`).
+- Stage → lane: `kickoff` → `open` · first build task → `in-progress` · blocker → `blocked` · verification → `verify` · `close-work` → `done` (via `ticket move`; mapping canonical in the `console` skill).
+- The Work tab reads `log-work`'s daily files; the Agents tab launches backends from `console/config/agents.toml`; session hooks run `refresh --quiet`.
+
+## Rules
+
+- Multi-step work → delegate to `harness`; free-form/unscoped → `/do`.
+- New ticket → `kickoff` (never manual copy); every agent turn starts with `trace-context`; every stage transition goes through `handoff`; post-freeze changes go through `evolve` (never silent rewrite).
+- Cross-file refs are Obsidian `[[wikilinks]]`. Memory: `.claude/projects/control-center/memory/`.
+
+## Rule reference
+
+| Topic | Canonical path |
+|-------|----------------|
+| Gates, comms, evidence, token/test policy | `.claude/skills/harness-standards/SKILL.md` (+ `core.md`) |
+| Autonomous dispatch / terse output | `.claude/skills/do/SKILL.md` · `.claude/skills/caveman/SKILL.md` |
+| Artifact layout, naming, wikilinks | `.claude/skills/consolidate/SKILL.md` |
+| Delivery Console (boards, CLI, TOML) | `.claude/skills/console/SKILL.md` · `console/README.md` |
+| Workspace/git, multi-project routing | `.claude/skills/project-layout/SKILL.md` |
+| Adversarial critique | `.claude/skills/challenge-standards/rules.md` |
+| Open question lifecycle | `.claude/skills/clarify/question-templates.md` |
+| Test-case design | `.claude/skills/verify/SKILL.md` (scope cases) |
+| Templates registry | `.claude/skills/template/template-manifest.json` |
+| Daily activity log / timesheet | `.claude/skills/log-work/SKILL.md` |
