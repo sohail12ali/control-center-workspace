@@ -540,8 +540,9 @@
 
       // -- quiet hours ------------------------------------------------------
       function clock(id, value) {
-        var input = C.el("input", { type: "time", "aria-label": id,
-                                    style: "width:7.5em" });
+        var input = C.el("input", {
+          type: "time", "aria-label": id === "quiet_from" ? "Quiet from" : "Quiet until",
+        });
         input.value = value || "";
         input.addEventListener("change", function () {
           var patch = {};
@@ -550,17 +551,26 @@
         });
         return input;
       }
+      var on = d.quiet_from && d.quiet_to;
       body.appendChild(C.el("div", { class: "setrow" }, [
         C.icon("clock"),
         C.el("span", { class: "settext" }, [
           C.el("b", { text: "Quiet hours" }),
-          C.el("span", { text: d.quiet_from && d.quiet_to
+          C.el("span", { text: on
             ? "turn_end and job_error are held between these times. Approvals still come through."
             : "Off — set both times to hold the informational events overnight." }),
         ]),
-        clock("quiet_from", d.quiet_from),
-        C.el("span", { class: "muted", text: "to" }),
-        clock("quiet_to", d.quiet_to),
+        // One wrapper, so the pair moves to the next line together. Split
+        // across two lines they read as two unrelated fields.
+        C.el("div", { class: "setctl" }, [
+          clock("quiet_from", d.quiet_from),
+          C.el("span", { class: "muted", text: "to" }),
+          clock("quiet_to", d.quiet_to),
+          on ? C.el("button", {
+            class: "btn sm", title: "Turn quiet hours off",
+            onclick: function () { save({ quiet_from: "", quiet_to: "" }); },
+          }, [C.icon("x")]) : null,
+        ]),
       ]));
 
       // -- who may drive it (read-only, deliberately) -----------------------

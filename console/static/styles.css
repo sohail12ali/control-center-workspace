@@ -1682,12 +1682,35 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
 .flowline .farrow { color: var(--ink-3); }
 
 /* -- settings rows -- */
+/* A settings row: an icon or control, a label with its explanation, and
+   whatever operates it. It must WRAP.
+
+   Panels are laid out at `minmax(290px, 1fr)`, so one can be 290px wide. A row
+   carrying two time inputs and the word "to" spends ~200px of that on
+   controls, and with `flex: 1` (basis 0) the label column takes whatever is
+   left — about 13px, which renders one word per line down a column. Giving the
+   text a real flex-basis makes the controls wrap to their own line instead,
+   which is the outcome that was wanted at every width. */
 .setrow {
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
   padding: 9px 4px; border-bottom: 1px solid var(--line-soft);
 }
 .setrow:last-child { border-bottom: 0; }
-.setrow .settext { flex: 1; min-width: 0; }
+.setrow .settext { flex: 1 1 min(13rem, 100%); min-width: 0; }
+
+/* Controls that belong together — a from/to pair split across two lines reads
+   as two unrelated fields.
+
+   `flex-basis: 100%` puts them on their own line ALWAYS, rather than at
+   whatever width the arithmetic happens to break: nothing can share a line
+   with an item that asks for all of it. Deterministic beats tuned, because the
+   panel width here depends on the viewport, the column count and the browser's
+   own idea of how wide a time input should be. */
+.setctl {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  flex: 1 1 100%;
+}
+.setctl input[type="time"] { min-width: 7.5em; }
 .setrow .settext b { display: block; font-size: 12.8px; font-weight: 600; }
 .setrow .settext span { font-size: 11.8px; color: var(--ink-3); }
 
