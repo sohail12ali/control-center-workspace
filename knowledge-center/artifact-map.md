@@ -8,6 +8,13 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[CC-T006-summary]] — Phase 3b - remote: Tailscale bind, audit log, Telegram approval notifications — Complete — Sohail Ali — 2026-08-29
+- [[CC-T005-summary]] — Phase 4 - UI and chat: diff cards, command palette, pickers, cost badges — Complete — Sohail Ali — 2026-08-29
+- [[CC-T004-summary]] — Phase 3a - scheduler: cron-driven verbs on the job queue — Complete — Sohail Ali — 2026-08-29
+- [[CC-T003-summary]] — Phase 2 - OpenRouter backend: API transport, tool loop, skill injection, model routing — Complete — Sohail Ali — 2026-08-29
+- [[CC-T002-summary]] — Phase 1 - agent body: verbs, one-call context, worktrees, job queue, MCP — Complete — Sohail Ali — 2026-08-29
+- [[CC-T001-summary]] — Phase 0 - harness foundation: defects, tests, CI, telemetry — Complete — Sohail Ali — 2026-08-29
+
 ## Archived
 
 ---

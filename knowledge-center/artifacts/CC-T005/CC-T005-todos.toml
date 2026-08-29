@@ -1,0 +1,44 @@
+[meta]
+ticket = "CC-T005"
+tracker = "todos"
+updated = "2026-08-29T06:43:05Z"
+seq = 3
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "Composer @-file and /-skill inline pickers. Palette covers the intent for now; inline autocomplete in a growing textarea deserves its own pass."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-08-29"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-2"
+status = "open"
+text = "Artifact graph view for the Vault tab, ported from the ShopLC fork's vault-graph.js."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-08-29"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-3"
+status = "open"
+text = "Ticket drawer with artifacts, questions, bugs, todos and timeline in one panel."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-08-29"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""

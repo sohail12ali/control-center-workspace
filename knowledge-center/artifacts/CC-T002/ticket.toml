@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T002"
+title = "Phase 1 - agent body: verbs, one-call context, worktrees, job queue, MCP"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
