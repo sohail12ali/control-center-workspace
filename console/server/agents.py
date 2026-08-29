@@ -1,10 +1,21 @@
-"""Agents tab backend: launches a configured CLI (claude/cursor-agent, or
-whatever a fork adds to console/config/console.toml's [agents.backends])
-as a headless subprocess and tracks its output.
+"""Agents CLI backend: launches a configured CLI as a headless subprocess and
+tracks its output.
 
-This is the LEGACY one-shot path behind the `agents *` CLI verbs. The Agents
-*tab* uses the live-chat stack instead (agent_manager/agent_session: steering
-over stdin, SSE push, and a PreToolUse-hook approval gate — see
+Backends come from `console/config/agents.toml` via `agent_backends`, the SAME
+registry the Agents tab reads. That was not always true: this module used to
+read a second `[agents.backends]` table in console.toml, so `kanban agents
+launch claude` and the tab's claude could disagree about the command, the
+model, and the permission mode with nothing to flag it. One registry now, two
+consumers.
+
+A one-shot launch needs a one-shot argv, which is a per-backend fact: it comes
+from that row's `oneshot_args` (or `turn_args`, for a backend whose per-turn
+form already is one). A backend that declares neither cannot be launched this
+way and says so, rather than being handed a guess at its flags.
+
+This is the one-shot path behind the `agents *` CLI verbs. The Agents *tab*
+uses the live-chat stack instead (agent_manager/agent_session: steering over
+stdin, SSE push, and a PreToolUse-hook approval gate — see
 agent_approvals.py). This module documents its own remaining gaps rather than
 silently pretending to have parity:
 
@@ -14,9 +25,11 @@ silently pretending to have parity:
   Don't launch two jobs against the same ticket/repo concurrently. (True of
   the live chats too.)
 - No approval-hook gate on THIS one-shot path — a launched command runs with
-  whatever permission mode its own config/args grant it. The default `claude`
-  backend in console.toml uses `--permission-mode plan` for that reason.
-  Live chats DO gate: `gated_tools` in agents.toml installs the hook.
+  whatever permission mode its own config/args grant it. That is why a row's
+  `oneshot_args` should pass `{mode}` and why `launch()` defaults the mode to
+  the backend's own `default_mode` (`plan` for both bundled rows) instead of
+  leaving it unset. Live chats DO gate: `gated_tools` in agents.toml installs
+  the hook.
 
 Jobs are process-memory state (a dict keyed by job id) plus a best-effort
 JSON snapshot on disk (console/.cache/agent-runs/, gitignored) written when
@@ -33,7 +46,9 @@ import threading
 import time
 import uuid
 
+from . import agent_backends
 from . import boards as boards_mod
+from . import tickets as tickets_mod
 from .paths import find_repo_root
 
 _JOBS = {}
@@ -48,18 +63,39 @@ def _jobs_cache_dir(repo_root):
 
 
 def list_backends(repo_root=None):
+    """id -> {label, command, installed, launchable} for every configured row.
+
+    `launchable` is the field that matters here and nowhere else: a backend the
+    Agents *tab* drives happily (claude, over a long-lived stream) still has no
+    one-shot argv unless its row declares one, and saying so up front beats
+    failing at spawn time.
+    """
     repo_root = repo_root or find_repo_root()
-    cfg = boards_mod.load_console_config(repo_root)
-    backends = cfg.get("agents", {}).get("backends", {})
-    return {
-        key: {"label": val.get("label", key), "command": val.get("command", key)}
-        for key, val in backends.items()
-    }
+    out = {}
+    for bid, backend in agent_backends.registry(repo_root).items():
+        out[bid] = {
+            "label": backend.label,
+            "command": backend.command,
+            "transport": backend.transport,
+            "installed": backend.installed,
+            "launchable": bool(backend.raw.get("oneshot_args")
+                               or backend.raw.get("turn_args")),
+        }
+    return out
 
 
 def list_catalog(repo_root=None):
-    """Skills and personas (agent role files) discovered live off disk —
-    no hardcoded menu, matches this template's own skills/agents roster."""
+    """What the composer can offer: skills, personas, and open tickets.
+
+    All three are read live off disk rather than hardcoded, so the menu is this
+    checkout's real roster and cannot rot. The HTTP catalog route calls this —
+    it used to reimplement the globs, which meant the tab and the CLI could
+    show different rosters.
+
+    Tickets are here so a chat can say which ticket it is working on, which is
+    what makes its telemetry attributable. Terminal lanes are excluded: you do
+    not start new work on a closed ticket, and offering one invites a misfile.
+    """
     repo_root = repo_root or find_repo_root()
     skills = sorted(
         os.path.basename(os.path.dirname(p))
@@ -69,15 +105,42 @@ def list_catalog(repo_root=None):
         os.path.splitext(os.path.basename(p))[0]
         for p in glob.glob(os.path.join(repo_root, ".claude", "agents", "*.md"))
     )
-    return {"skills": skills, "personas": personas}
+    return {"skills": skills, "personas": personas,
+            "tickets": _open_tickets(repo_root)}
 
 
-def _build_argv(backend_cfg, prompt):
-    command = backend_cfg.get("command")
-    if not command:
-        raise ValueError("backend config is missing 'command'")
-    args = [a.replace("{prompt}", prompt) for a in backend_cfg.get("args", [])]
-    return [command] + args
+def _open_tickets(repo_root):
+    """[{id, title, stage}] for every ticket not sitting in a terminal lane."""
+    out = []
+    for ticket in tickets_mod.list_tickets(repo_root):
+        kind = ticket.get("kind") or "tickets"
+        try:
+            lanes = {l["id"]: l for l in boards_mod.lanes_for(kind, repo_root)}
+        except ValueError:
+            continue  # a ticket whose board config is gone is not offerable
+        lane = lanes.get(ticket.get("stage") or "")
+        if lane and lane.get("terminal"):
+            continue
+        out.append({"id": ticket.get("id", ""),
+                    "title": ticket.get("title", ""),
+                    "stage": ticket.get("stage", "")})
+    return out
+
+
+def _build_argv(backend, prompt, mode="", model=""):
+    """One-shot argv from the backend's own template.
+
+    `Backend.turn_argv` picks `turn_args` or `oneshot_args` and resolves the
+    command to a full path — the latter matters on Windows, where a CLI is
+    often a .CMD shim that CreateProcess will not find by bare name.
+    """
+    if not (backend.raw.get("oneshot_args") or backend.raw.get("turn_args")):
+        raise ValueError(
+            "backend %r declares no oneshot_args/turn_args, so it cannot be "
+            "launched one-shot; use the Agents tab (transport %r) or add a "
+            "oneshot_args row to console/config/agents.toml"
+            % (backend.id, backend.transport))
+    return backend.turn_argv(prompt, mode=mode, model=model)
 
 
 def _reader_thread(job_id, proc, repo_root):
@@ -121,32 +184,15 @@ def _persist_job(repo_root, job_id):
         json.dump(snapshot, f, indent=2)
 
 
-def compose_prompt(prompt, skill=None, persona=None):
-    """Prefix the user's text with a skill invocation and/or persona mention.
-
-    Kept as its own function (and applied before argv building) so the
-    composition rule is one testable thing rather than string-fiddling
-    scattered through the launcher. Both parts are optional — a bare prompt
-    passes through untouched.
-    """
-    parts = []
-    if persona:
-        parts.append(f"@{persona}")
-    if skill:
-        parts.append(f"/{skill}")
-    prefix = " ".join(parts)
-    return f"{prefix} {prompt}".strip() if prefix else prompt
-
-
-def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None):
+def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None,
+           mode="", model=""):
     repo_root = repo_root or find_repo_root()
-    backends = boards_mod.load_console_config(repo_root).get("agents", {}).get("backends", {})
-    backend_cfg = backends.get(backend_id)
-    if not backend_cfg:
-        raise ValueError(f"unknown agent backend: {backend_id!r}; configured: {list(backends)}")
+    backend = agent_backends.get(repo_root, backend_id)
     if not (prompt or "").strip():
         raise ValueError("prompt is empty")
-    prompt = compose_prompt(prompt, skill=skill, persona=persona)
+    # How a skill/persona is referenced is the backend's own convention
+    # (slash commands vs. naming the SKILL.md path), so the backend composes it.
+    prompt = backend.compose_prompt(prompt, skill=skill or "", persona=persona or "")
 
     run_cwd = os.path.join(repo_root, cwd) if cwd else repo_root
     run_cwd = os.path.abspath(run_cwd)
@@ -155,7 +201,7 @@ def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None):
     if not os.path.isdir(run_cwd):
         raise FileNotFoundError(f"cwd does not exist: {cwd!r}")
 
-    argv = _build_argv(backend_cfg, prompt)
+    argv = _build_argv(backend, prompt, mode=mode, model=model)
     job_id = uuid.uuid4().hex[:12]
 
     try:

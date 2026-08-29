@@ -41,6 +41,18 @@ from . import tomlio
 
 CONFIG_REL = os.path.join("console", "config", "agents.toml")
 
+#: The transports a backend row may declare.
+#:
+#: `openai_api` is the odd one out and deliberately so: the other three spawn
+#: somebody else's agent and inherit its tools and permission model, while this
+#: one has no process at all — the console runs the loop, holding its own verbs
+#: as tools and its own approval gate. See `agent_api_session`.
+TRANSPORTS = ("stream_json", "resume", "oneshot", "openai_api")
+
+#: Transports with no executable. `installed` means "has a key" for these, and
+#: asking PATH about them would report every one as missing.
+API_TRANSPORTS = ("openai_api",)
+
 _cache = {}
 
 
@@ -123,10 +135,10 @@ class Backend:
         self.label = row.get("label", self.id)
         self.command = row.get("command", self.id)
         self.transport = row.get("transport", "oneshot")
-        if self.transport not in ("stream_json", "resume", "oneshot"):
+        if self.transport not in TRANSPORTS:
             raise ValueError(
-                "backend %r: unknown transport %r (stream_json|resume|oneshot)"
-                % (self.id, self.transport)
+                "backend %r: unknown transport %r (%s)"
+                % (self.id, self.transport, "|".join(TRANSPORTS))
             )
         self.modes = list(row.get("modes", []))
         self.default_mode = row.get("default_mode", self.modes[0] if self.modes else "")
@@ -154,20 +166,47 @@ class Backend:
 
     # -- capability flags the UI reads instead of hardcoding CLI names -------
     @property
+    def is_api(self):
+        return self.transport in API_TRANSPORTS
+
+    @property
     def steerable(self):
+        # An API turn is a sequence of HTTP requests with no open channel to
+        # write down, so a message can only be queued for the next turn.
         return self.transport == "stream_json"
 
     @property
     def resumable(self):
-        return self.transport in ("stream_json", "resume")
+        return self.transport in ("stream_json", "resume", "openai_api")
 
     @property
     def streaming(self):
-        return self.transport in ("stream_json", "resume")
+        return self.transport in ("stream_json", "resume", "openai_api")
+
+    @property
+    def api_key_env(self):
+        return self.raw.get("api_key_env") or "OPENROUTER_API_KEY"
 
     @property
     def installed(self):
+        """Whether this backend can actually be used right now.
+
+        For an API backend that is "a key is set", not "a command is on PATH".
+        Asking PATH about a backend with no executable reports it as missing
+        and the UI greys out something that would have worked.
+        """
+        if self.is_api:
+            return bool(os.environ.get(self.api_key_env, "").strip())
         return self.resolved_command is not None
+
+    @property
+    def unavailable_reason(self):
+        if self.installed:
+            return ""
+        if self.is_api:
+            return ("%s is not set in this environment. Export it in the shell "
+                    "that starts the console." % self.api_key_env)
+        return "%s is not on PATH (command: %s)" % (self.label, self.command)
 
     @property
     def resolved_command(self):
@@ -202,8 +241,13 @@ class Backend:
             "modes": [{"id": m, "blurb": self.mode_blurbs.get(m, "")} for m in self.modes],
             "default_mode": self.default_mode,
             "models": self.models,
-            "approval_gate": bool(self.gated_tools) and self.transport == "stream_json",
+            # An API session gates in-process, so the hook-only restriction
+            # that applies to a CLI backend does not apply to it.
+            "approval_gate": bool(self.gated_tools) and (
+                self.transport == "stream_json" or self.is_api),
             "prompt_prefix_style": self.raw.get("prompt_prefix_style", "slash"),
+            "is_api": self.is_api,
+            "unavailable_reason": self.unavailable_reason,
         }
 
     # -- argv builders -------------------------------------------------------

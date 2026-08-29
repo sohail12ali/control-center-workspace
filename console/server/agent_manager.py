@@ -39,7 +39,7 @@ def _paths(repo_root, sid):
 
 
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
-           persona="", title="", server_port=0):
+           persona="", title="", server_port=0, ticket=""):
     """Start a chat and send its opening message."""
     backend = agent_backends.get(repo_root, backend_id)
     if not backend.installed:
@@ -72,7 +72,7 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         sid, backend, repo_root, log_path=log_path,
         title=title or text[:80], model=model, mode=mode,
         skill=skill, persona=persona, on_exit=_on_exit,
-        settings_path=settings_path)
+        settings_path=settings_path, ticket=ticket)
 
     with _lock:
         _sessions[sid] = sess

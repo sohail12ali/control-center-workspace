@@ -14,6 +14,12 @@
 #                output, but stdin is not a channel, so a message can only be
 #                QUEUED for the next turn.
 #   oneshot      one process, one prompt, no continuation.
+#   openai_api   NO process at all. The console talks to an OpenAI-compatible
+#                HTTP endpoint and runs the agent loop itself, which is what
+#                lets that loop hold the console's own verbs as tools and use
+#                the same approval gate. Needs `base_url` + `api_key_env`
+#                instead of `command`, and `installed` means "the key is set",
+#                not "a binary is on PATH".
 #
 # The UI reads `steerable` from the transport and hides the steer control
 # where the CLI cannot do it, rather than offering a button that lies.
@@ -56,6 +62,18 @@ session_args = [
   "--settings", "{settings}",
 ]
 add_dir_args = ["--add-dir", "{dir}"]
+
+# The one-shot form, used by `kanban agents launch` (and nothing else — the tab
+# always opens a session). Kept separate from session_args because the two are
+# genuinely different invocations, not the same one with a flag removed: no
+# stream-json stdin channel, no partial messages, no approval hook. A backend
+# with no oneshot_args and no turn_args simply cannot be launched that way, and
+# `agents.launch()` says so instead of guessing at flags.
+oneshot_args = [
+  "-p", "{prompt}",
+  "--permission-mode", "{mode}",
+  "--model", "{model}",
+]
 
 modes = ["plan", "default", "acceptEdits"]
 default_mode = "plan"
@@ -158,6 +176,55 @@ default_mode = "plan"
 ask = "read-only Q&A — explains, never edits"
 plan = "analyse and propose; no edits"
 default = "prompts before anything unsafe"
+
+# ------------------------------------------------------------ openrouter ----
+# No process, no CLI. The console runs the loop, so the tools this agent holds
+# are the console's own verbs plus the workspace tools in
+# `console/server/agent_tools.py`, and gated calls raise the same "Permission
+# needed" card a human already answers for Claude Code.
+#
+# Set OPENROUTER_API_KEY in the workspace's `.env` (gitignored, loaded
+# automatically) or export it in your shell — an exported value always wins.
+# The key is read per request, never stored on the session, and never written
+# to a transcript, an event, or a telemetry record. Agents cannot read `.env`
+# either: it is in the tools' refused-paths list.
+#
+# `enabled = false` by default: this template ships no key and cannot verify
+# one, so the backend stays out of the composer until someone turns it on
+# deliberately. Flip it to true once the key is set.
+
+[[backend]]
+id = "openrouter"
+label = "OpenRouter"
+transport = "openai_api"
+enabled = true
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = 180
+
+# A skill has to be INJECTED for a model with no slash-command system, which
+# prompt_build.py does — so the prompt itself carries the text, and nothing is
+# prefixed onto the user's message.
+prompt_prefix_style = "none"
+
+# The loop is the console's, so this list is enforced by the console rather
+# than by a CLI's own hook. Read-only `console_*` verbs are deliberately NOT
+# gated: asking a human to approve "look up this ticket's lane" trains them to
+# click allow without reading, which is how a gate stops working for the calls
+# that matter.
+gated_tools = ["write_file", "edit_file", "run_command"]
+approval_timeout = 300
+
+modes = ["default"]
+default_mode = "default"
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+# A SHORTLIST, NOT A CATALOGUE — OpenRouter serves hundreds of models and the
+# composer keeps a custom-id box beside the picker. Ids are passed verbatim.
+# Deliberately left empty in the template: model availability and pricing move,
+# and a stale hardcoded list is worse than an empty one plus a paste box.
+models = []
 
 # ------------------------------------------------------------- examples -----
 # A third CLI, or a local script, needs nothing but a row. Enable and edit:
