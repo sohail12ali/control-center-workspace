@@ -58,10 +58,16 @@ class Approvals:
         self._lock = threading.Lock()
 
     def request(self, chat, tool, tool_input, tool_use_id, publish,
-                timeout=DEFAULT_TIMEOUT):
+                timeout=DEFAULT_TIMEOUT, repo_root=None, title=""):
         """Park the calling thread until a human answers or the timeout hits.
 
         Returns ``(decision, reason)`` where decision is ``allow`` or ``deny``.
+
+        ``repo_root`` enables the preview — a diff for a file write, the command
+        for a shell call. Optional so a caller without one still works, but
+        passing it is what turns this from a yes/no prompt into a review: a card
+        showing escaped JSON gets approved unread, which is a speed bump with a
+        log rather than a gate.
         """
         with self._lock:
             if tool in self._session_allow.get(chat, ()):
@@ -72,9 +78,33 @@ class Approvals:
         with self._lock:
             self._pending[key] = p
 
+        preview = None
+        if repo_root:
+            try:
+                from . import tool_preview
+                preview = tool_preview.build(repo_root, tool, tool_input)
+            except Exception:  # noqa: BLE001
+                # A preview is a convenience. Failing to build one must never
+                # stop the question being asked, or a gated tool would run
+                # unreviewed because the diff crashed.
+                preview = None
+
         publish({"type": "approval.request", "key": key, "tool": tool,
                  "input": tool_input, "tool_use_id": tool_use_id,
-                 "timeout": timeout})
+                 "preview": preview, "timeout": timeout})
+
+        # Reach a phone. Without this a run started from anywhere but this
+        # desk stalls here and dies on the timeout with nothing said about it.
+        # Best-effort and off the calling thread: a notification that cannot
+        # be delivered must never delay or fail the run it describes.
+        if repo_root:
+            try:
+                from . import notify
+                notify.send(repo_root, "approval",
+                            notify.approval_message(tool, tool_input, preview,
+                                                    timeout, chat_title=title))
+            except Exception:  # noqa: BLE001
+                pass
 
         answered = p.event.wait(timeout=timeout)
         with self._lock:
