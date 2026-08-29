@@ -286,6 +286,10 @@
       .then(function (d) {
         st.catalogs[id] = d.error ? { models: [] } : d;
         if (st.mode === "new" && st.form.backend === id) paintMain();
+        // A running chat needs it too: the catalogue is what tells the budget
+        // panel whether this model is priced at zero, and without it a
+        // genuinely free model reads as "unpriced".
+        else if (st.mode === "chat" && st.repaintChat) st.repaintChat();
       })
       .catch(function () { st.catalogs[id] = { models: [] }; });
   }
@@ -566,6 +570,7 @@
       ticketField(),
       field("Opening message",
             "type / for a skill, @ for an agent, # for a file", promptWrap),
+      C.el("div", { class: "ct-refs", id: "agRefs" }),
       micWrap,
       C.el("div", { class: "row", style: "flex-wrap:wrap" }, [
         C.el("button", { class: "btn primary", id: "agStart", disabled: true, onclick: startChat },
@@ -575,9 +580,57 @@
     ]);
   }
 
+  /* What this message will actually resolve to, shown before it is sent.
+
+     The same rule the wire uses: a token counts only if it names something
+     real. Without this the only way to discover that `/pln` is a typo — and
+     will travel as prose rather than loading a skill — is to send it and read
+     a reply that ignored it. Unresolved tokens are named too, because silence
+     about them is what made the typo invisible in the first place. */
+  var REF_RE = /(?:^|\s)([/@#])([A-Za-z0-9][A-Za-z0-9._\-/\\]*)/g;
+  var REF_KINDS = { "/": "skill", "@": "persona", "#": "path" };
+
+  function scanRefs(text) {
+    var known = {
+      skill: st.catalog.skills || [],
+      persona: st.catalog.personas || [],
+      path: st.catalog.paths || [],
+    };
+    var found = [], unknown = [], m;
+    REF_RE.lastIndex = 0;
+    while ((m = REF_RE.exec(text || "")) !== null) {
+      var kind = REF_KINDS[m[1]];
+      if (known[kind].indexOf(m[2]) !== -1) found.push({ kind: kind, raw: m[1] + m[2] });
+      else unknown.push(m[1] + m[2]);
+    }
+    return { found: found, unknown: unknown };
+  }
+
+  function paintRefs(host, text) {
+    if (!host) return;
+    C.clear(host);
+    var r = scanRefs(text);
+    if (!r.found.length && !r.unknown.length) return;
+    if (r.found.length) {
+      host.appendChild(C.el("span", { text: "sending with" }));
+      r.found.forEach(function (f) {
+        host.appendChild(C.el("span", { class: "ct-ref ref-" + f.kind, text: f.raw }));
+      });
+    }
+    if (r.unknown.length) {
+      // Named, not corrected. It may well be prose — "and/or", an issue
+      // number — and rewriting someone's words would be worse than saying
+      // plainly that this one will travel as text.
+      host.appendChild(C.el("span", { class: "muted", title:
+        "No skill, agent or file by that name, so it is sent as plain text.",
+        text: (r.found.length ? "· " : "") + r.unknown.join(" ") + " as text" }));
+    }
+  }
+
   function syncStart() {
     var btn = document.getElementById("agStart");
     if (btn) btn.disabled = !st.form.prompt.trim();
+    paintRefs(document.getElementById("agRefs"), st.form.prompt);
   }
 
   function startChat() {
@@ -608,6 +661,9 @@
     if (st.offMeta) { st.offMeta(); st.offMeta = null; }
     if (st.view) { st.view.destroy(); st.view = null; }
     if (st.store) { st.store.destroy(); st.store = null; }
+    // Dropped with the panes it paints: an in-flight catalogue fetch resolving
+    // after a chat switch would otherwise repaint nodes that are gone.
+    st.repaintChat = null;
   }
 
   function openChat(id) {
@@ -683,14 +739,18 @@
 
     var store = Store.create(id);
     st.store = store;
-    var view = Render.mount(scroll, store, {});
+    // The same catalog the picker offers, so a reference highlighted in the
+    // transcript is one the server also recognised.
+    var view = Render.mount(scroll, store, { catalog: st.catalog });
     st.view = view;
 
-    st.offMeta = store.on("meta", function () {
+    st.repaintChat = function () {
+      if (st.store !== store) return;   // a later chat owns the panes now
       paintHead(head, store);
       paintRail2(rail, store);
       paintComposer(composer, store);
-    });
+    };
+    st.offMeta = store.on("meta", st.repaintChat);
 
     // Auto read-aloud, if the user asked for it: speak each finished reply.
     // Never during history replay — reopening a chat must not re-read it.
@@ -722,9 +782,8 @@
     C.clear(scroll).appendChild(C.skeleton(5));
     store.load().then(function () {
       view.renderAll();
-      paintHead(head, store);
-      paintRail2(rail, store);
-      paintComposer(composer, store);
+      loadCatalog((store.state.snapshot || store.state.meta || {}).agent || "");
+      st.repaintChat();
       store.subscribe();
     }).catch(function (err) {
       C.clear(scroll).appendChild(C.errbox(err));
@@ -754,6 +813,36 @@
           [C.icon("wrench"), "cli-gated"]);
   }
 
+  function modelChip(id) {
+    if (!id) return null;
+    // The trailing segment is the distinguishing part — `openai/gpt-4o-mini`
+    // and `openai/gpt-4o` differ at the end, never at the vendor prefix.
+    var short = id.length > 26 ? "…" + id.slice(-25) : id;
+    return C.el("span", { class: "chip mono", title: id, text: short });
+  }
+
+  /* Free, but only on evidence.
+
+     A provider-hosted `:free` model genuinely costs nothing, and the fetched
+     catalogue says so — both prices are 0. Reading that is the difference
+     between "free" and "unpriced", and the console refuses to print the first
+     without proof, because a wrong "free" is the one error nobody checks. */
+  function priceOf(backendId, modelId) {
+    var cat = st.catalogs[backendId];
+    var rows = (cat && cat.models) || [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id === modelId) return rows[i];
+    }
+    return null;
+  }
+
+  function isFree(backendId, modelId) {
+    var b = backend(backendId);
+    if (b && b.is_local) return true;   // runs on this machine
+    var m = priceOf(backendId, modelId);
+    return !!m && m.input_per_mtok === 0 && m.output_per_mtok === 0;
+  }
+
   function paintHead(head, store) {
     var s = store.state;
     var meta = s.snapshot || s.meta || {};
@@ -765,8 +854,14 @@
              : C.el("span", { class: "chip" + (s.alive ? " ok" : "") }, [s.alive ? "live" : "ended"]),
       kindChip(meta.agent),
       meta.agent ? C.chip(meta.agent) : null,
-      meta.mode ? C.chip(meta.mode) : null,
-      s.model ? C.chip(s.model) : (meta.model ? C.chip(meta.model) : null),
+      // Same rule as the composer: a mode is worth a chip only where there
+      // was a choice. Every console agent declares `modes = ["default"]`, so
+      // this chip said "default" and meant nothing.
+      meta.mode && (backend(meta.agent) || {modes: []}).modes.length > 1
+        ? C.chip(meta.mode) : null,
+      // A model id runs to `nvidia/nemotron-3.5-lightning:free` and was taking
+      // half the bar. Truncated in place, whole thing on hover.
+      modelChip(s.model || meta.model),
       s.usage.cost ? C.chip("$" + s.usage.cost.toFixed(4)) : null,
       s.usage.turns ? C.chip(s.usage.turns + " turns") : null,
       C.el("span", { class: "grow" }),
@@ -817,7 +912,7 @@
           C.el("span", { text: label }),
           C.el("b", { text: value }),
         ]),
-        C.el("div", { class: "ct-bar" + (tone ? " " + tone : "") },
+        C.el("div", { class: "ct-gauge" + (tone ? " " + tone : "") },
           [C.el("i", { style: "width:" + fill + "%" })]),
       ];
     }
@@ -828,15 +923,20 @@
       C.el("span", { text: "History kept" }),
       C.el("b", { text: String(budgets.history_messages) }),
     ]));
+    var model = s.model || meta.model || "";
+    var free = isFree(meta.agent, model);
     kids.push(C.el("div", { class: "ct-meter" }, [
       C.el("span", { text: "Spend" }),
-      // Local models are the one case where free is the truth rather than an
-      // absent price, and the card already says which machine it runs on.
-      C.el("b", { text: b && b.is_local ? "free"
+      // "free" only where something says so — a local runtime, or a catalogue
+      // row priced at zero. Otherwise "unpriced", which means we do not know,
+      // and must never be rendered as $0.00.
+      C.el("b", { text: free ? "free"
         : (s.usage.cost ? "$" + s.usage.cost.toFixed(4) : "unpriced") }),
     ]));
-    if (b && b.is_local) {
-      kids.push(C.el("div", { class: "muted", text: "Runs on this machine." }));
+    if (free) {
+      kids.push(C.el("div", { class: "muted", text: b && b.is_local
+        ? "Runs on this machine."
+        : "This model is priced at zero in the provider's catalogue." }));
     }
     return C.el("section", { class: "ct-panel" },
       [C.el("h4", { text: "Console budget" })].concat(kids));
@@ -1029,6 +1129,13 @@
       C.el("button", { class: "btn primary ct-go", onclick: fire, title: sendLabel },
         [C.icon(sendIcon), C.el("span", { class: "blab", text: sendLabel })]),
     ]));
+
+    // Same judgement as the New-chat form, live on every keystroke. It has to
+    // be here too: since `agent_manager.send` started resolving tokens, a
+    // reference typed mid-conversation is as real as one typed at the start.
+    var refs = C.el("div", { class: "ct-refs" });
+    composer.appendChild(refs);
+    ta.addEventListener("input", function () { paintRefs(refs, ta.value); });
   }
 
   /* ---------------- render ---------------- */

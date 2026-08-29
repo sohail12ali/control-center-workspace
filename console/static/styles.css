@@ -772,6 +772,48 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 .ct-wire { margin-top: 5px; }
 .ct-wire > summary { cursor: pointer; font-size: 11px; }
 
+/* The reply. It had this class and no rule, so it rendered as bare unlabelled
+   text next to a user message with an icon and a filled bubble — the two
+   halves of one conversation looking like two different kinds of thing.
+
+   Deliberately NOT a matching bubble: a reply is long-form prose with
+   headings, lists and code, and boxing that costs more in readability than
+   the symmetry is worth. A quiet rule down the side marks the turn instead. */
+.ct-assistant {
+  border-left: 2px solid var(--line);
+  padding-left: 11px; margin-left: 1px;
+}
+.ct-assistant .ct-who { color: var(--ink-3); }
+.ct-assistant .ct-who svg.ico { color: var(--accent); }
+.ct-assistant .ct-who > span { text-transform: none; letter-spacing: .01em;
+  font-family: var(--mono); font-size: 10px; font-weight: 600; max-width: 30ch; }
+
+/* A resolved reference, marked in the message it was sent in.
+
+   `/do` as prose and `/do` naming a real skill are the same six characters and
+   do entirely different things — one is text, the other loads a file into the
+   agent's instructions. `prompt_tokens` already draws that line on the wire
+   (a token is rewritten ONLY when it resolves); this is the same line, drawn
+   where a person can see it. Anything that did not resolve is left looking
+   exactly like the prose it will be treated as. */
+.ct-ref {
+  border-radius: 5px; padding: 0 3px; font-family: var(--mono);
+  font-size: .92em; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.ct-ref.ref-skill   { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.ct-ref.ref-persona { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
+.ct-ref.ref-path    { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+
+/* Live echo of the same judgement, under the composer: what WILL resolve if
+   this is sent now. Without it the only way to find out that `/pln` is a typo
+   is to send it and read the reply. */
+.ct-refs {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 11px; color: var(--ink-3);
+}
+.ct-refs .ct-ref { font-size: 10.5px; }
+
 .ct-md { font-size: 13.2px; line-height: 1.62; }
 .ct-md .md > *:first-child { margin-top: 0; }
 .ct-md .md > *:last-child { margin-bottom: 0; }
@@ -1205,15 +1247,21 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent);
 }
 
-/* Budget pressure while a turn is still running. */
+/* Budget pressure while a turn is still running.
+
+   `ct-gauge`, NOT `ct-bar`: `.ct-bar` is already the composer's toolbar, 300
+   lines up. Defining it a second time here silently won on cascade order and
+   gave that toolbar `height: 4px; overflow: hidden`, so every control in it —
+   send/queue, mic, read-aloud, announce — was clipped to a 4px sliver. The
+   rule looked local and reached across the whole file. */
 .ct-meter { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
 .ct-meter b { font-weight: 600; font-variant-numeric: tabular-nums; }
-.ct-bar {
+.ct-gauge {
   height: 4px; border-radius: 3px; background: var(--bg-sunk);
   overflow: hidden; margin: 4px 0 8px;
 }
-.ct-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
-.ct-bar.warn > i { background: var(--warn); }
+.ct-gauge > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.ct-gauge.warn > i { background: var(--warn); }
 
 /* -- inline / @ # picker ----------------------------------------------------
    Floats over the transcript rather than pushing the composer around as rows
@@ -1445,7 +1493,10 @@ pre.code.term { max-height: 52vh; font-size: 11.8px; }
    `ab-`-prefixed on purpose: `.steps`/`.step` belong to the Overview
    onboarding card (a grid ROW layout), and sharing the names let its
    grid-template-columns bleed into these cards and overlap the text. */
-.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+/* `.toc` itself lives with the prose rules further down — it is one component
+   with one rule, and it used to be two: this half set gap 6px and a 10px top
+   margin, the other set gap 5px and made it sticky. The second won on order,
+   so everything here except the top margin was already dead. */
 .ab-steps { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); margin: 8px 0 2px; }
 .ab-step { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r-md); padding: 10px 11px; }
 .ab-step .num {
@@ -1557,7 +1608,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
   display: flex; flex-wrap: wrap; gap: 5px;
   position: sticky; top: 0; z-index: 5;
   background: var(--bg); padding: 8px 0 9px;
-  border-bottom: 1px solid var(--line-soft); margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft); margin: 10px 0 2px;
 }
 .flowline { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 6px 0 12px; }
 .flowline .fbox { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r-sm); padding: 4px 9px; font-size: 11.5px; }

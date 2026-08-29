@@ -188,6 +188,19 @@ window.ConsoleComposerPick = (function (C) {
       var caret = token.start + insert.length;
       el.setSelectionRange(caret, caret);
       close();
+      /* Remember a chosen PATH on the catalog itself.
+
+         Skills and agents can be recognised later by looking them up in the
+         roster the picker was built from. A path cannot — the browser has no
+         way to stat the workspace — so the one moment its existence is known
+         for certain is right here, when it came back from
+         `/api/agents/files`. Recording it lets the transcript mark `#path` the
+         same way it marks `/skill`, without ever guessing at one that was
+         merely typed. */
+      if (TRIGGERS[token.trigger].kind === "path") {
+        if (!catalog.paths) catalog.paths = [];
+        if (catalog.paths.indexOf(row.value) === -1) catalog.paths.push(row.value);
+      }
       // The composer keeps its own copy of the text for the Start button's
       // enabled state; without this it would still think the box was empty.
       if (opts.onChange) opts.onChange(el.value);

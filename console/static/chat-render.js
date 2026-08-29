@@ -33,14 +33,61 @@ window.ConsoleChatRender = (function (C, MD) {
     return "wrench";
   }
 
+  /* A message with its `/skill`, `@agent` and `#file` references marked.
+
+     `/do` typed as prose and `/do` naming a real skill are the same six
+     characters and mean entirely different things — one is text, the other
+     loads a file into the agent's instructions. The wire format already draws
+     that line (`prompt_tokens` rewrites a token ONLY when it resolves), so the
+     transcript should draw it too, using the same rule: highlight what
+     resolved, leave everything else exactly as typed.
+
+     Resolution is checked against the same catalog the picker offers, so a
+     highlighted token is one the server will also have recognised. A `#path`
+     is marked only when the picker confirmed it — a bare string cannot be
+     stat'd from here, and guessing would highlight references that then do
+     nothing. */
+  var TOKEN_RE = /(?:^|\s)([/@#])([A-Za-z0-9][A-Za-z0-9._\-/\\]*)/g;
+  var KINDS = { "/": "skill", "@": "persona", "#": "path" };
+
+  function markRefs(text, catalog) {
+    var frag = document.createDocumentFragment();
+    if (!catalog) { frag.appendChild(document.createTextNode(text)); return frag; }
+    var known = {
+      skill: catalog.skills || [],
+      persona: catalog.personas || [],
+      path: catalog.paths || [],
+    };
+    var last = 0, m;
+    TOKEN_RE.lastIndex = 0;
+    while ((m = TOKEN_RE.exec(text)) !== null) {
+      var kind = KINDS[m[1]];
+      if (known[kind].indexOf(m[2]) === -1) continue;   // prose, left alone
+      // m.index may point at the leading space; the token starts after it.
+      var start = m.index + m[0].length - (m[1] + m[2]).length;
+      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+      frag.appendChild(C.el("span", {
+        class: "ct-ref ref-" + kind,
+        title: kind === "skill" ? "Skill — its instructions are loaded for this message"
+             : kind === "persona" ? "Agent — the role the reply is written from"
+             : "File — named for the agent to read",
+      }, [m[1] + m[2]]));
+      last = start + (m[1] + m[2]).length;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    return frag;
+  }
+
   /* ---------------- per-item builders ---------------- */
-  function userItem(item) {
+  function userItem(item, opts) {
+    var bubble = C.el("div", { class: "ct-bubble" });
+    bubble.appendChild(markRefs(item.text || "", (opts || {}).catalog));
     var node = C.el("div", { class: "ct-item ct-user" + (item.steered ? " ct-steered" : "") }, [
       C.el("div", { class: "ct-who" }, [
         item.steered ? C.icon("steer") : C.icon("user"),
         C.el("span", { text: item.steered ? "you · steered mid-turn" : "you" }),
       ]),
-      C.el("div", { class: "ct-bubble", text: item.text }),
+      bubble,
     ]);
     if (item.wire) {
       // The composed text differs from what was typed (a backend without
@@ -54,10 +101,25 @@ window.ConsoleChatRender = (function (C, MD) {
     return node;
   }
 
-  function textItem(item) {
+  /* The reply. It carried the class `ct-assistant` and no rule anywhere styled
+     it, so a reply rendered as bare unlabelled text beside a user message that
+     had both an icon and a filled bubble — the two halves of a conversation
+     looking like two different kinds of thing.
+
+     It gets a speaker line like the user's, but NOT a matching bubble: a reply
+     is long-form prose with headings, lists and code, and boxing that hurts
+     the reading. A quiet rule down the side marks the turn instead. */
+  function textItem(item, opts) {
     var body = C.el("div", { class: "ct-md" });
     body.appendChild(MD.render(item.text));
-    var node = C.el("div", { class: "ct-item ct-assistant" }, [body]);
+    var who = (opts || {}).speaker || "";
+    var node = C.el("div", { class: "ct-item ct-assistant" }, [
+      C.el("div", { class: "ct-who" }, [
+        C.icon("brain"),
+        C.el("span", { class: "truncate", text: who || "agent" }),
+      ]),
+      body,
+    ]);
     node._body = body;
     return node;
   }
@@ -281,12 +343,12 @@ window.ConsoleChatRender = (function (C, MD) {
     ]);
   }
 
-  function build(item) {
-    if (item.role === "user") return userItem(item);
+  function build(item, ctx) {
+    if (item.role === "user") return userItem(item, ctx);
     if (item.role === "system") return systemItem(item);
     if (item.kind === "thinking") return thinkingItem(item);
     if (item.kind === "tool") return toolItem(item);
-    return textItem(item);
+    return textItem(item, ctx);
   }
 
   /** Attach a renderer to a scroll host for one store. */
@@ -304,8 +366,19 @@ window.ConsoleChatRender = (function (C, MD) {
       if (force || stick) host.scrollTop = host.scrollHeight;
     }
 
+    /* Read fresh per item rather than captured once: the model is not known
+       until `session.init` arrives, which is after the first items exist. */
+    function ctx() {
+      var s = store.state;
+      return {
+        catalog: opts.catalog,
+        speaker: s.model || (s.snapshot || {}).model ||
+                 (s.meta || {}).agent || "",
+      };
+    }
+
     function addNode(item) {
-      var node = build(item);
+      var node = build(item, ctx());
       nodes[item.key] = node;
       host.appendChild(node);
       scroll(false);
