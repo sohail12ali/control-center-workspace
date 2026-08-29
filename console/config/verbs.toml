@@ -77,3 +77,12 @@ id = "skill-usage"
 label = "Skill usage"
 hint = "Which skills have fired, and which never have"
 handler = "verb_handlers.skill_usage"
+
+# Read-only by default — it serves the cached catalogue. `refresh=1` is the one
+# argument that reaches the provider's network, which is why re-fetching is an
+# explicit ask rather than what happens when you merely look.
+[[verb]]
+id = "agent-models"
+label = "Agent models"
+hint = "Cached model catalogue per API provider; pass backend=<id> refresh=1 to re-fetch"
+handler = "verb_handlers.agent_models"

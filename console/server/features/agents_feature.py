@@ -8,6 +8,7 @@ hiding a button.
 
 from .. import agent_approvals, agent_backends, agent_manager, audit
 from .. import agents as agents_mod
+from .. import model_catalog
 from ..httpd import EventSource
 from ..plugins.base import Plugin
 
@@ -39,6 +40,41 @@ def apply(ctx):
         # route used to repeat the globs, so the tab and the CLI could disagree
         # about what the roster even was.
         return agents_mod.list_catalog(repo_root)
+
+    def models(req):
+        """The CACHED catalogue. Deliberately offline: this is a GET, and a GET
+        that reaches a paid third-party API is one a browser will repeat on
+        back-navigation and a prefetcher will make unprompted."""
+        backend = (req.query.get("backend") or "").strip()
+        if not backend:
+            return {"providers": model_catalog.summary(repo_root)}
+        resolved, why = model_catalog.resolve(repo_root, backend)
+        if resolved is None:
+            return {"backend": backend, "models": [], "count": 0, "error": why}
+        hit = model_catalog.cached(repo_root, backend)
+        if not hit:
+            return {"backend": backend, "models": [], "count": 0,
+                    "error": "no cached catalogue yet"}
+        return {"backend": backend, "models": hit["models"],
+                "count": hit["count"], "fetched_at": hit["fetched_at"],
+                "age_days": hit["age_days"], "error": ""}
+
+    def models_refresh(req):
+        """Re-fetch from the provider. A POST because it leaves this machine.
+
+        Audited for the same reason `verb.run` is: it is an outbound call made
+        with the workspace's credentials, and "who asked this console to talk
+        to OpenRouter" is a question worth being able to answer.
+        """
+        backend = (req.body.get("backend") or "").strip()
+        if not backend:
+            raise ValueError("a backend id is required")
+        rows, error = model_catalog.fetch(repo_root, backend)
+        audit.record(repo_root, "models.refresh", actor=audit.actor_of(req),
+                     target=backend, detail={"count": len(rows)},
+                     outcome="ok" if not error else "error: %s" % error)
+        return {"backend": backend, "models": rows, "count": len(rows),
+                "error": error}
 
     # -- chats -------------------------------------------------------------
     def chats(req):
@@ -148,6 +184,8 @@ def apply(ctx):
 
     ctx.get(r"^/api/agents/backends/?$", backends, "agents.backends")
     ctx.get(r"^/api/agents/catalog/?$", catalog, "agents.catalog")
+    ctx.get(r"^/api/agents/models/?$", models, "agents.models")
+    ctx.post(r"^/api/agents/models/refresh/?$", models_refresh, "agents.models_refresh")
     ctx.get(r"^/api/agents/chats/?$", chats, "agents.chats")
     ctx.get(r"^/api/agents/chats/([^/]+)/stream/?$", chat_stream, "agents.stream")
     ctx.get(r"^/api/agents/chats/([^/]+)/?$", chat_get, "agents.chat")

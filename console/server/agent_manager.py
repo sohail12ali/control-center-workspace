@@ -43,9 +43,12 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
     """Start a chat and send its opening message."""
     backend = agent_backends.get(repo_root, backend_id)
     if not backend.installed:
-        raise ValueError(
-            "%s is not on PATH (command: %s). Install it, or pick another backend."
-            % (backend.label, backend.command))
+        # The backend knows why it is unusable, and "not on PATH" is simply
+        # wrong for a provider that has no binary — it sends someone off to
+        # install something when the real problem is an unset key or a server
+        # that is not running.
+        raise ValueError("%s Pick another backend, or fix that."
+                         % backend.unavailable_reason)
     text = (prompt or "").strip()
     if not text:
         raise ValueError("an opening message is required")

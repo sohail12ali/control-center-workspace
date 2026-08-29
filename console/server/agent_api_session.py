@@ -63,9 +63,12 @@ class ApiSession(BaseSession):
     def __init__(self, sid, backend, cwd, stream, **kw):
         super().__init__(sid, backend, cwd, stream, **kw)
         raw = backend.raw
+        # No OpenRouter default: a row with no api_key_env is a KEYLESS
+        # provider (Ollama, LM Studio), not an OpenRouter one. Defaulting sent
+        # the user's OpenRouter key to whatever base_url the row named.
         self.client = openai_client.Client(
             base_url=raw.get("base_url"),
-            api_key_env=raw.get("api_key_env") or "OPENROUTER_API_KEY",
+            api_key_env=backend.api_key_env,
             timeout=int(raw.get("timeout") or openai_client.DEFAULT_TIMEOUT),
             extra_headers=dict(raw.get("extra_headers", {}) or {}))
         self.model = self.model or raw.get("default_model") or ""

@@ -15,6 +15,7 @@ that logic belongs in the module that owns the fact, not in the glue.
 
 from . import context as context_mod
 from . import harness_lint
+from . import model_catalog
 from . import telemetry as telemetry_mod
 from . import tickets as tickets_mod
 from . import todos_agg
@@ -61,6 +62,34 @@ def telemetry_summary(repo_root, ticket=None, by="ticket"):
 
 def skill_usage(repo_root, ticket=None):
     return telemetry_mod.skill_usage(repo_root)
+
+
+def agent_models(repo_root, ticket=None, backend="", refresh=""):
+    """Cached model catalogue per API provider; `refresh=1` re-fetches.
+
+    Read-only by default so it is safe from the palette and from an agent's own
+    tool list. A refresh reaches the provider's network, which is why it is an
+    explicit argument rather than the default.
+    """
+    if not backend:
+        return {"providers": model_catalog.summary(repo_root)}
+    if str(refresh).lower() in ("1", "true", "yes", "on"):
+        rows, error = model_catalog.fetch(repo_root, backend)
+        return {"backend": backend, "models": rows, "count": len(rows),
+                "error": error, "refreshed": True}
+    # Same check `fetch` makes, so "this is a CLI" and "that row is disabled"
+    # read identically whether you looked or re-fetched.
+    resolved, why = model_catalog.resolve(repo_root, backend)
+    if resolved is None:
+        return {"backend": backend, "models": [], "count": 0,
+                "refreshed": False, "error": why}
+    hit = model_catalog.cached(repo_root, backend)
+    if not hit:
+        return {"backend": backend, "models": [], "count": 0, "refreshed": False,
+                "error": "no cached catalogue — run with refresh=1 to fetch one"}
+    return {"backend": backend, "models": hit["models"], "count": hit["count"],
+            "fetched_at": hit["fetched_at"], "age_days": hit["age_days"],
+            "refreshed": False, "error": ""}
 
 
 def open_todos(repo_root, ticket=None):

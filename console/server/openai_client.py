@@ -196,15 +196,24 @@ class Accumulator:
 class Client:
     """One configured endpoint. Holds no key — it is read per request."""
 
-    def __init__(self, base_url=None, api_key_env="OPENROUTER_API_KEY",
+    def __init__(self, base_url=None, api_key_env="",
                  timeout=DEFAULT_TIMEOUT, extra_headers=None):
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
-        self.api_key_env = api_key_env
+        # "" means this provider takes no key at all — a local server such as
+        # Ollama or LM Studio. Distinct from "a key is required and missing",
+        # which is what `has_key` being False on a named variable means.
+        self.api_key_env = api_key_env or ""
         self.timeout = timeout
         self.extra_headers = dict(extra_headers or {})
 
     @property
+    def keyless(self):
+        return not self.api_key_env
+
+    @property
     def has_key(self):
+        if self.keyless:
+            return True  # nothing to have; the endpoint is the credential
         return bool(os.environ.get(self.api_key_env, "").strip())
 
     def _key(self):
@@ -218,10 +227,11 @@ class Client:
         return key
 
     def _headers(self):
-        headers = {
-            "Authorization": "Bearer " + self._key(),
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        # A local server rejects or ignores an Authorization header, and
+        # sending one built from an empty string would be a Bearer of nothing.
+        if not self.keyless:
+            headers["Authorization"] = "Bearer " + self._key()
         headers.update(self.extra_headers)
         return headers
 

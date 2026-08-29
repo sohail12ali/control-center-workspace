@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime  # noqa: E402
 
-from server import agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, notify, overview, render, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
+from server import agent_backends, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
@@ -329,6 +329,96 @@ def cmd_agents_stop(args, repo_root):
     print(json.dumps(agents.stop_job(repo_root, args.job_id), indent=2))
 
 
+def cmd_agents_models(args, repo_root):
+    """Cached catalogue, or a re-fetch. Reading is offline; --refresh is the
+    only path that touches the provider's network."""
+    if not args.backend:
+        rows = model_catalog.summary(repo_root)
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            print("No API providers are enabled. Only those have a model "
+                  "endpoint; a CLI's shortlist lives in agents.toml.")
+            return
+        print("%-14s %-9s %8s  %s" % ("PROVIDER", "STATE", "MODELS", "CACHED"))
+        for row in rows:
+            print("%-14s %-9s %8s  %s" % (
+                row["id"],
+                "ready" if row["available"] else "unusable",
+                row["count"] or "-",
+                ("%s (%s days old)" % (row["fetched_at"], row["age_days"]))
+                if row["cached"] else "never fetched"))
+            if not row["available"] and row["reason"]:
+                print("               %s" % row["reason"])
+        return
+
+    if args.refresh:
+        rows, error = model_catalog.fetch(repo_root, args.backend)
+    else:
+        hit = model_catalog.cached(repo_root, args.backend)
+        if hit is None:
+            _resolved, why = model_catalog.resolve(repo_root, args.backend)
+            rows, error = [], why or (
+                "no cached catalogue for %r — run with --refresh" % args.backend)
+        else:
+            rows, error = hit["models"], ""
+
+    if args.json:
+        print(json.dumps({"backend": args.backend, "count": len(rows),
+                          "models": rows, "error": error}, indent=2))
+        return
+    if error:
+        print(error)
+    if rows:
+        print(model_catalog.format_list(rows))
+
+
+def cmd_agents_doctor(args, repo_root):
+    """Whether each configured backend can actually run, and why not.
+
+    Exists because "not installed" was the console's answer to four different
+    problems — a missing binary, an unset key, a server that is not running,
+    and a row someone disabled — and one word for four fixes is no help at all.
+    Disabled rows are included: a backend you switched off is exactly the one
+    you will later forget you switched off.
+    """
+    rows = []
+    cfg = agent_backends.load_config(repo_root, force=True)
+    enabled = agent_backends.registry(repo_root, force=True)
+    for raw in cfg.get("backend", []):
+        bid = raw.get("id") or "?"
+        if not raw.get("enabled", True):
+            rows.append({"id": bid, "label": raw.get("label", bid),
+                         "kind": raw.get("transport", "?"), "state": "disabled",
+                         "detail": "enabled = false in %s" % agent_backends.CONFIG_REL})
+            continue
+        backend = enabled.get(bid)
+        if backend is None:
+            continue
+        if backend.is_api:
+            kind = "local api" if backend.is_local else "api"
+            need = backend.api_key_env or "no key needed"
+        else:
+            kind = "cli"
+            need = backend.resolved_command or backend.command
+        rows.append({
+            "id": bid, "label": backend.label, "kind": kind, "needs": need,
+            "state": "ready" if backend.installed else "unusable",
+            "detail": backend.unavailable_reason,
+        })
+
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    print("%-14s %-10s %-9s %s" % ("BACKEND", "KIND", "STATE", "NEEDS"))
+    for row in rows:
+        print("%-14s %-10s %-9s %s" % (row["id"], row["kind"], row["state"],
+                                       row.get("needs", "")))
+        if row.get("detail") and row["state"] != "ready":
+            print("               %s" % row["detail"])
+
+
 def cmd_serve(args, repo_root):
     from server import httpd
 
@@ -488,6 +578,20 @@ def build_parser():
     p = agents_sub.add_parser("stop")
     p.add_argument("job_id")
     p.set_defaults(func=cmd_agents_stop)
+
+    p = agents_sub.add_parser(
+        "models", help="cached model catalogue per API provider")
+    p.add_argument("backend", nargs="?",
+                   help="provider id; omit for a per-provider summary")
+    p.add_argument("--refresh", action="store_true",
+                   help="re-fetch from the provider (the only networked path)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_agents_models)
+
+    p = agents_sub.add_parser(
+        "doctor", help="what each configured backend needs, and whether it has it")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_agents_doctor)
 
     p = sub.add_parser("serve")
     p.add_argument("--host")

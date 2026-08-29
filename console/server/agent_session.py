@@ -96,7 +96,7 @@ class BaseSession:
         self._turn_in = 0
         self._turn_out = 0
 
-        self._norm = Normalizer(flavor=backend.id)
+        self._norm = Normalizer()
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._busy = False

@@ -35,6 +35,12 @@ on a web page. A fork that wants one adds it to its own config and owns that.
 
 import os
 import shutil
+import socket
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import boards as boards_mod
 from . import tomlio
@@ -49,11 +55,111 @@ CONFIG_REL = os.path.join("console", "config", "agents.toml")
 #: as tools and its own approval gate. See `agent_api_session`.
 TRANSPORTS = ("stream_json", "resume", "oneshot", "openai_api")
 
-#: Transports with no executable. `installed` means "has a key" for these, and
-#: asking PATH about them would report every one as missing.
+#: Transports with no executable. Asking PATH about these reports every one as
+#: missing, so availability is answered by `auth` below instead.
 API_TRANSPORTS = ("openai_api",)
 
+#: How an API backend proves it is usable. This exists because "is it usable"
+#: has three genuinely different answers and one of them was previously
+#: unreachable:
+#:
+#:   key     a credential must be present in the environment (OpenRouter,
+#:           OpenAI, Groq). Availability is "the variable is set" — cheap,
+#:           local, and no network call.
+#:   none    no credential at all (Ollama, LM Studio, llama.cpp). The only
+#:           honest question is whether the server is RUNNING, which needs a
+#:           probe. Under the old model these were permanently unavailable:
+#:           `installed` asked whether a key was set, and there is no key.
+#:   probe   a credential is optional but the endpoint must answer (a shared
+#:           vLLM box behind a gateway).
+AUTH_MODES = ("key", "none", "probe")
+
+#: How long a reachability probe is trusted. `/api/agents/backends` is polled
+#: by the open tab, and a blocking socket call per provider per poll would
+#: stall it. Short enough that starting `ollama serve` shows up while you are
+#: still looking at the screen.
+PROBE_TTL = 10.0
+PROBE_TIMEOUT = 1.5
+
 _cache = {}
+_probe_cache = {}
+_probe_lock = threading.Lock()
+
+
+def _probe(url, timeout=PROBE_TIMEOUT, opener=None):
+    """Is something answering at `url`? Returns (ok, reason).
+
+    Never raises. A provider that is down must make its own card say so, not
+    take the page down with it — the same contract `notify` works to.
+
+    The reason is the entire value here. "Not available" sends someone reading
+    source; "connection refused — the server is not running" does not.
+    """
+    now = time.time()
+    with _probe_lock:
+        hit = _probe_cache.get(url)
+        if hit and now - hit[0] < PROBE_TTL:
+            return hit[1], hit[2]
+
+    ok, reason = False, ""
+    try:
+        request = urllib.request.Request(url, method="GET")
+        with (opener or urllib.request.urlopen)(request, timeout=timeout):
+            ok = True
+    except urllib.error.HTTPError:
+        # Any HTTP status at all means a server answered, which is the whole
+        # question. 401/404 is a live endpoint with an opinion, not a dead one.
+        ok = True
+    except urllib.error.URLError as exc:
+        ok = False
+        reason = _url_error_reason(exc, url)
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        reason = "%s while reaching %s" % (type(exc).__name__, url)
+
+    with _probe_lock:
+        _probe_cache[url] = (now, ok, reason)
+    return ok, reason
+
+
+def _url_error_reason(exc, url):
+    """Separate "nothing is listening there" from "that host does not exist".
+
+    They need different fixes — start the server, versus correct the base_url —
+    and one message for both sends half the readers the wrong way.
+
+    Classified by EXCEPTION TYPE, not by errno or by matching English in the
+    message. Both alternatives were tried and both are wrong here: errno for
+    "connection refused" is 61/111/10061 depending on platform, and on Windows
+    a closed loopback port does not raise ConnectionRefusedError at all — it
+    raises TimeoutError with errno None. Verified against 127.0.0.1:11434 with
+    Ollama installed but not serving.
+
+    Which is why a timeout to a LOOPBACK address is reported as "not running"
+    rather than "slow": a local port that is genuinely listening answers in
+    microseconds, so a 1.5s silence from localhost is a dead server every time.
+    A remote host is a different matter and keeps the honest "did not answer".
+    """
+    inner = getattr(exc, "reason", exc)
+    parts = urllib.parse.urlsplit(url)
+    host = parts.netloc or url
+    is_loopback = (parts.hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+    if isinstance(inner, socket.gaierror):
+        return "the host %s does not resolve — check base_url" % host
+    if isinstance(inner, ConnectionRefusedError):
+        return "nothing is listening on %s — is the server running?" % host
+    if isinstance(inner, (socket.timeout, TimeoutError)):
+        if is_loopback:
+            return "nothing is listening on %s — is the server running?" % host
+        return "%s did not answer within %gs" % (host, PROBE_TIMEOUT)
+    return "could not reach %s (%s)" % (host, inner)
+
+
+def forget_probes():
+    """Drop every cached probe. For tests, and for a config reload."""
+    with _probe_lock:
+        _probe_cache.clear()
 
 
 def load_config(repo_root, force=False):
@@ -126,7 +232,7 @@ class Backend:
 
     __slots__ = ("id", "label", "command", "transport", "modes", "default_mode",
                  "mode_flag", "mode_blurbs", "models", "gated_tools",
-                 "approval_timeout", "supports", "raw")
+                 "approval_timeout", "supports", "auth", "raw")
 
     def __init__(self, row):
         self.id = row.get("id") or ""
@@ -140,6 +246,26 @@ class Backend:
                 "backend %r: unknown transport %r (%s)"
                 % (self.id, self.transport, "|".join(TRANSPORTS))
             )
+        # How this backend proves it is usable. Only meaningful for a transport
+        # with no executable; a CLI's answer is always "is it on PATH".
+        self.auth = row.get("auth") or ("key" if self.transport in API_TRANSPORTS else "")
+        if self.transport in API_TRANSPORTS:
+            if self.auth not in AUTH_MODES:
+                raise ValueError(
+                    "backend %r: unknown auth %r (%s)"
+                    % (self.id, self.auth, "|".join(AUTH_MODES)))
+            # Caught at load, next to the ticket that names the row, rather
+            # than as a mystery 401 on the first turn. The old code defaulted a
+            # missing api_key_env to OPENROUTER_API_KEY, so a misconfigured
+            # OpenAI row silently authenticated with the wrong provider's key.
+            if self.auth == "key" and not row.get("api_key_env"):
+                raise ValueError(
+                    "backend %r: auth = \"key\" needs api_key_env (or set "
+                    "auth = \"none\" for a local server that takes no key)"
+                    % self.id)
+            if not row.get("base_url"):
+                raise ValueError("backend %r: transport %r needs a base_url"
+                                 % (self.id, self.transport))
         self.modes = list(row.get("modes", []))
         self.default_mode = row.get("default_mode", self.modes[0] if self.modes else "")
         self.mode_flag = row.get("mode_flag", "")
@@ -185,28 +311,82 @@ class Backend:
 
     @property
     def api_key_env(self):
-        return self.raw.get("api_key_env") or "OPENROUTER_API_KEY"
+        """The env var holding this provider's key, or "" for a keyless one.
+
+        No default. A fallback of "OPENROUTER_API_KEY" meant every row that
+        forgot the field quietly authenticated against OpenRouter's key —
+        wrong provider, confusing 401, and a key sent somewhere it was not
+        meant to go. `__init__` now refuses such a row instead.
+        """
+        return self.raw.get("api_key_env") or ""
+
+    @property
+    def base_url(self):
+        return (self.raw.get("base_url") or "").rstrip("/")
+
+    @property
+    def models_url(self):
+        """Where to ask for this provider's model list.
+
+        Defaults to the OpenAI-compatible `/models`, which every provider in
+        this file serves. Overridable because a provider that speaks the chat
+        shape does not always serve the catalogue at the same place.
+        """
+        explicit = (self.raw.get("models_url") or "").strip()
+        return explicit or (self.base_url + "/models" if self.base_url else "")
+
+    @property
+    def is_local(self):
+        """A provider running on this machine. Not cosmetic: local means free,
+        private, and offline-capable — the three things a person actually
+        wants to know before picking one."""
+        if not self.is_api:
+            return False
+        host = urllib.parse.urlsplit(self.base_url).hostname or ""
+        return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+    @property
+    def has_key(self):
+        return bool(self.api_key_env and os.environ.get(self.api_key_env, "").strip())
 
     @property
     def installed(self):
         """Whether this backend can actually be used right now.
 
-        For an API backend that is "a key is set", not "a command is on PATH".
-        Asking PATH about a backend with no executable reports it as missing
-        and the UI greys out something that would have worked.
+        Three different questions behind one name, because the answer depends
+        on what the backend IS:
+
+          a CLI          is the command on PATH
+          auth = "key"   is the credential in the environment
+          auth = "none"  is the server answering  (the probe)
+          auth = "probe" is the server answering, key optional
+
+        Asking any one of those about the wrong kind of backend greys out
+        something that would have worked. That is exactly what happened to
+        keyless local providers before: they were asked for a key they do not
+        have, so they were never available.
         """
-        if self.is_api:
-            return bool(os.environ.get(self.api_key_env, "").strip())
-        return self.resolved_command is not None
+        if not self.is_api:
+            return self.resolved_command is not None
+        if self.auth == "key":
+            return self.has_key
+        ok, _reason = _probe(self.models_url or self.base_url)
+        return ok
 
     @property
     def unavailable_reason(self):
         if self.installed:
             return ""
-        if self.is_api:
-            return ("%s is not set in this environment. Export it in the shell "
-                    "that starts the console." % self.api_key_env)
-        return "%s is not on PATH (command: %s)" % (self.label, self.command)
+        if not self.is_api:
+            return "%s is not on PATH (command: %s)" % (self.label, self.command)
+        if self.auth == "key":
+            return ("%s is not set in this environment. Put it in the "
+                    "workspace's .env or export it in the shell that starts "
+                    "the console." % self.api_key_env)
+        _ok, reason = _probe(self.models_url or self.base_url)
+        hint = self.raw.get("start_hint") or ""
+        return (reason + (" " + hint if hint else "")) or (
+            "%s is not answering." % (self.base_url or self.label))
 
     @property
     def resolved_command(self):
@@ -248,6 +428,14 @@ class Backend:
             "prompt_prefix_style": self.raw.get("prompt_prefix_style", "slash"),
             "is_api": self.is_api,
             "unavailable_reason": self.unavailable_reason,
+            # Setup facts, for the composer's grouping and the Settings panel.
+            # `key_env` is a variable NAME; the value is never sent anywhere.
+            "auth": self.auth,
+            "is_local": self.is_local,
+            "base_url": self.base_url,
+            "key_env": self.api_key_env,
+            "has_key": self.has_key,
+            "notes": self.raw.get("notes", "") or "",
         }
 
     # -- argv builders -------------------------------------------------------
@@ -327,7 +515,15 @@ def registry(repo_root, force=False):
 
 def get(repo_root, backend_id):
     reg = registry(repo_root)
-    if backend_id not in reg:
-        raise ValueError("unknown backend %r; configured: %s"
-                         % (backend_id, ", ".join(sorted(reg)) or "(none)"))
-    return reg[backend_id]
+    if backend_id in reg:
+        return reg[backend_id]
+    # "Unknown" and "switched off" need different fixes — add a row, versus
+    # flip one field — and one message for both sent people looking for a
+    # typo in a row that was sitting right there with `enabled = false`.
+    known = {row.get("id") for row in load_config(repo_root).get("backend", [])}
+    if backend_id in known:
+        raise ValueError(
+            "backend %r is configured but disabled. Set enabled = true on its "
+            "[[backend]] row in %s." % (backend_id, CONFIG_REL))
+    raise ValueError("unknown backend %r; enabled: %s"
+                     % (backend_id, ", ".join(sorted(reg)) or "(none)"))

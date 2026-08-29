@@ -41,7 +41,11 @@ _lock = threading.Lock()
 #: Actions worth a line. Anything that starts work or changes state; nothing
 #: that merely looks at it.
 ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
-           "job.cancel", "approval.decide", "schedule.fire")
+           "job.cancel", "approval.decide", "schedule.fire",
+           # An outbound call made with the workspace's credentials. Reading
+           # the cached catalogue is a read and is not recorded; re-fetching
+           # leaves this machine, which is the line everything else here draws.
+           "models.refresh")
 
 
 def audit_dir(repo_root):

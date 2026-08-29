@@ -226,6 +226,120 @@ default = "writes and shell ask you in the chat; reads and console lookups do no
 # and a stale hardcoded list is worse than an empty one plus a paste box.
 models = []
 
+# ------------------------------------------------------------------ qwen ----
+# Qwen Code — a coding CLI with a Claude-Code-shaped flag surface. Verified
+# against `qwen --help`, version 0.15.11, on 2026-08-29: every flag below is
+# real and its values are the documented ones.
+#
+# ONE-SHOT, and the `notes` line says so on the card. qwen does have
+# `-r/--resume <id>` and `--session-id`, so per-turn continuity is reachable —
+# but only if its stream-json init event carries a session id in the shape
+# `agent_session._observe` reads. That has NOT been verified here (it needs a
+# live run, which spends real quota), and a `resume_args` row written on the
+# assumption would degrade silently: `_expand` drops an empty `{resume_id}`,
+# so every turn would quietly start fresh while the UI implied a conversation.
+# One-shot that says it is one-shot beats continuity that might not be.
+#
+# To upgrade it: run a chat, check console/.cache/chats/<id>.log for an init
+# event with a session id, then add resume_args = [..., "--resume", "{resume_id}"].
+[[backend]]
+id = "qwen"
+label = "Qwen Code"
+command = "qwen"
+transport = "oneshot"
+prompt_prefix_style = "inline"
+notes = "one-shot — each turn starts fresh, with no memory of the last"
+
+# stream-json rather than text: it carries tool calls and usage, which the
+# normalizer already understands. Nothing about that parsing is claude-specific
+# — see Normalizer's docstring.
+turn_args = [
+  "--output-format", "stream-json",
+  "--include-partial-messages",
+  "--approval-mode", "{mode}",
+  "--model", "{model}",
+  "-p", "{prompt}",
+]
+add_dir_args = ["--include-directories", "{dir}"]
+
+modes = ["plan", "default", "auto-edit"]
+default_mode = "plan"
+[backend.mode_blurbs]
+plan = "plan only — proposes, never writes"
+default = "prompts for approval on its own terms, in its own process"
+auto-edit = "auto-approves edit tools; everything else still asks"
+
+# ---------------------------------------------------------------- ollama ----
+# A model running on this machine. Free, private, works offline.
+#
+# `auth = "none"` is the point of this row: Ollama takes no API key, and under
+# the previous availability model — which asked every API backend whether a key
+# was set — it could never be available. Availability here is a probe of
+# base_url: is the server actually answering.
+#
+# Ollama serves an OpenAI-compatible surface at /v1 alongside its native API,
+# so `openai_client` talks to it unchanged.
+#
+# ONE REAL CAVEAT, and it decides whether this is useful to you: the console
+# runs the agent loop, and that loop needs TOOL CALLING. Local model support
+# for tools is uneven — a model without it will hold a conversation but never
+# read a file or run a verb. Pick a tool-capable model (qwen3, llama3.1+,
+# mistral-nemo and similar); the session says so on the first turn if the model
+# ignores the tools it was offered.
+#
+# `enabled = false` because the template cannot know whether you run Ollama.
+[[backend]]
+id = "ollama"
+label = "Ollama"
+transport = "openai_api"
+enabled = false
+auth = "none"
+base_url = "http://127.0.0.1:11434/v1"
+timeout = 300
+start_hint = "Start it with `ollama serve`."
+notes = "local — free, private, offline. Needs a tool-capable model."
+prompt_prefix_style = "none"
+
+gated_tools = ["write_file", "edit_file", "run_command"]
+approval_timeout = 300
+
+modes = ["default"]
+default_mode = "default"
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+# Left empty deliberately: your pulled models are a fact about this machine,
+# not about the template. `kanban agents models ollama --refresh` reads them
+# from the running server and caches them for the picker.
+models = []
+
+# ------------------------------------------------------------- lm-studio ----
+# Same shape as ollama — a local OpenAI-compatible server, no key. LM Studio
+# serves on :1234 by default and must have a model LOADED, not merely
+# downloaded: the endpoint answers either way, so a probe that says "available"
+# still leaves "no model loaded" as the next thing you might hit.
+[[backend]]
+id = "lm-studio"
+label = "LM Studio"
+transport = "openai_api"
+enabled = false
+auth = "none"
+base_url = "http://127.0.0.1:1234/v1"
+timeout = 300
+start_hint = "Start the local server from LM Studio's Developer tab, and load a model."
+notes = "local — the server must be running AND a model loaded."
+prompt_prefix_style = "none"
+
+gated_tools = ["write_file", "edit_file", "run_command"]
+approval_timeout = 300
+
+modes = ["default"]
+default_mode = "default"
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+models = []
+
 # ------------------------------------------------------------- examples -----
 # A third CLI, or a local script, needs nothing but a row. Enable and edit:
 #

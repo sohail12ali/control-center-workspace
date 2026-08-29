@@ -51,10 +51,18 @@ def _text_of(content):
 
 class Normalizer:
     """Stateful because deltas only make sense in sequence: a `text.delta`
-    belongs to whichever block is currently open."""
+    belongs to whichever block is currently open.
 
-    def __init__(self, flavor="claude"):
-        self.flavor = flavor
+    Deliberately SHAPE-driven, not vendor-driven. There used to be a `flavor`
+    parameter, passed the backend's id and then never read by anything — which
+    made it look as though per-CLI branching existed when none did, and would
+    have sent the next person debugging a new CLI to add cases to a switch that
+    was not there. Every branch below keys off the event's own fields, so a CLI
+    emitting this shape works with no code at all, and one emitting plain text
+    is handled by the loose-text path in `agent_session`.
+    """
+
+    def __init__(self):
         self._n = 0
         self._text_blk = ""
         self._think_blk = ""
