@@ -167,8 +167,19 @@ def compose(repo_root, text, style, skill="", persona=""):
     else:
         wire = _render_named(repo_root, text, found)
 
-    # The explicit dropdown selections still apply, and still lead. They are a
-    # statement about the whole chat; a token is a reference inside one message.
+    # An explicit selection that the text ALREADY names must not be prefixed
+    # onto it a second time. For a slash backend `_prefix_explicit` prepends
+    # the very same token, so choosing `plan` and typing `/plan` travelled as
+    # "/plan /plan do the thing" — the skill named twice, once by each route.
+    # Deduped here rather than in the caller because both routes converge on
+    # this function, and only this function knows what resolved.
+    if skill and skill in report["skills"]:
+        skill = ""
+    if persona and persona in report["personas"]:
+        persona = ""
+
+    # What remains is a statement about the whole chat that the message did not
+    # already make; a token is a reference inside one message.
     return _prefix_explicit(wire, style, skill, persona), report
 
 

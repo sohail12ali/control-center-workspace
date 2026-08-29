@@ -814,6 +814,12 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 }
 .ct-refs .ct-ref { font-size: 10.5px; }
 
+/* A reference in the OPENING message that sets the chat's skill or agent for
+   every turn, rather than applying to this message alone. That scope is what
+   the two dropdowns used to carry, and dropping them without marking it would
+   have lost the distinction rather than simplified it. */
+.ct-ref-sets { box-shadow: 0 0 0 2px var(--accent-soft); }
+
 .ct-md { font-size: 13.2px; line-height: 1.62; }
 .ct-md .md > *:first-child { margin-top: 0; }
 .ct-md .md > *:last-child { margin-bottom: 0; }

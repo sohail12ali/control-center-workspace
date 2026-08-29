@@ -32,7 +32,10 @@
     host: null, chats: [], sel: null, mode: "new",
     backends: [], catalog: { skills: [], personas: [], tickets: [] },
     store: null, view: null, offMeta: null,
-    form: { backend: "", mode: "", model: "", skill: "", persona: "", ticket: "", prompt: "" },
+    // No `skill` / `persona` here any more: both are read out of the opening
+    // message rather than held as separate form state that could disagree
+    // with what the message says.
+    form: { backend: "", mode: "", model: "", ticket: "", prompt: "" },
     sendMode: "auto",   // auto | queue
     poll: null,
     pending: null,      // one-shot handoff from another tab
@@ -41,6 +44,7 @@
     listShown: true,
     lane: "cli",        // which kind of agent the composer is set up for
     laneFilter: "all",  // which kinds the chat list shows
+    drafts: {},         // chat id -> half-typed message, kept across repaints
   };
 
   /* ---------------- the two kinds of agent ----------------
@@ -558,15 +562,17 @@
         text: (b.unavailable_reason ||
                (b.label + " is not on PATH (command: " + b.command + ")")) +
               " Fix that or pick another backend." }) : null,
-      C.el("div", { class: "fieldrow", style: "margin-bottom:10px" }, [
-        field("Persona", "→ @name", select([["", "(none)"]].concat(
-          st.catalog.personas.map(function (p) { return [p, p]; })),
-          st.form.persona, function (v) { st.form.persona = v; }, "Persona")),
-        field("Skill", "→ /name", select([["", "(none)"]].concat(
-          st.catalog.skills.map(function (s) { return [s, s]; })),
-          st.form.skill, function (v) { st.form.skill = v; }, "Skill")),
-        modelField(),
-      ]),
+      /* Persona and Skill used to be two <select>s here. They are gone: for a
+         CLI backend the selection was prepended to the message as literally
+         the same token you can now type (`@builder /plan go`), so it was a
+         second route to one thing — and the two could collide, sending
+         "/plan /plan" when you used both. One input method, one meaning.
+
+         The whole-chat scope they carried is kept, not dropped: whatever the
+         OPENING message names becomes the chat's skill and persona, which is
+         what an API backend needs (it injects the text into the system prompt
+         for every turn, something a per-message token cannot do). */
+      C.el("div", { class: "fieldrow", style: "margin-bottom:10px" }, [modelField()]),
       ticketField(),
       field("Opening message",
             "type / for a skill, @ for an agent, # for a file", promptWrap),
@@ -606,16 +612,32 @@
     return { found: found, unknown: unknown };
   }
 
-  function paintRefs(host, text) {
+  function paintRefs(host, text, opening) {
     if (!host) return;
     C.clear(host);
     var r = scanRefs(text);
     if (!r.found.length && !r.unknown.length) return;
     if (r.found.length) {
       host.appendChild(C.el("span", { text: "sending with" }));
+      // In the OPENING message the first skill and agent set the whole chat —
+      // that is the scope the dropdowns used to carry, and it is worth saying
+      // out loud, because the same token in a later message applies to that
+      // message alone.
+      var claimed = {};
       r.found.forEach(function (f) {
-        host.appendChild(C.el("span", { class: "ct-ref ref-" + f.kind, text: f.raw }));
+        var sets = opening && (f.kind === "skill" || f.kind === "persona") &&
+                   !claimed[f.kind];
+        if (sets) claimed[f.kind] = true;
+        host.appendChild(C.el("span", {
+          class: "ct-ref ref-" + f.kind + (sets ? " ct-ref-sets" : ""),
+          title: sets ? "Sets this chat's " + (f.kind === "skill" ? "skill" : "agent")
+                        + " for every turn, not just this message." : "",
+          text: f.raw,
+        }));
       });
+      if (Object.keys(claimed).length) {
+        host.appendChild(C.el("span", { class: "muted", text: "· for the whole chat" }));
+      }
     }
     if (r.unknown.length) {
       // Named, not corrected. It may well be prose — "and/or", an issue
@@ -630,20 +652,31 @@
   function syncStart() {
     var btn = document.getElementById("agStart");
     if (btn) btn.disabled = !st.form.prompt.trim();
-    paintRefs(document.getElementById("agRefs"), st.form.prompt);
+    paintRefs(document.getElementById("agRefs"), st.form.prompt, true);
   }
 
   function startChat() {
     if (!st.form.prompt.trim()) return;
     var btn = document.getElementById("agStart");
     if (btn) btn.disabled = true;
+    /* The opening message defines the chat, so the first skill and agent it
+       names become the session's — the scope the two dropdowns used to carry.
+       This matters for a console agent, where `prompt_build` injects the text
+       into the system prompt for every turn; a token alone would apply to the
+       first message only. The server drops the duplicate, so naming it here
+       and in the text does not send it twice. */
+    var refs = scanRefs(st.form.prompt);
+    var first = function (kind) {
+      var hit = refs.found.filter(function (f) { return f.kind === kind; })[0];
+      return hit ? hit.raw.slice(1) : "";
+    };
     C.post("/api/agents/chats", {
       backend: st.form.backend,
       prompt: st.form.prompt,
       mode: st.form.mode,
       model: st.form.model,
-      skill: st.form.skill,
-      persona: st.form.persona,
+      skill: first("skill"),
+      persona: first("persona"),
       ticket: st.form.ticket,
     }).then(function (snap) {
       st.form.prompt = "";
@@ -1017,6 +1050,13 @@
 
   function paintComposer(composer, store) {
     var s = store.state;
+    /* Captured BEFORE the clear, which is the whole point: afterwards the old
+       textarea is out of the document and `activeElement` has fallen back to
+       <body>, so asking then always answers "no". */
+    var live = document.activeElement;
+    var hadFocus = !!live && live.classList &&
+                   live.classList.contains("ct-input");
+    var caret = hadFocus ? live.selectionStart : null;
     C.clear(composer);
 
     if (!s.alive) {
@@ -1038,6 +1078,20 @@
         : "Reply…   / skill   @ agent   # file",
       "aria-label": "Message",
     });
+    /* Restore the half-typed message.
+
+       This whole composer is rebuilt on every `meta` event, and `meta` fires
+       on usage, todos, plan, queue changes, turn start/end and now each tool
+       round — that is, constantly, and precisely while a turn is running,
+       which is exactly when you are typing a steer or a follow-up. Every one
+       of those repaints used to hand back an empty box, so the message you
+       were part-way through vanished mid-keystroke.
+
+       Held per chat so switching away and back does not paste one chat's
+       draft into another. */
+    var draft = st.drafts[s.id] || "";
+    if (draft) ta.value = draft;
+    ta.addEventListener("input", function () { st.drafts[s.id] = ta.value; });
     ta.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fire(); }
     });
@@ -1059,6 +1113,10 @@
       C.post("/api/agents/chats/" + encodeURIComponent(s.id) + "/send", { text: text, mode: mode })
         .then(function (r) {
           ta.value = "";
+          // Sent, so the draft is spent — otherwise the next repaint would
+          // restore the message that has just gone.
+          delete st.drafts[s.id];
+          paintRefs(refs, "");
           ta.disabled = false;
           ta.focus();
           if (r.result === "queued") C.toast("Queued for the next turn", "ok");
@@ -1136,6 +1194,16 @@
     var refs = C.el("div", { class: "ct-refs" });
     composer.appendChild(refs);
     ta.addEventListener("input", function () { paintRefs(refs, ta.value); });
+    paintRefs(refs, ta.value);
+
+    /* Put the caret back where the repaint took it from. Restoring the text
+       without the caret still interrupts typing — the cursor jumps to the
+       start and the next character lands in the wrong place. */
+    if (hadFocus) {
+      ta.focus();
+      var at = caret === null ? ta.value.length : Math.min(caret, ta.value.length);
+      ta.setSelectionRange(at, at);
+    }
   }
 
   /* ---------------- render ---------------- */

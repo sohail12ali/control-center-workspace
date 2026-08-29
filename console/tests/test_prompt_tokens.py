@@ -196,6 +196,30 @@ class TestExplicitSelectionsStillWork:
         out = wire(workspace, "also /verify", "slash", skill="plan")
         assert "/plan" in out and "/verify" in out
 
+    def test_a_selection_the_text_already_names_is_not_repeated(self, workspace):
+        """Choosing `plan` AND typing `/plan` used to send "/plan /plan go".
+
+        For a slash backend the explicit selection is prepended as the very
+        same token the text already carries, so the two routes to naming a
+        skill collided. They now converge: whichever route named it, it is
+        named once.
+        """
+        out = wire(workspace, "/plan go", "slash", skill="plan")
+        assert out.count("/plan") == 1, out
+
+    def test_deduping_is_per_name_not_all_or_nothing(self, workspace):
+        # A skill named in the text and a persona chosen in the form are two
+        # different statements; silencing the persona too would drop one.
+        out = wire(workspace, "/plan go", "slash", skill="plan", persona="builder")
+        assert out.count("/plan") == 1 and "@builder" in out, out
+
+    def test_an_unresolved_lookalike_does_not_silence_the_selection(self, workspace):
+        # `/plna` is a typo, so it resolves to nothing and travels as prose.
+        # The real selection must still apply — otherwise a typo would quietly
+        # disable the skill the user actually chose.
+        out = wire(workspace, "/plna go", "slash", skill="plan")
+        assert out.startswith("/plan ") and "/plna" in out, out
+
 
 class TestNoWorkspace:
     """Without a root there is no roster, so tokens stay as typed and only the
