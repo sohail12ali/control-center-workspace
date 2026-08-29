@@ -198,14 +198,32 @@ window.ConsoleChatStore = (function (C) {
           return;
 
         case "usage":
+          /* A running total for the CURRENT turn, re-reported as it grows —
+             not a delta. It was previously dropped on the floor, which is why
+             the header's token counters never moved. */
+          st.turnTokens = { in: Number(ev.input_tokens || 0),
+                            out: Number(ev.output_tokens || 0) };
+          emit("meta", st);
           return;
 
         case "turn.end":
           st.busy = false;
           st.usage.cost += Number(ev.cost_usd || 0);
           st.usage.turns += Number(ev.num_turns || 0);
+          /* Take the larger of the incremental total and the one reported on
+             the result: a backend may send either, or both, and summing them
+             would double-count the turn. */
+          var tin = Math.max(Number(ev.input_tokens || 0),
+                             (st.turnTokens && st.turnTokens.in) || 0);
+          var tout = Math.max(Number(ev.output_tokens || 0),
+                              (st.turnTokens && st.turnTokens.out) || 0);
+          st.usage.tokens_in += tin;
+          st.usage.tokens_out += tout;
+          st.turnTokens = null;
           addItem({ role: "system", kind: "turnend", is_error: !!ev.is_error,
-                    cost: Number(ev.cost_usd || 0), ms: ev.duration_ms || 0 });
+                    cost: Number(ev.cost_usd || 0), ms: ev.duration_ms || 0,
+                    tokens_in: tin, tokens_out: tout,
+                    model: st.model || "", subtype: ev.subtype || "" });
           emit("meta", st);
           return;
 
@@ -231,7 +249,12 @@ window.ConsoleChatStore = (function (C) {
           return;
 
         case "approval.request": {
+          /* `preview` is what makes the card reviewable rather than a wall of
+             escaped JSON: a diff for a file write, the command for a shell
+             call. Null when the server had nothing useful to say, which the
+             renderer handles by falling back to the raw arguments. */
           var ap = { key: ev.key, tool: ev.tool || "tool", input: ev.input || {},
+                     preview: ev.preview || null,
                      timeout: ev.timeout || 0, decided: "", by: "" };
           st.approvals[ev.key] = ap;
           ap.item = addItem({ role: "system", kind: "approval", sid: st.id, approval: ap });

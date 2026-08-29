@@ -251,7 +251,12 @@
   function bindKeys() {
     document.addEventListener("keydown", function (e) {
       var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ""));
-      if (e.key === "/" && !typing) {
+      /* Ctrl/Cmd-K works even while typing — it is the one shortcut whose
+         whole point is "get me out of here and somewhere else". */
+      if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (C.palette) C.palette.open();
+      } else if (e.key === "/" && !typing) {
         e.preventDefault();
         document.getElementById("search").focus();
       } else if (e.key === "r" && !typing && !e.metaKey && !e.ctrlKey) {

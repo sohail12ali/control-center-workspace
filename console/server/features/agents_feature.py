@@ -6,10 +6,8 @@ checkout — turning it off there removes every route below rather than merely
 hiding a button.
 """
 
-import glob
-import os
-
-from .. import agent_approvals, agent_backends, agent_manager
+from .. import agent_approvals, agent_backends, agent_manager, audit
+from .. import agents as agents_mod
 from ..httpd import EventSource
 from ..plugins.base import Plugin
 
@@ -37,17 +35,10 @@ def apply(ctx):
         return {"backends": [b.describe() for b in reg.values()]}
 
     def catalog(req):
-        """Skills and personas read live off disk, so the composer offers this
-        checkout's real roster rather than a list that rots."""
-        skills = sorted(
-            os.path.basename(os.path.dirname(p))
-            for p in glob.glob(os.path.join(repo_root, ".claude", "skills", "*", "SKILL.md"))
-        )
-        personas = sorted(
-            os.path.splitext(os.path.basename(p))[0]
-            for p in glob.glob(os.path.join(repo_root, ".claude", "agents", "*.md"))
-        )
-        return {"skills": skills, "personas": personas}
+        # One implementation, shared with the `agents catalog` CLI verb. This
+        # route used to repeat the globs, so the tab and the CLI could disagree
+        # about what the roster even was.
+        return agents_mod.list_catalog(repo_root)
 
     # -- chats -------------------------------------------------------------
     def chats(req):
@@ -55,7 +46,7 @@ def apply(ctx):
 
     def chat_new(req):
         b = req.body
-        return agent_manager.create(
+        snap = agent_manager.create(
             repo_root,
             b.get("backend", ""),
             b.get("prompt", ""),
@@ -64,8 +55,19 @@ def apply(ctx):
             skill=b.get("skill", "") or "",
             persona=b.get("persona", "") or "",
             title=b.get("title", "") or "",
+            ticket=b.get("ticket", "") or "",
             server_port=server_port,
         )
+        # Starting an agent is the single most consequential thing this API
+        # does, so it is the one line the trail must never be missing.
+        audit.record(repo_root, "chat.start", actor=audit.actor_of(req),
+                     target=snap.get("id", ""),
+                     detail={"backend": snap.get("agent", ""),
+                             "model": snap.get("model", ""),
+                             "ticket": snap.get("ticket", ""),
+                             "skill": snap.get("skill", ""),
+                             "persona": snap.get("persona", "")})
+        return snap
 
     def chat_get(req, sid):
         return agent_manager.transcript(repo_root, sid)
@@ -87,6 +89,7 @@ def apply(ctx):
         return agent_manager.interrupt(sid)
 
     def chat_stop(req, sid):
+        audit.record(repo_root, "chat.stop", actor=audit.actor_of(req), target=sid)
         return agent_manager.stop(sid)
 
     def chat_delete(req, sid):
@@ -123,7 +126,8 @@ def apply(ctx):
         decision, reason = agent_approvals.REGISTRY.request(
             chat, tool, body.get("tool_input") or {},
             body.get("tool_use_id") or "", sess.stream.publish,
-            timeout=sess.backend.approval_timeout)
+            timeout=sess.backend.approval_timeout, repo_root=repo_root,
+            title=sess.title)
         return {"decision": decision, "reason": reason}
 
     def chat_approve(req, sid):
@@ -133,6 +137,8 @@ def apply(ctx):
         if not key:
             raise ValueError("an approval key is required")
         p = agent_approvals.REGISTRY.decide(key, decision)
+        audit.record(repo_root, "approval.decide", actor=audit.actor_of(req),
+                     target=p.tool, detail={"chat": sid, "decision": p.decision})
         sess = agent_manager.get(sid)
         if sess is not None:
             sess.stream.publish({"type": "approval.decided", "key": key,

@@ -154,25 +154,105 @@ window.ConsoleChatRender = (function (C, MD) {
       C.el("span", { class: "grow" }),
       btn("Deny", "deny", "btn danger sm"),
     ]);
+    var head = C.el("div", { class: "ct-apphead" }, [
+      C.icon("alert"),
+      C.el("b", { text: "Permission needed" }),
+      C.el("span", { class: "chip warn", text: a.tool || "tool" }),
+    ]);
+    var p = a.preview;
+    if (p && p.kind === "diff") {
+      head.appendChild(C.el("span", { class: "muted ct-diffstat", text:
+        (p.creating ? "new file · " : "") + "+" + p.added + " −" + p.removed }));
+    }
     node.appendChild(C.el("div", { class: "ct-approval pending" }, [
-      C.el("div", { class: "ct-apphead" }, [
-        C.icon("alert"),
-        C.el("b", { text: "Permission needed" }),
-        C.el("span", { class: "chip warn", text: a.tool || "tool" }),
-      ]),
-      C.el("pre", { class: "code ct-args", text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) }),
+      head,
+      previewBody(a),
       row,
     ]));
+  }
+
+  /* What the call would actually do. The old card rendered the tool's
+     arguments as JSON, which for a file write is a wall of escaped text with
+     \n between every line — so it got approved unread, which is a speed bump
+     with a log rather than a gate. The server computes the diff (see
+     server/tool_preview.py); this only paints it. */
+  function previewBody(a) {
+    var p = a.preview;
+    if (!p) {
+      return C.el("pre", { class: "code ct-args",
+        text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) });
+    }
+
+    if (p.kind === "command") {
+      return C.el("div", { class: "ct-preview" }, [
+        C.el("div", { class: "ct-prevhead" }, [
+          C.el("span", { class: "muted", text: "run in " + (p.cwd || ".") }),
+        ]),
+        C.el("pre", { class: "code ct-command", text: p.command }),
+      ]);
+    }
+
+    if (p.kind === "note") {
+      return C.el("div", { class: "ct-preview" }, [
+        C.el("div", { class: "ct-prevhead" }, [
+          C.el("code", { text: p.path || "" }),
+        ]),
+        C.el("div", { class: "errbox", text: p.text }),
+      ]);
+    }
+
+    if (p.kind !== "diff") {
+      return C.el("pre", { class: "code ct-args",
+        text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) });
+    }
+
+    var body = C.el("div", { class: "ct-diff" });
+    (p.lines || []).forEach(function (line) {
+      var cls = "ct-dl ct-d-" + line.kind;
+      var mark = line.kind === "add" ? "+" : line.kind === "remove" ? "−" :
+                 line.kind === "hunk" ? "" : " ";
+      body.appendChild(C.el("div", { class: cls }, [
+        C.el("span", { class: "ct-dmark", text: mark }),
+        C.el("span", { class: "ct-dtext", text: line.text }),
+      ]));
+    });
+
+    var parts = [
+      C.el("div", { class: "ct-prevhead" }, [
+        C.el("code", { text: p.path || "" }),
+        p.creating ? C.el("span", { class: "chip", text: "new file" }) : null,
+      ]),
+    ];
+    if (p.warning) parts.push(C.el("div", { class: "errbox", text: p.warning }));
+    parts.push(body);
+    if (p.truncated) {
+      parts.push(C.el("div", { class: "muted ct-dnote",
+        text: p.omitted + " more diff line(s) not shown — open the file to see the rest." }));
+    }
+    return C.el("div", { class: "ct-preview" }, parts);
   }
 
   function systemItem(item) {
     if (item.kind === "approval") return approvalItem(item);
     if (item.kind === "turnend") {
+      /* What this turn cost, on the turn itself. A session total in the header
+         cannot answer "which step was expensive", which is the question
+         anybody tuning a workflow is actually asking. */
       var bits = [];
+      if (item.model) bits.push(item.model);
+      var tin = item.tokens_in || 0, tout = item.tokens_out || 0;
+      if (tin || tout) bits.push(C.fmtNum(tin) + " in · " + C.fmtNum(tout) + " out");
       if (item.cost) bits.push("$" + item.cost.toFixed(4));
       if (item.ms) bits.push(Math.round(item.ms / 100) / 10 + "s");
+
+      var label = item.is_error ? "turn failed" : "turn complete";
+      /* A turn stopped by the round cap looks identical to a finished one
+         unless the reason is shown. */
+      if (item.subtype === "tool_limit") label = "turn stopped at the tool limit";
+      else if (item.subtype === "interrupted") label = "turn interrupted";
+
       return C.el("div", { class: "ct-rule" + (item.is_error ? " bad" : "") }, [
-        C.el("span", { text: item.is_error ? "turn failed" : "turn complete" }),
+        C.el("span", { text: label }),
         bits.length ? C.el("span", { class: "muted", text: bits.join(" · ") }) : null,
       ]);
     }
