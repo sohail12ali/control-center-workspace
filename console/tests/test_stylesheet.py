@@ -84,6 +84,28 @@ def test_no_class_is_defined_twice_at_the_top_level():
         + "; ".join("%s at lines %s" % (k, v) for k, v in sorted(dupes.items())))
 
 
+def test_the_hidden_attribute_is_honoured():
+    """`el.hidden = true` must actually hide, whatever the element's display.
+
+    Author styles beat the browser's stylesheet regardless of specificity, so
+    with no `[hidden]` rule of our own, any component setting its own `display`
+    silently stopped being hideable — the attribute was set and nothing acted
+    on it. `.fpick-panel` (display: flex) hit exactly that and never closed.
+
+    Only components that set `display` are affected, which is why this went
+    unnoticed: `.cpick` sets none and had always worked.
+    """
+    with open(CSS, encoding="utf-8") as fh:
+        css = fh.read()
+    rule = re.search(r"\[hidden\]\s*\{([^}]*)\}", css)
+    assert rule, "styles.css must declare a [hidden] rule of its own"
+    body = rule.group(1)
+    assert "display" in body and "none" in body, body
+    # Without !important a later, more specific component rule wins again and
+    # the bug comes back for that one component only — the hardest kind to spot.
+    assert "!important" in body, "[hidden] must win over a component's display"
+
+
 def test_every_class_the_js_styles_actually_exists():
     """A class name in JS with no rule behind it is a style that never applied.
 

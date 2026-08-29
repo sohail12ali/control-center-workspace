@@ -80,9 +80,9 @@
     return st.backends.filter(function (b) { return !!b.is_api === want; });
   }
 
-  /* Switching lanes must also switch the backend, and a model id is
-     meaningless on another backend — so it clears rather than carrying a
-     stale id into a provider that has never heard of it. */
+  /* Switching lanes switches the backend, so the model becomes whichever one
+     that backend was last used with — never the previous backend's, which
+     would be an id it has never heard of. */
   function setLane(id, repaint) {
     st.lane = lane(id).id;
     C.prefs.set("agentLane", st.lane);
@@ -90,7 +90,8 @@
     var usable = rows.filter(function (b) { return b.installed; })[0];
     var pick = usable || rows[0];
     st.form.backend = pick ? pick.id : "";
-    st.form.mode = ""; st.form.model = "";
+    st.form.mode = "";
+    st.form.model = pick ? rememberedModel(pick.id) : "";
     if (pick) loadCatalog(pick.id);
     if (repaint !== false) paintMain();
   }
@@ -132,6 +133,30 @@
 
   function backend(id) {
     return st.backends.filter(function (b) { return b.id === id; })[0] || null;
+  }
+
+  /* The model you last used, per backend.
+
+     Keyed by backend rather than held as one setting, because a model id is
+     meaningless anywhere else: `claude-opus-5` means nothing to Ollama and
+     `qwen3:8b` means nothing to OpenRouter. Switching backends used to clear
+     the field for exactly that reason — which was right about the id and wrong
+     about the memory, so every visit to a provider started by finding the same
+     model again in a list of 396.
+
+     A remembered id is NOT validated against the catalogue. It may have been
+     retired, or the catalogue may not be cached yet; either way the picker
+     shows it and the provider gets the final say, which is better than
+     silently dropping a choice that is probably still good. */
+  function rememberedModel(backendId) {
+    return (C.prefs.get("modelByBackend", {}) || {})[backendId] || "";
+  }
+
+  function rememberModel(backendId, model) {
+    if (!backendId) return;
+    var map = C.prefs.get("modelByBackend", {}) || {};
+    if (model) map[backendId] = model; else delete map[backendId];
+    C.prefs.set("modelByBackend", map);
   }
 
   /* ---------------- rail ---------------- */
@@ -352,7 +377,10 @@
       // The paste box the old picker kept beside it, folded in: anything typed
       // that matches no row is offered as an id and sent verbatim.
       custom: { label: "Use", hint: "sent verbatim" },
-      onPick: function (v) { st.form.model = v; },
+      onPick: function (v) {
+        st.form.model = v;
+        rememberModel(st.form.backend, v);
+      },
     });
 
     var hint = "";
@@ -406,9 +434,11 @@
       class: "pick-card" + (chosen ? " on" : "") + (b.installed ? "" : " off"),
       role: "radio", "aria-checked": String(chosen),
       title: b.installed ? subtitle : (b.unavailable_reason || subtitle),
-      // A model id is meaningless on another backend, so switching clears it.
+      // A model id is meaningless on another backend, so switching swaps in
+      // the one THIS backend was last used with rather than carrying one over.
       onclick: function () {
-        st.form.backend = b.id; st.form.mode = ""; st.form.model = "";
+        st.form.backend = b.id; st.form.mode = "";
+        st.form.model = rememberedModel(b.id);
         loadCatalog(b.id);
         paintMain();
       },

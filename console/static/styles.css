@@ -227,6 +227,16 @@ a { color: var(--accent); }
 .grow  { flex: 1; }
 .row   { display: flex; align-items: center; gap: 8px; }
 .hidden { display: none !important; }
+
+/* The `hidden` ATTRIBUTE, which until now nothing here declared — so the only
+   thing honouring it was the browser's own stylesheet. Author styles beat the
+   UA stylesheet whatever their specificity, so any component that sets its own
+   `display` silently stopped being hideable: `el.hidden = true` set the
+   attribute, the attribute did nothing, and the element stayed on screen.
+   `.fpick-panel` (display: flex) was the first to hit it and never closed.
+   One rule, so the next component that toggles `hidden` simply works. */
+[hidden] { display: none !important; }
+
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Screen-reader-only, but focusable (skip links). */
