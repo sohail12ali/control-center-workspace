@@ -65,16 +65,38 @@ def config(repo_root):
     return {
         "inbound": bool(cfg.get("inbound", False)),
         "allowed_users_env": cfg.get("allowed_users_env") or "TELEGRAM_ALLOWED_USERS",
+        # The single-user spelling of the same thing. Most setups are one
+        # person and one phone, and making them write their id twice under two
+        # names is ceremony that invites the two to disagree.
+        "self_user_env": cfg.get("self_user_env") or "TELEGRAM_USER_ID",
         "allow_all_env": cfg.get("allow_all_users_env") or "TELEGRAM_ALLOW_ALL_USERS",
         "poll_timeout": int(cfg.get("poll_timeout", POLL_TIMEOUT) or POLL_TIMEOUT),
     }
 
 
 def allowed_users(repo_root):
-    """The allowlist, as a set of id strings. Empty means nobody."""
+    """The allowlist, as a set of id strings. Empty means nobody.
+
+    Two spellings, checked in order:
+
+      TELEGRAM_ALLOWED_USERS   comma-separated, for more than one person
+      TELEGRAM_USER_ID         your own id, for the common case of one
+
+    The fallback does **not** weaken fail-closed. The rule is that an
+    *unconfigured* allowlist admits nobody, and that still holds: both
+    variables must be deliberately set, so the failure this guards against — a
+    bot token pasted in with no thought given to who may drive it — is
+    unchanged. What it removes is only the duplication of writing one id under
+    two names, which is how the two come to disagree.
+    """
     import os
-    raw = os.environ.get(config(repo_root)["allowed_users_env"], "")
-    return {part.strip() for part in raw.split(",") if part.strip()}
+    cfg = config(repo_root)
+    raw = os.environ.get(cfg["allowed_users_env"], "")
+    ids = {part.strip() for part in raw.split(",") if part.strip()}
+    if ids:
+        return ids
+    own = os.environ.get(cfg["self_user_env"], "").strip()
+    return {own} if own else set()
 
 
 def allow_all(repo_root):

@@ -74,12 +74,20 @@ timeout     = 8
 # then the ONLY thing between a Telegram message and that shell, because a bot
 # token addresses a public endpoint that anyone who finds it can message.
 #
-# TELEGRAM_ALLOWED_USERS is a comma-separated list of numeric Telegram USER
-# ids (not chat ids) — `kanban notify chat-id` prints yours. It is FAIL-CLOSED:
-# empty or unset means the bot answers nobody. That is deliberate; treating an
-# empty list as "everyone" is how a pasted token becomes a remote shell.
-inbound              = false
+# Who may drive it, in two spellings — TELEGRAM_ALLOWED_USERS (comma-separated,
+# for more than one person) or TELEGRAM_USER_ID (just yours, the common case).
+# Numeric USER ids, not chat ids; `kanban notify who` prints them and says
+# whether each would be let in.
+#
+# FAIL-CLOSED: with neither set, the bot answers nobody. That is deliberate —
+# treating "no list" as "everyone" is how a pasted token becomes a remote shell.
+#
+# `inbound = true` is safe to ship on: the poller refuses to start unless a
+# token is configured and the notify config is provably workable, so a checkout
+# with no Telegram setup prints one OFF line and does nothing.
+inbound              = true
 allowed_users_env    = "TELEGRAM_ALLOWED_USERS"
+self_user_env        = "TELEGRAM_USER_ID"
 # Development only. Named so it cannot be set by accident, and announced at
 # every start when it is on.
 allow_all_users_env  = "TELEGRAM_ALLOW_ALL_USERS"

@@ -64,8 +64,13 @@ def ws(repo, monkeypatch):
         fh.write(CONSOLE)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "8774432343:secret-part-here")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1340545818")
-    monkeypatch.delenv("TELEGRAM_ALLOWED_USERS", raising=False)
-    monkeypatch.delenv("TELEGRAM_ALLOW_ALL_USERS", raising=False)
+    # Every variable that can grant access is cleared, so "the allowlist is
+    # empty" means empty rather than "empty unless the developer's own shell
+    # happens to export one". A fail-closed test that depends on ambient
+    # environment is not a test of fail-closed.
+    for name in ("TELEGRAM_ALLOWED_USERS", "TELEGRAM_ALLOW_ALL_USERS",
+                 "TELEGRAM_USER_ID"):
+        monkeypatch.delenv(name, raising=False)
     return repo
 
 
@@ -89,6 +94,27 @@ class TestAuthorization:
     def test_a_listed_user_is_allowed(self, ws, monkeypatch):
         monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "999, 1340545818 ,111")
         assert telegram_bot.authorize(ws, "1340545818")[0] is True
+
+    def test_a_lone_user_id_is_an_allowlist_of_one(self, ws, monkeypatch):
+        # Most setups are one person and one phone. Writing that id twice
+        # under two names is ceremony that invites the two to disagree.
+        monkeypatch.setenv("TELEGRAM_USER_ID", "1340545818")
+        assert telegram_bot.allowed_users(ws) == {"1340545818"}
+        assert telegram_bot.authorize(ws, "1340545818")[0] is True
+        assert telegram_bot.authorize(ws, "999")[0] is False
+
+    def test_the_explicit_list_wins_over_the_lone_id(self, ws, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_USER_ID", "111")
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "222,333")
+        assert telegram_bot.allowed_users(ws) == {"222", "333"}
+        assert telegram_bot.authorize(ws, "111")[0] is False
+
+    def test_neither_variable_set_still_admits_nobody(self, ws, monkeypatch):
+        # The fallback must not become allow-by-omission through the back
+        # door: an UNCONFIGURED allowlist is still empty, and empty is nobody.
+        monkeypatch.delenv("TELEGRAM_USER_ID", raising=False)
+        assert telegram_bot.allowed_users(ws) == set()
+        assert telegram_bot.authorize(ws, "1340545818")[0] is False
 
     def test_an_unlisted_user_is_denied(self, ws, monkeypatch):
         monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "999")

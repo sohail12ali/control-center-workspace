@@ -111,10 +111,15 @@ def misconfigured(repo_root):
     if not token or not chat_id:
         return ""
     if chat_id == bot_id(token):
+        # For a one-to-one chat the chat id IS the user id, so if the workspace
+        # already names the person, the right value is sitting right there and
+        # the message should say so rather than send them looking.
+        own = os.environ.get("TELEGRAM_USER_ID", "").strip()
+        fix = ("Set it to %s (your TELEGRAM_USER_ID)." % own if own
+               else "Set it to YOUR chat id — `kanban notify chat-id` prints it.")
         return ("%s is set to the bot's own id, so every send is a bot "
-                "messaging itself and Telegram answers 403. Set it to YOUR "
-                "chat id — `kanban notify chat-id` prints it."
-                % cfg["chat_id_env"])
+                "messaging itself and Telegram answers 403. %s"
+                % (cfg["chat_id_env"], fix))
     return ""
 
 
