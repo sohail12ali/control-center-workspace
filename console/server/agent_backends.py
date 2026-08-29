@@ -82,6 +82,17 @@ AUTH_MODES = ("key", "none", "probe")
 PROBE_TTL = 10.0
 PROBE_TIMEOUT = 1.5
 
+#: Budgets for the loop the console owns (`openai_api` only). They live here,
+#: with the rest of a backend's configuration, rather than as constants in
+#: `agent_api_session` — because they are not one policy for every provider.
+#:
+#: A flat pair of numbers was wrong in both directions at once: 120 messages
+#: overflows a 4k local model long before the count is reached, and 25 rounds
+#: is timid for a 200k hosted one. A row that says nothing still gets these,
+#: so nothing changes for a backend nobody has tuned.
+DEFAULT_TOOL_ROUNDS = 25
+DEFAULT_HISTORY_MESSAGES = 120
+
 _cache = {}
 _probe_cache = {}
 _probe_lock = threading.Lock()
@@ -289,6 +300,12 @@ class Backend:
         self.gated_tools = [str(t).strip() for t in row.get("gated_tools", [])
                             if str(t).strip()]
         self.approval_timeout = int(row.get("approval_timeout", 300) or 300)
+        # Refused at load, beside the row that is wrong, rather than as a loop
+        # that ends instantly or never — both of which look like a hang.
+        for field in ("max_tool_rounds", "max_history_messages"):
+            if row.get(field) is not None and int(row[field]) < 1:
+                raise ValueError("backend %r: %s must be at least 1"
+                                 % (self.id, field))
         self.raw = row
 
     # -- capability flags the UI reads instead of hardcoding CLI names -------
@@ -349,6 +366,26 @@ class Backend:
     @property
     def has_key(self):
         return bool(self.api_key_env and os.environ.get(self.api_key_env, "").strip())
+
+    @property
+    def max_tool_rounds(self):
+        """Tool-call rounds allowed in one turn before the loop stops itself.
+
+        A loop that can call tools can call them forever, and every round costs
+        money. This is the cap; hitting it ends the turn with a notice saying so,
+        because "stopped early" and "finished" look identical in a transcript.
+        """
+        return int(self.raw.get("max_tool_rounds") or DEFAULT_TOOL_ROUNDS)
+
+    @property
+    def max_history_messages(self):
+        """Conversation messages kept before the oldest are dropped.
+
+        A blunt guard against outgrowing the model's context. Real compaction is
+        a later problem; dropping the oldest is at least predictable, and the
+        system message is never among them.
+        """
+        return int(self.raw.get("max_history_messages") or DEFAULT_HISTORY_MESSAGES)
 
     @property
     def installed(self):
@@ -426,6 +463,10 @@ class Backend:
             # that applies to a CLI backend does not apply to it.
             "approval_gate": bool(self.gated_tools) and (
                 self.transport == "stream_json" or self.is_api),
+            # The names themselves, so the composer can say WHICH tools will
+            # stop and ask. Tool names are not secrets; the arguments they are
+            # called with never travel with them.
+            "gated_tools": list(self.gated_tools),
             "prompt_prefix_style": self.raw.get("prompt_prefix_style", "slash"),
             "is_api": self.is_api,
             "unavailable_reason": self.unavailable_reason,
@@ -437,6 +478,13 @@ class Backend:
             "key_env": self.api_key_env,
             "has_key": self.has_key,
             "notes": self.raw.get("notes", "") or "",
+            # The EFFECTIVE budgets, never the raw config: the UI shows what
+            # the loop will actually enforce, so a row that sets nothing reads
+            # the same as one that sets the default explicitly. Meaningless for
+            # a CLI backend, whose loop belongs to someone else.
+            "budgets": {"tool_rounds": self.max_tool_rounds,
+                        "history_messages": self.max_history_messages}
+                       if self.is_api else None,
         }
 
     # -- argv builders -------------------------------------------------------

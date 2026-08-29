@@ -17,11 +17,24 @@ and telemetry is recorded by the same path every other backend uses.
 
 ## What it must not do differently
 
-**Events.** It publishes the same normalized events (`text.start`,
-`text.delta`, `tool.start`, `tool.end`, `usage`, `turn.end`) that
-`agent_normalize` produces for the CLI backends. The chat UI, the transcript
-reader and the telemetry hook are all written against that shape; a second
-shape would mean a second renderer, and the two would drift.
+**Events.** It publishes the same normalized events that `agent_normalize`
+produces for the CLI backends. The chat UI, the transcript reader and the
+telemetry hook are all written against that shape; a second shape would mean a
+second renderer, and the two would drift.
+
+They did drift. This module used to publish `text.stop` where the renderer
+listens for `text.done`, `tool.start` carrying `input` where it reads `args`,
+and `tool.end` — an event nothing anywhere consumed — instead of
+`tool.result`. It also left `block` off every tool event, and `block` is the
+key the store files items under, so every tool call in a chat collapsed onto
+the single key `undefined`. The visible result was a console-agent transcript
+whose tool calls showed no arguments and never resolved, an always-empty "files
+touched" panel (it is derived from `args`), and read-aloud that never fired
+because no text block was ever marked closed.
+
+So: `block` is allocated per content block from one session-wide counter, the
+way the normalizer does it, and the event names below are the renderer's, not
+this module's own.
 
 **Gating.** `agent_approvals.REGISTRY.request()` takes a `publish` callable and
 blocks the calling thread. That was built for a hook process, but nothing about
@@ -30,10 +43,17 @@ subprocess and no HTTP round trip, showing the human the identical card.
 
 ## The runaway problem
 
-A loop that can call tools can call them forever, and every round costs money.
-`MAX_TOOL_ROUNDS` caps it. When the cap is hit the turn ends with a notice
-saying so rather than silently stopping, because "the agent stopped early" and
-"the agent finished" look identical in a transcript otherwise.
+A loop that can call tools can call them forever, and every round costs money,
+so the number of rounds is capped. When the cap is hit the turn ends with a
+notice saying so rather than silently stopping, because "the agent stopped
+early" and "the agent finished" look identical in a transcript otherwise.
+
+Both budgets — rounds per turn, and messages of history kept — are read off the
+backend row (`agent_backends.Backend.max_tool_rounds` /
+`.max_history_messages`), not fixed here. They used to be module constants, and
+one pair of numbers cannot be right for both a 4k local model and a 200k hosted
+one: the history cap overflowed the first long before it was reached, and the
+round cap was timid for the second.
 """
 
 import json
@@ -45,14 +65,6 @@ from . import openai_client
 from . import prompt_build
 from . import telemetry
 from .agent_session import BaseSession
-
-#: Tool-call rounds allowed in one turn before the loop stops itself.
-MAX_TOOL_ROUNDS = 25
-
-#: Conversation turns kept before the oldest are dropped. Cheap guard against
-#: a long chat growing past the model's context; a real compaction strategy is
-#: a later problem, and dropping the oldest is at least predictable.
-MAX_HISTORY_MESSAGES = 120
 
 
 class ApiSession(BaseSession):
@@ -72,12 +84,20 @@ class ApiSession(BaseSession):
             timeout=int(raw.get("timeout") or openai_client.DEFAULT_TIMEOUT),
             extra_headers=dict(raw.get("extra_headers", {}) or {}))
         self.model = self.model or raw.get("default_model") or ""
+        # Read once at construction: a chat should not change its own limits
+        # halfway through because someone edited agents.toml mid-conversation.
+        self.max_tool_rounds = backend.max_tool_rounds
+        self.max_history_messages = backend.max_history_messages
         self._gated = set(backend.gated_tools or ())
         self._messages = []
         self._alive = True
         self._turn_thread = None
         self._interrupt = threading.Event()
         self._system_report = {}
+        # One counter for the whole session, not per turn. The store keys items
+        # by block, so a number that restarts each turn makes round two
+        # overwrite round one's bubbles.
+        self._block = 0
 
     # -- lifecycle ---------------------------------------------------------
     def start(self):
@@ -146,10 +166,9 @@ class ApiSession(BaseSession):
         self.stream.publish({"type": "notice", "level": level, "kind": kind,
                              "text": text})
 
-    def _emit_text(self, block, text, first):
-        if first:
-            self.stream.publish({"type": "text.start", "block": block})
-        self.stream.publish({"type": "text.delta", "block": block, "text": text})
+    def _next_block(self):
+        self._block += 1
+        return self._block
 
     # -- the loop ----------------------------------------------------------
     def _run_turn(self):
@@ -165,29 +184,37 @@ class ApiSession(BaseSession):
                 if self._interrupt.is_set():
                     stop_reason = "interrupted"
                     break
-                if rounds >= MAX_TOOL_ROUNDS:
+                if rounds >= self.max_tool_rounds:
                     # Silently stopping looks identical to finishing.
                     self._notice(
                         "warn", "tool_limit",
                         "Stopped after %d tool rounds in one turn. The task is "
                         "not necessarily finished — ask it to continue if it "
-                        "should." % MAX_TOOL_ROUNDS)
+                        "should." % self.max_tool_rounds)
                     stop_reason = "tool_limit"
                     break
 
-                block = [0]
-                state = {"first": True}
+                # Allocated on the FIRST chunk, so a round that returns only
+                # tool calls opens no empty text bubble.
+                text_block = [None]
 
-                def on_text(chunk, block=block, state=state):
-                    self._emit_text(block[0], chunk, state["first"])
-                    state["first"] = False
+                def on_text(chunk, holder=text_block):
+                    if holder[0] is None:
+                        holder[0] = self._next_block()
+                        self.stream.publish({"type": "text.start",
+                                             "block": holder[0]})
+                    self.stream.publish({"type": "text.delta",
+                                         "block": holder[0], "text": chunk})
 
                 result = self.client.stream(
                     self._trimmed_messages(), model=self.model, tools=tools,
                     on_text=on_text)
 
-                if not state["first"]:
-                    self.stream.publish({"type": "text.stop", "block": block[0]})
+                if text_block[0] is not None:
+                    # `text.done`, not `text.stop`: this is what closes the
+                    # block, and an unclosed block is one read-aloud skips.
+                    self.stream.publish({"type": "text.done",
+                                         "block": text_block[0]})
 
                 total_in += result.input_tokens
                 total_out += result.output_tokens
@@ -215,7 +242,7 @@ class ApiSession(BaseSession):
                     self._messages.append({
                         "role": "tool",
                         "tool_call_id": call.id or ("call_%d" % call.index),
-                        "content": self._execute(call),
+                        "content": self._execute(call, rounds),
                     })
 
         except openai_client.ApiError as exc:
@@ -249,26 +276,38 @@ class ApiSession(BaseSession):
         and losing it mid-conversation would silently change what the agent
         thinks it was asked to do.
         """
-        if len(self._messages) <= MAX_HISTORY_MESSAGES:
+        if len(self._messages) <= self.max_history_messages:
             return self._messages
-        return [self._messages[0]] + self._messages[-(MAX_HISTORY_MESSAGES - 1):]
+        return [self._messages[0]] + self._messages[-(self.max_history_messages - 1):]
 
     # -- tools -------------------------------------------------------------
-    def _execute(self, call):
+    def _execute(self, call, round_no=0):
         name = call.name or ""
         arguments = call.arguments
+        block = self._next_block()
+        # `args`, not `input` — `args` is the key the store reads, and the one
+        # it derives "files touched" from. `round` rides along so the UI can
+        # show budget pressure while the turn is still running; a renderer that
+        # does not know the field simply ignores it, so the shape stays
+        # additive rather than divergent.
+        start = {"type": "tool.start", "block": block, "id": call.id,
+                 "name": name, "round": round_no,
+                 "max_rounds": self.max_tool_rounds}
+
+        def finish(ok, content):
+            self.stream.publish({"type": "tool.result", "id": call.id,
+                                 "ok": ok, "content": content})
+            return content
 
         if not call.arguments_valid:
             # Give the model the failure rather than a silent empty dict, so it
             # can re-emit the call properly instead of acting on nothing.
-            self.stream.publish({"type": "tool.start", "id": call.id,
-                                 "name": name, "input": {},
-                                 "error": "unparseable arguments"})
-            return ("Error: the arguments for %s were not valid JSON. "
-                    "Send them again as a single JSON object." % name)
+            self.stream.publish(dict(start, args={}))
+            return finish(False,
+                          "Error: the arguments for %s were not valid JSON. "
+                          "Send them again as a single JSON object." % name)
 
-        self.stream.publish({"type": "tool.start", "id": call.id,
-                             "name": name, "input": arguments})
+        self.stream.publish(dict(start, args=arguments))
 
         if self._needs_approval(name):
             decision, reason = agent_approvals.REGISTRY.request(
@@ -277,14 +316,9 @@ class ApiSession(BaseSession):
                 timeout=self.backend.approval_timeout,
                 repo_root=self.cwd, title=self.title)
             if decision == "deny":
-                self.stream.publish({"type": "tool.end", "id": call.id,
-                                     "name": name, "denied": True})
-                return "Denied: %s" % reason
+                return finish(False, "Denied: %s" % reason)
 
-        output = agent_tools.dispatch(self.cwd, name, arguments)
-        self.stream.publish({"type": "tool.end", "id": call.id, "name": name,
-                             "chars": len(output)})
-        return output
+        return finish(True, agent_tools.dispatch(self.cwd, name, arguments))
 
     def _needs_approval(self, name):
         """Gate by tool name, with read-only console verbs exempt.
@@ -307,4 +341,8 @@ class ApiSession(BaseSession):
         snap["api"] = {"base_url": self.client.base_url,
                        "key_env": self.client.api_key_env,
                        "has_key": self.client.has_key}
+        # The limits this chat is actually running under, so the UI can show
+        # "3 of 25" without knowing the defaults or re-reading the config.
+        snap["budgets"] = {"tool_rounds": self.max_tool_rounds,
+                           "history_messages": self.max_history_messages}
         return snap

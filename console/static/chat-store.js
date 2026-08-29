@@ -56,6 +56,12 @@ window.ConsoleChatStore = (function (C) {
       todos: [],
       plan: "",
       files: [],          // paths the agent touched, derived from tool args
+      // Tool-call rounds used in the CURRENT turn, for backends that report
+      // them (the console's own API loop does; a CLI's rounds are its own
+      // business and it never says). Reset per turn because the cap is a
+      // per-turn cap — carrying it across turns would show pressure that has
+      // already been released.
+      toolRound: 0,
       usage: { cost: 0, tokens_in: 0, tokens_out: 0, turns: 0 },
       approvals: {},      // approval key -> {tool, input, decided, by, item}
       replaying: false,   // true while load() replays history — listeners that
@@ -99,6 +105,7 @@ window.ConsoleChatStore = (function (C) {
 
         case "turn.start":
           st.busy = true;
+          st.toolRound = 0;
           addItem({ role: "user", text: ev.text, wire: ev.wire || "", steered: false });
           emit("meta", st);
           return;
@@ -173,6 +180,10 @@ window.ConsoleChatStore = (function (C) {
           ts.args = ev.args || {};
           ts.open = false;
           if (ev.id) st.byTool[ev.id] = ts;
+          // Only the console's own loop reports which round it is on. A CLI
+          // never does, so this stays 0 there and the budget panel — which
+          // only renders when the backend declares budgets — stays absent.
+          if (ev.round) { st.toolRound = ev.round; emit("meta", st); }
           noteFile(ts);
           emit("patch", ts);
           return;
@@ -338,6 +349,7 @@ window.ConsoleChatStore = (function (C) {
         st.queued = [];
         st.approvals = {};
         st.usage = { cost: 0, tokens_in: 0, tokens_out: 0, turns: 0 };
+        st.toolRound = 0;
         st.head = 0;
         st.replaying = true;
         try { (data.events || []).forEach(apply); }

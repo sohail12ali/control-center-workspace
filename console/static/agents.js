@@ -39,7 +39,57 @@
     pendingTicket: "",
     catalogs: {},       // backend id -> fetched model catalogue (cached server-side)
     listShown: true,
+    lane: "cli",        // which kind of agent the composer is set up for
+    laneFilter: "all",  // which kinds the chat list shows
   };
+
+  /* ---------------- the two kinds of agent ----------------
+
+     Not a grouping — a fork. A CLI backend spawns somebody else's agent and
+     inherits its tools and its permission model; a console backend has no
+     process at all, so the loop, the tools, the gate and the cost accounting
+     are all this console's.
+
+     They overlap on exactly ONE control, the model. Everything else is
+     disjoint: a CLI has permission modes and we have none of its budgets; a
+     console agent has no modes worth showing (every API row declares a single
+     `default`) and budgets we enforce ourselves. Two disjoint control sets in
+     one form is why the old one had a segmented control with a single button
+     in it. */
+  var LANES = [
+    { id: "cli", api: false, icon: "wrench", label: "CLI agent",
+      blurb: "Spawns someone else's agent. Their tools, their permission " +
+             "model — the console watches and records." },
+    { id: "api", api: true, icon: "cpu", label: "Console agent",
+      blurb: "This console runs the loop: its own verbs as tools, the same " +
+             "approval card, cost attributed to a ticket." },
+  ];
+
+  function lane(id) {
+    return LANES.filter(function (l) { return l.id === (id || st.lane); })[0] || LANES[0];
+  }
+
+  /* Backends belonging to one lane. `is_api` is the server's own flag, so the
+     fork stays keyed on transport rather than on a list of names here. */
+  function laneRows(id) {
+    var want = lane(id).api;
+    return st.backends.filter(function (b) { return !!b.is_api === want; });
+  }
+
+  /* Switching lanes must also switch the backend, and a model id is
+     meaningless on another backend — so it clears rather than carrying a
+     stale id into a provider that has never heard of it. */
+  function setLane(id, repaint) {
+    st.lane = lane(id).id;
+    C.prefs.set("agentLane", st.lane);
+    var rows = laneRows(st.lane);
+    var usable = rows.filter(function (b) { return b.installed; })[0];
+    var pick = usable || rows[0];
+    st.form.backend = pick ? pick.id : "";
+    st.form.mode = ""; st.form.model = ""; st.form.modelCustom = false;
+    if (pick) loadCatalog(pick.id);
+    if (repaint !== false) paintMain();
+  }
 
   /* ---------------- chat list: shown or folded ----------------
 
@@ -81,17 +131,31 @@
   }
 
   /* ---------------- rail ---------------- */
+  /* Which kind a past chat was. `backend()` is the only honest source — the
+     transcript records the backend id, not the kind — so a chat whose backend
+     has since been removed from agents.toml reports neither rather than
+     guessing from its name. */
+  function chatKind(chat) {
+    var b = chat.agent ? backend(chat.agent) : null;
+    return b ? (b.is_api ? "api" : "cli") : "";
+  }
+
   function chatRow(chat) {
     var selected = chat.id === st.sel && st.mode === "chat";
     var tone = chat.busy ? "info running" : (chat.alive ? "ok" : "");
     var label = chat.busy ? "working" : (chat.alive ? "live" : "ended");
+    var kind = chatKind(chat);
     return C.el("div", {
-      class: "lrow clickable", role: "button", tabindex: "0",
+      class: "lrow clickable" + (kind ? " k-" + kind : ""), role: "button", tabindex: "0",
       "aria-current": String(selected),
       style: selected ? "background:var(--accent-soft)" : "",
       onclick: function () { openChat(chat.id); },
       onkeydown: function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openChat(chat.id); } },
     }, [
+      kind ? C.el("span", { class: "kind-dot", title: kind === "api"
+        ? "Console agent — this console ran the loop and gated its tools."
+        : "CLI agent — its own tools and permission model." },
+        [C.icon(kind === "api" ? "cpu" : "wrench")]) : null,
       C.el("span", { class: "chip " + tone, text: label }),
       C.el("span", { class: "ltext" }, [
         C.el("div", { class: "truncate", style: "font-size:12.2px", text: chat.title || "(untitled)" }),
@@ -103,6 +167,26 @@
     ]);
   }
 
+  /* One list for both kinds, filterable.
+
+     Not two lists: once a chat is running the kinds are identical — same
+     transcript, same composer, same approval card — and splitting the history
+     would mean looking in two places for "what did I run yesterday". */
+  function laneFilterRow() {
+    var opts = [["all", "All", ""]].concat(LANES.map(function (l) {
+      return [l.id, l.label.replace(" agent", ""), l.icon];
+    }));
+    var row = C.el("div", { class: "lane-filter", role: "group",
+                            "aria-label": "Filter chats by kind" });
+    opts.forEach(function (o) {
+      row.appendChild(C.el("button", {
+        "aria-pressed": String(st.laneFilter === o[0]),
+        onclick: function () { st.laneFilter = o[0]; paintRail(); },
+      }, [o[2] ? C.icon(o[2]) : null, o[1]]));
+    });
+    return row;
+  }
+
   function paintRail() {
     var pane = document.getElementById("agChats");
     if (!pane) return;
@@ -111,8 +195,21 @@
       pane.appendChild(C.empty("No chats yet", "Start one with New chat.", "cpu"));
       return;
     }
+    // Offered only once there are both kinds to tell apart.
+    var kinds = {};
+    st.chats.forEach(function (c) { var k = chatKind(c); if (k) kinds[k] = 1; });
+    if (Object.keys(kinds).length > 1) pane.appendChild(laneFilterRow());
+
+    var shown = st.chats.filter(function (c) {
+      return st.laneFilter === "all" || chatKind(c) === st.laneFilter;
+    });
+    if (!shown.length) {
+      pane.appendChild(C.el("div", { class: "muted", style: "padding:10px",
+        text: "No " + lane(st.laneFilter).label.toLowerCase() + " chats yet." }));
+      return;
+    }
     var rows = C.el("div", { class: "rows" });
-    st.chats.forEach(function (c) { rows.appendChild(chatRow(c)); });
+    shown.forEach(function (c) { rows.appendChild(chatRow(c)); });
     pane.appendChild(rows);
   }
 
@@ -242,7 +339,12 @@
 
   function modeRow() {
     var b = backend(st.form.backend);
-    if (!b || !b.modes.length) return null;
+    /* A choice with one option is not a choice. Every API row declares
+       `modes = ["default"]`, so this used to render a segmented control with a
+       single button for every console agent — a control that cannot be
+       operated. Keyed on the data rather than on the lane, so a backend that
+       ever declares real modes gets them whichever lane it sits in. */
+    if (!b || b.modes.length < 2) return null;
     if (!st.form.mode || !b.modes.some(function (m) { return m.id === st.form.mode; })) {
       st.form.mode = b.default_mode || b.modes[0].id;
     }
@@ -311,42 +413,94 @@
     ]);
   }
 
-  /* Two kinds of agent, shown as two groups.
+  /* The lane tabs — the fork itself.
 
-     This is the most consequential choice in the composer and it was invisible:
-     both kinds rendered as identical cards in one flat list. A CLI spawns
-     somebody else's agent and inherits its tools and its permission model. A
-     console agent has no process at all — this console runs the loop, so the
-     tools are its own verbs, the gate is the same approval card, and the turn
-     is attributable to a ticket. */
-  var GROUPS = [
-    { key: false, title: "CLI agents",
-      blurb: "Their tools, their permission model. The console watches and records." },
-    { key: true, title: "Console agents",
-      blurb: "This console runs the loop — its own verbs as tools, the same approval card, cost attributed to a ticket." },
-  ];
-
-  function backendCards() {
-    var wrap = C.el("div", { role: "radiogroup", "aria-label": "Agent backend" });
-    GROUPS.forEach(function (group) {
-      var rows = st.backends.filter(function (b) { return !!b.is_api === group.key; });
-      if (!rows.length) return;   // a workspace with no API provider says nothing
-      wrap.appendChild(C.el("div", { class: "pick-group" }, [
-        C.el("b", { text: group.title }),
-        C.el("span", { class: "muted", text: group.blurb }),
+     They stay visible after a lane is chosen, which is what lets the choice be
+     REMEMBERED without the split becoming invisible: the tab is pre-selected,
+     not skipped. A modal "which kind?" gate would have had to trade one
+     against the other. */
+  function laneTabs() {
+    var wrap = C.el("div", { class: "lane-tabs", role: "tablist",
+                             "aria-label": "Kind of agent" });
+    LANES.forEach(function (l) {
+      var rows = laneRows(l.id);
+      var ready = rows.filter(function (b) { return b.installed; }).length;
+      var on = st.lane === l.id;
+      wrap.appendChild(C.el("button", {
+        class: "lane-tab" + (on ? " on" : ""),
+        role: "tab", "aria-selected": String(on),
+        // A lane with nothing in it is disabled rather than hidden: "this
+        // console can run models directly" is worth knowing even before you
+        // have configured a provider for it.
+        disabled: rows.length ? null : true,
+        title: rows.length ? l.blurb
+          : "No " + l.label.toLowerCase() + " is configured in agents.toml.",
+        onclick: function () { setLane(l.id); },
+      }, [
+        C.el("span", { class: "lane-top" }, [
+          C.icon(l.icon),
+          C.el("b", { text: l.label }),
+          C.el("span", { class: "lane-count muted", text:
+            rows.length ? ready + " of " + rows.length + " available" : "none configured" }),
+        ]),
+        C.el("span", { class: "lane-blurb", text: l.blurb }),
       ]));
-      var cards = C.el("div", { class: "pick" });
-      rows.forEach(function (b) { cards.appendChild(backendCard(b)); });
-      wrap.appendChild(cards);
     });
     return wrap;
   }
 
+  function backendCards() {
+    var rows = laneRows(st.lane);
+    if (!rows.length) {
+      return C.el("div", { class: "muted", style: "padding:6px 0",
+        text: "Add a [[backend]] row to console/config/agents.toml." });
+    }
+    var cards = C.el("div", { class: "pick", role: "radiogroup",
+                              "aria-label": lane().label });
+    rows.forEach(function (b) { cards.appendChild(backendCard(b)); });
+    return cards;
+  }
+
+  /* What a console agent has instead of permission modes.
+
+     These are the limits the loop will actually enforce, reported by the
+     server as effective values — so a row that sets nothing reads the same as
+     one that sets the default explicitly, and the browser never has to know
+     what the default is. A CLI backend reports `budgets: null`, because its
+     loop belongs to someone else and inventing a number we do not enforce
+     would be a lie this panel then displays. */
+  function budgetRow(b) {
+    if (!b || !b.budgets) return null;
+    var gated = (b.gated_tools || []).length;
+    return C.el("div", { class: "budgets" }, [
+      C.icon("sliders"),
+      C.el("span", { class: "muted", text: (b.modes[0] || {}).blurb ||
+        "writes and shell ask you; reads do not" }),
+      C.el("span", { class: "grow" }),
+      C.el("span", { class: "chip", title:
+        "Tool calls allowed in one turn before the loop stops itself and says so.",
+        text: b.budgets.tool_rounds + " rounds" }),
+      C.el("span", { class: "chip", title:
+        "Messages kept before the oldest are dropped. The system prompt is never dropped.",
+        text: b.budgets.history_messages + " messages" }),
+      gated ? C.el("span", { class: "chip warn", title:
+        (b.gated_tools || []).join(", "), text: gated + " gated" }) : null,
+      b.is_local ? C.el("span", { class: "chip ok", title:
+        "Runs on this machine — no token cost.", text: "free" }) : null,
+    ]);
+  }
+
   function newChatForm() {
-    if (!st.form.backend && st.backends.length) {
-      // Default to something usable rather than whatever sorted first.
-      var usable = st.backends.filter(function (x) { return x.installed; })[0];
-      st.form.backend = (usable || st.backends[0]).id;
+    // The remembered lane may name a kind this workspace no longer configures
+    // (a provider row removed, a CLI uninstalled), so fall back to one that
+    // has rows rather than opening on an empty tab.
+    if (!laneRows(st.lane).length) {
+      var filled = LANES.filter(function (l) { return laneRows(l.id).length; })[0];
+      if (filled) st.lane = filled.id;
+    }
+    if (!st.form.backend || !backend(st.form.backend) ||
+        !!backend(st.form.backend).is_api !== lane().api) {
+      setLane(st.lane, false);
     }
     var b = backend(st.form.backend);
 
@@ -382,15 +536,16 @@
         ? C.el("div", { class: "chip accent", style: "margin-bottom:10px" },
             [C.icon("columns"), "from ticket " + st.pendingTicket])
         : null,
+      laneTabs(),
       C.el("div", { style: "margin-bottom:12px" }, [
-        C.el("span", { class: "muted", style: "display:block;margin-bottom:5px", text: "Agent CLI" }),
         backendCards(),
         st.hiddenBackends
           ? C.el("div", { class: "muted", style: "margin-top:5px",
-              text: st.hiddenBackends + " CLI hidden by your Settings." })
+              text: st.hiddenBackends + " backend hidden by your Settings." })
           : null,
       ]),
       modeRow(),
+      budgetRow(b),
       /* The reason comes from the backend, because "not on PATH" is wrong for
          an API backend that has no binary at all — its problem is a missing
          key, and telling someone to install something would send them off to
@@ -576,6 +731,29 @@
     });
   }
 
+  /* Which gate is in force, carried for the life of the chat.
+
+     This is the session's blast radius — whether a write is stopped by this
+     console's approval card or by somebody else's permission model — and it
+     used to be visible only while you were picking, then gone the moment you
+     pressed Start. Two chats that look otherwise identical can differ here.
+
+     Silent for a chat whose backend is no longer configured: guessing the kind
+     from a name we can't resolve would be exactly the wrong place to guess. */
+  function kindChip(backendId) {
+    var b = backendId ? backend(backendId) : null;
+    if (!b) return null;
+    return b.is_api
+      ? C.el("span", { class: "chip accent", title:
+          "This console runs the loop. Its own verbs are the tools, and " +
+          "gated ones stop at the approval card in this chat." },
+          [C.icon("cpu"), "console-gated"])
+      : C.el("span", { class: "chip", title:
+          "The CLI runs its own loop with its own tools. The console watches " +
+          "and records; the permission model is the CLI's." },
+          [C.icon("wrench"), "cli-gated"]);
+  }
+
   function paintHead(head, store) {
     var s = store.state;
     var meta = s.snapshot || s.meta || {};
@@ -585,6 +763,7 @@
       C.el("h3", { class: "truncate", text: meta.title || "Chat" }),
       s.busy ? C.el("span", { class: "chip info running" }, [C.icon("play"), "working"])
              : C.el("span", { class: "chip" + (s.alive ? " ok" : "") }, [s.alive ? "live" : "ended"]),
+      kindChip(meta.agent),
       meta.agent ? C.chip(meta.agent) : null,
       meta.mode ? C.chip(meta.mode) : null,
       s.model ? C.chip(s.model) : (meta.model ? C.chip(meta.model) : null),
@@ -611,9 +790,64 @@
     ]);
   }
 
+  /* Budget pressure, for a chat whose loop this console is running.
+
+     The old rail offered Plan / Todos / Files to every chat and, when a
+     console agent produced none of them — it never will; those come from
+     claude's own stream — fell through to "the agent's plan, todos and touched
+     files appear here". Three things that were never coming.
+
+     `tool.start` carries `round` and `max_rounds` for this transport, so the
+     cap is shown while the turn is still running rather than only in the
+     notice that fires once it has been hit. */
+  function budgetPanel(store) {
+    var s = store.state;
+    var meta = s.snapshot || {};
+    var budgets = meta.budgets;
+    if (!budgets) return null;
+
+    var used = s.toolRound || 0;
+    var rounds = budgets.tool_rounds || 0;
+    var pct = rounds ? Math.min(100, Math.round((used / rounds) * 100)) : 0;
+    var b = backend(meta.agent);
+
+    function meter(label, value, fill, tone) {
+      return [
+        C.el("div", { class: "ct-meter" }, [
+          C.el("span", { text: label }),
+          C.el("b", { text: value }),
+        ]),
+        C.el("div", { class: "ct-bar" + (tone ? " " + tone : "") },
+          [C.el("i", { style: "width:" + fill + "%" })]),
+      ];
+    }
+
+    var kids = meter("Tool rounds", used + " of " + rounds, pct,
+                     pct >= 80 ? "warn" : "");
+    kids.push(C.el("div", { class: "ct-meter" }, [
+      C.el("span", { text: "History kept" }),
+      C.el("b", { text: String(budgets.history_messages) }),
+    ]));
+    kids.push(C.el("div", { class: "ct-meter" }, [
+      C.el("span", { text: "Spend" }),
+      // Local models are the one case where free is the truth rather than an
+      // absent price, and the card already says which machine it runs on.
+      C.el("b", { text: b && b.is_local ? "free"
+        : (s.usage.cost ? "$" + s.usage.cost.toFixed(4) : "unpriced") }),
+    ]));
+    if (b && b.is_local) {
+      kids.push(C.el("div", { class: "muted", text: "Runs on this machine." }));
+    }
+    return C.el("section", { class: "ct-panel" },
+      [C.el("h4", { text: "Console budget" })].concat(kids));
+  }
+
   function paintRail2(rail, store) {
     var s = store.state;
     C.clear(rail);
+
+    var budget = budgetPanel(store);
+    if (budget) rail.appendChild(budget);
 
     if (s.plan) {
       rail.appendChild(C.el("section", { class: "ct-panel" }, [
@@ -669,8 +903,15 @@
     }
 
     if (!rail.childNodes.length) {
+      /* Named per kind, because the old line promised a console agent three
+         things it can never produce: plan, todos and the file list all come
+         out of claude's own stream. Promising them to a transport that has no
+         such events reads as "nothing happened yet" forever. */
+      var b = backend((s.snapshot || {}).agent);
       rail.appendChild(C.el("div", { class: "muted", style: "padding:4px",
-        text: "The agent's plan, todos and touched files appear here." }));
+        text: b && b.is_api
+          ? "Tool calls and budget appear here once the agent starts working."
+          : "The agent's plan, todos and touched files appear here." }));
     }
   }
 
@@ -816,6 +1057,10 @@
         st.backends = kept.length ? kept : all;
         st.hiddenBackends = all.length - st.backends.length;
         st.catalog = res[1] || { skills: [], personas: [], tickets: [] };
+        // The remembered lane. Validated against what this workspace actually
+        // configures by newChatForm(), so a stored id for a kind that no
+        // longer has any rows falls back rather than opening on an empty tab.
+        st.lane = lane(C.prefs.get("agentLane", "cli")).id;
         C.clear(host);
 
         if (!st.backends.length) {

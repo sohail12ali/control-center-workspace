@@ -215,16 +215,27 @@ prompt_prefix_style = "none"
 gated_tools = ["write_file", "edit_file", "run_command"]
 approval_timeout = 300
 
-modes = ["default"]
-default_mode = "default"
-[backend.mode_blurbs]
-default = "writes and shell ask you in the chat; reads and console lookups do not"
+# Budgets for the loop the console runs. Omit either and it takes the default
+# from agent_backends (25 rounds, 120 messages). Both are per-backend because
+# one pair of numbers cannot suit a 4k local model and a 200k hosted one.
+max_tool_rounds = 25
+max_history_messages = 120
 
 # A SHORTLIST, NOT A CATALOGUE — OpenRouter serves hundreds of models and the
 # composer keeps a custom-id box beside the picker. Ids are passed verbatim.
 # Deliberately left empty in the template: model availability and pricing move,
 # and a stale hardcoded list is worse than an empty one plus a paste box.
 models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# KEEP SUB-TABLES LAST. Everything below a `[backend.*]` header belongs to that
+# sub-table, so a plain key written after it is silently swallowed — `models`
+# used to sit down here and parsed as `mode_blurbs.models`, which is why the
+# shortlist above never reached the picker.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
 
 # ------------------------------------------------------------------ qwen ----
 # Qwen Code — a coding CLI with a Claude-Code-shaped flag surface. Verified
@@ -303,15 +314,23 @@ prompt_prefix_style = "none"
 gated_tools = ["write_file", "edit_file", "run_command"]
 approval_timeout = 300
 
-modes = ["default"]
-default_mode = "default"
-[backend.mode_blurbs]
-default = "writes and shell ask you in the chat; reads and console lookups do not"
+# A local model's context is usually far smaller than a hosted one's, so the
+# history cap is lower here — 120 messages would overflow a 4k window long
+# before the count was reached, and the model would simply start failing.
+max_tool_rounds = 15
+max_history_messages = 40
 
 # Left empty deliberately: your pulled models are a fact about this machine,
 # not about the template. `kanban agents models ollama --refresh` reads them
 # from the running server and caches them for the picker.
 models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# Sub-tables last — a plain key below this header lands inside it.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
 
 # ------------------------------------------------------------- lm-studio ----
 # Same shape as ollama — a local OpenAI-compatible server, no key. LM Studio
@@ -333,12 +352,18 @@ prompt_prefix_style = "none"
 gated_tools = ["write_file", "edit_file", "run_command"]
 approval_timeout = 300
 
-modes = ["default"]
-default_mode = "default"
-[backend.mode_blurbs]
-default = "writes and shell ask you in the chat; reads and console lookups do not"
+# Same reasoning as ollama: a locally served model's window is the constraint.
+max_tool_rounds = 15
+max_history_messages = 40
 
 models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# Sub-tables last — a plain key below this header lands inside it.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
 
 # ------------------------------------------------------------- examples -----
 # A third CLI, or a local script, needs nothing but a row. Enable and edit:

@@ -1133,13 +1133,87 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 }
 .pick-why.muted { color: var(--ink-3); }
 
-/* The two kinds of agent. A heading per group, because the difference (whose
-   tools, whose permission gate) decides the choice and was invisible when both
-   rendered as one flat list of identical cards. */
-.pick-group { margin: 12px 0 6px; display: flex; flex-direction: column; gap: 2px; }
-.pick-group:first-child { margin-top: 0; }
-.pick-group b { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
-.pick-group .muted { font-size: 11px; line-height: 1.45; }
+/* -- the two kinds of agent, as a fork ---------------------------------------
+
+   They were a pair of group headings over one flat card list. That understated
+   it: a CLI backend and a console backend overlap on exactly ONE control (the
+   model) and are disjoint on every other — permission modes belong to the CLI,
+   tool-round and history budgets belong to the console loop. Two disjoint
+   control sets sharing one form is why the old one rendered a segmented
+   "permission mode" control with a single button in it for every API backend.
+
+   Tabs rather than a one-time chooser: the lane is remembered across sessions,
+   and a remembered choice you can still SEE is a preference, while one that
+   silently skips a step is a trapdoor. */
+.lane-tabs {
+  display: grid; gap: 8px; margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.lane-tab {
+  text-align: left; font: inherit; cursor: pointer; padding: 10px 12px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  display: flex; flex-direction: column; gap: 5px;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
+}
+.lane-tab:hover:not(:disabled) { border-color: var(--accent-line); }
+.lane-tab.on { border-color: var(--accent); box-shadow: var(--glow); }
+.lane-tab:disabled { opacity: .5; cursor: not-allowed; }
+.lane-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lane-top b { font-size: 13px; }
+.lane-tab.on .lane-top { color: var(--accent); }
+.lane-tab.on .lane-top svg.ico { color: var(--accent); }
+.lane-count { margin-left: auto; font-size: 10.5px; white-space: nowrap; }
+.lane-blurb { font-size: 11.3px; line-height: 1.45; color: var(--ink-2); }
+
+/* What a console agent shows in place of permission modes: the limits its loop
+   will actually enforce. Reported by the server as EFFECTIVE values, so a row
+   that configures nothing reads the same as one that spells out the default. */
+.budgets {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 7px 10px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+}
+.budgets > svg.ico { color: var(--ink-3); flex: none; }
+.budgets .muted { font-size: 11px; line-height: 1.4; }
+
+/* One chat list for both kinds, filterable — not two lists. Once a chat is
+   running the kinds are identical (same transcript, same composer, same
+   approval card), and splitting the history would mean looking in two places
+   for what you ran yesterday. */
+.lane-filter { display: flex; gap: 3px; padding: 2px 2px 8px; }
+.lane-filter button {
+  flex: 1; font: inherit; font-size: 11px; padding: 4px 6px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: transparent; color: var(--ink-3);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+}
+.lane-filter button:hover { background: var(--surface-2); color: var(--ink-2); }
+.lane-filter button[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  color: var(--accent); font-weight: 600;
+}
+
+/* Which gate was in force, at a glance, for every past chat. */
+.lrow .kind-dot {
+  width: 20px; height: 20px; flex: none;
+  display: grid; place-items: center; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3);
+}
+.lrow.k-api .kind-dot {
+  border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent);
+}
+
+/* Budget pressure while a turn is still running. */
+.ct-meter { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+.ct-meter b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ct-bar {
+  height: 4px; border-radius: 3px; background: var(--bg-sunk);
+  overflow: hidden; margin: 4px 0 8px;
+}
+.ct-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.ct-bar.warn > i { background: var(--warn); }
 
 /* -- inline / @ # picker ----------------------------------------------------
    Floats over the transcript rather than pushing the composer around as rows

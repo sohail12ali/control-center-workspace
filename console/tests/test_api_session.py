@@ -99,6 +99,14 @@ def api(repo, monkeypatch):
     agent_backends._cache.clear()
 
 
+def reconfigure(repo, extra):
+    """Rewrite the backend row with extra config and drop the cached registry."""
+    with open(os.path.join(repo, "console", "config", "agents.toml"), "w",
+              encoding="utf-8") as fh:
+        fh.write(BACKEND + extra + "\n")
+    agent_backends._cache.clear()
+
+
 def build(repo, provider, **kw):
     backend = agent_backends.get(repo, "api")
     session = agent_session.build("sid1", backend, repo, model="test/model", **kw)
@@ -253,10 +261,12 @@ class TestToolLoop:
                        if m.get("role") == "tool"][0]
         assert "not valid JSON" in tool_result["content"]
 
-    def test_the_runaway_cap_ends_the_turn_and_says_so(self, api, monkeypatch):
-        # Silently stopping is indistinguishable from finishing.
-        from server import agent_api_session
-        monkeypatch.setattr(agent_api_session, "MAX_TOOL_ROUNDS", 3)
+    def test_the_runaway_cap_ends_the_turn_and_says_so(self, api):
+        # Silently stopping is indistinguishable from finishing. Set through
+        # config rather than by patching a constant, because that is the path
+        # the cap actually travels now — a patched module attribute would keep
+        # passing after the config route broke.
+        reconfigure(api, "max_tool_rounds = 3")
         provider = Provider(*[call_tool("list_files", {}) for _ in range(10)])
         session = build(api, provider)
         run(session, "loop forever")
@@ -264,8 +274,165 @@ class TestToolLoop:
         notices = [e for e in events(session)
                    if e.get("type") == "notice" and e.get("kind") == "tool_limit"]
         assert notices, "hitting the cap must produce a visible notice"
+        assert "3 tool rounds" in notices[0]["text"], \
+            "the notice must name the limit that was actually enforced"
         end = [e for e in events(session) if e.get("type") == "turn.end"][-1]
         assert end["subtype"] == "tool_limit"
+
+
+#: The renderer, as a file. The store's `case "..."` labels ARE the contract
+#: between this transport and the browser, and reading them beats restating
+#: them here — a list copied into this file would drift the same way the events
+#: did.
+STORE_JS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "static", "chat-store.js")
+
+
+def handled_event_types():
+    import re
+    with open(STORE_JS, encoding="utf-8") as fh:
+        return set(re.findall(r'case "([a-z][a-z._]*)"', fh.read()))
+
+
+class TestEventShape:
+    """The API loop must speak the renderer's vocabulary, not its own.
+
+    It did not. `text.stop` where the store listens for `text.done`, `input`
+    where it reads `args`, `tool.end` — consumed by nothing at all — instead of
+    `tool.result`, and no `block` on any tool event even though `block` is the
+    key items are filed under. Every one of these failed silently: the chat
+    still rendered, just wrongly and only for this transport.
+    """
+
+    def test_every_event_emitted_is_one_the_store_handles(self, api):
+        provider = Provider(call_tool("list_files", {}), say("here you go"))
+        session = build(api, provider)
+        run(session, "look around")
+
+        handled = handled_event_types()
+        assert "tool.result" in handled, "sanity: the store file was parsed"
+        emitted = {e.get("type") for e in events(session)}
+        unknown = {t for t in emitted if t and t not in handled}
+        assert not unknown, (
+            "these events reach the browser and fall through the store's "
+            "switch untouched: %s" % sorted(unknown))
+
+    def test_a_tool_call_carries_a_block_and_parsed_args(self, api):
+        provider = Provider(call_tool("read_file", {"path": "README.md"}),
+                            say("read it"))
+        session = build(api, provider)
+        run(session, "read the readme")
+
+        start = [e for e in events(session) if e.get("type") == "tool.start"][0]
+        assert start["block"], "without a block the store files it under `undefined`"
+        # `args` is also where the "files touched" panel gets its paths.
+        assert start["args"] == {"path": "README.md"}
+        assert "input" not in start
+
+    def test_a_tool_call_is_resolved_by_a_result(self, api):
+        provider = Provider(call_tool("list_files", {}), say("done"))
+        session = build(api, provider)
+        run(session, "list")
+        results = [e for e in events(session) if e.get("type") == "tool.result"]
+        assert results and results[0]["ok"] is True
+        assert results[0]["content"], "the result must carry the tool's output"
+
+    def test_a_denied_call_resolves_as_a_failure_not_a_silence(self, api):
+        provider = Provider(call_tool("write_file", {"path": "x.txt", "content": "hi"}),
+                            say("understood"))
+        session = build(api, provider)
+        session.send("write something")
+        pending = await_approval(session)
+        agent_approvals.REGISTRY.decide(pending.key, "deny")
+        if session._turn_thread:
+            session._turn_thread.join(timeout=10)
+
+        results = [e for e in events(session) if e.get("type") == "tool.result"]
+        assert results, "a denied call must still close its block"
+        assert results[0]["ok"] is False
+        assert "Denied" in results[0]["content"]
+
+    def test_blocks_are_unique_across_rounds(self, api):
+        # A counter that restarts each turn makes round two overwrite round
+        # one's bubbles, because the store keys every item by block.
+        provider = Provider(call_tool("list_files", {}, call_id="c1"),
+                            call_tool("list_files", {}, call_id="c2"),
+                            say("finished"))
+        session = build(api, provider)
+        run(session, "twice")
+        blocks = [e["block"] for e in events(session)
+                  if e.get("type") in ("tool.start", "text.start")]
+        assert len(blocks) == len(set(blocks)), "block numbers collided: %s" % blocks
+
+    def test_text_is_closed_so_read_aloud_can_fire(self, api):
+        # The UI speaks a reply when its block closes; an always-open block is
+        # a reply that is never read.
+        session = build(api, Provider(say("all done")))
+        run(session, "go")
+        assert [e for e in events(session) if e.get("type") == "text.done"]
+
+    def test_a_tool_only_round_opens_no_empty_text_bubble(self, api):
+        provider = Provider(call_tool("list_files", {}), say("done"))
+        session = build(api, provider)
+        run(session, "list")
+        starts = [e for e in events(session) if e.get("type") == "text.start"]
+        assert len(starts) == 1, "only the final spoken round should open text"
+
+
+class TestBudgets:
+    """Rounds and history are per-backend config, not one number for everyone.
+
+    A 4k local model and a 200k hosted one cannot share a history cap: 120
+    messages overflows the first long before the count is reached.
+    """
+
+    def test_a_row_that_says_nothing_gets_the_defaults(self, api):
+        backend = agent_backends.get(api, "api")
+        assert backend.max_tool_rounds == agent_backends.DEFAULT_TOOL_ROUNDS
+        assert backend.max_history_messages == agent_backends.DEFAULT_HISTORY_MESSAGES
+
+    def test_config_reaches_the_running_session(self, api):
+        reconfigure(api, "max_tool_rounds = 4\nmax_history_messages = 9")
+        session = build(api, Provider(say("hi")))
+        assert session.max_tool_rounds == 4
+        assert session.max_history_messages == 9
+
+    def test_describe_reports_the_effective_budgets(self, api):
+        reconfigure(api, "max_tool_rounds = 7")
+        d = agent_backends.get(api, "api").describe()
+        # Effective, not raw: the unset one still reports what will be enforced.
+        assert d["budgets"] == {
+            "tool_rounds": 7,
+            "history_messages": agent_backends.DEFAULT_HISTORY_MESSAGES}
+
+    def test_a_cli_backend_has_no_budgets_to_report(self, repo):
+        # Its loop belongs to someone else, so reporting a number we do not
+        # enforce would be a lie the Settings panel then displays.
+        with open(os.path.join(repo, "console", "config", "agents.toml"), "w",
+                  encoding="utf-8") as fh:
+            fh.write('[[backend]]\nid = "cli"\ncommand = "x"\n'
+                     'transport = "oneshot"\n')
+        agent_backends._cache.clear()
+        assert agent_backends.get(repo, "cli").describe()["budgets"] is None
+
+    def test_a_budget_below_one_is_refused_at_load(self, api):
+        # A cap of zero is a loop that ends before it starts, which looks
+        # exactly like a hang. Fail beside the row that is wrong.
+        reconfigure(api, "max_tool_rounds = 0")
+        with pytest.raises(ValueError, match="max_tool_rounds must be at least 1"):
+            agent_backends.get(api, "api")
+
+    def test_history_is_trimmed_to_the_configured_size(self, api):
+        reconfigure(api, "max_history_messages = 4")
+        session = build(api, Provider(say("hi")))
+        session._messages = [{"role": "system", "content": "SYS"}] + [
+            {"role": "user", "content": str(i)} for i in range(20)]
+        trimmed = session._trimmed_messages()
+        assert len(trimmed) == 4
+        # The system message carries the injected skill; losing it would
+        # silently change what the agent thinks it was asked to do.
+        assert trimmed[0]["content"] == "SYS"
+        assert trimmed[-1]["content"] == "19"
 
 
 class TestApprovalGate:

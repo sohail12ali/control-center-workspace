@@ -10,7 +10,48 @@ import os
 
 import pytest
 
-from server import agent_backends
+from server import agent_backends, tomlio
+
+#: The real file this workspace ships, not a fixture. A few things can only be
+#: wrong in the committed config, and are invisible to every fixture-based test.
+SHIPPED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "config", "agents.toml")
+
+
+class TestShippedConfig:
+    """Guards against mistakes that only the real agents.toml can make."""
+
+    def test_no_plain_key_is_swallowed_by_a_sub_table(self):
+        """A key written below a `[backend.*]` header belongs to that header.
+
+        TOML is behaving correctly and the file was wrong: `models = []` sat
+        under `[backend.mode_blurbs]` on all three API rows, so it parsed as
+        `mode_blurbs.models` and the shortlist could never reach the picker.
+        Silent, and invisible until someone put a real model id there.
+        """
+        rows = tomlio.load(SHIPPED).get("backend", [])
+        assert rows, "the shipped agents.toml should define backends"
+        for row in rows:
+            declared = set(row.get("modes", []))
+            stray = set(row.get("mode_blurbs", {}) or {}) - declared
+            assert not stray, (
+                "backend %r: %s written after [backend.mode_blurbs], so it "
+                "parsed into that sub-table instead of the backend. Move plain "
+                "keys ABOVE the sub-table header." % (row.get("id"), sorted(stray)))
+
+    def test_every_api_row_declares_its_budgets(self):
+        """Not required by the loader — required by honesty.
+
+        The Settings panel shows these numbers as this provider's limits. A row
+        that omits them still works, but the template should demonstrate that
+        they are per-backend rather than one global policy.
+        """
+        for row in tomlio.load(SHIPPED).get("backend", []):
+            if row.get("transport") != "openai_api":
+                continue
+            for field in ("max_tool_rounds", "max_history_messages"):
+                assert row.get(field), "backend %r should declare %s" % (
+                    row.get("id"), field)
 
 
 @pytest.fixture
