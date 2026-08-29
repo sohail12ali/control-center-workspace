@@ -1,0 +1,77 @@
+name: verify
+
+# Two things this repo had no way to catch before: a console regression, and
+# harness config that drifted out of agreement with itself (a skill renamed but
+# still referenced, a frontmatter name that no longer matches its directory).
+#
+# Both jobs run the SAME commands a developer runs locally — `python -m pytest`
+# and `python console/kanban.py harness lint`. Nothing CI-only, so a green
+# checkmark means what it appears to mean.
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: console tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The console runtime is stdlib-only and claims no version floor.
+        # These two are the range actually verified; a lower floor stays a
+        # claim until someone tests it here.
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dev dependencies
+        run: python -m pip install -r console/requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest
+
+  harness:
+    name: harness lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # No dependencies: the linter is stdlib-only, like the console it ships
+      # with. Exits non-zero on errors; warnings (orphan skills, stale counts)
+      # are reported without failing the build.
+      - name: Lint skills and agents
+        run: python console/kanban.py harness lint
+
+  cli:
+    name: cli smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Read-only verbs against the real vault. These are the calls the session
+      # hooks make on every session start, so a break here breaks every agent
+      # turn — and it would otherwise surface as a silent `|| true` in the hook.
+      - name: Read-only CLI verbs
+        run: |
+          python console/kanban.py ticket list
+          python console/kanban.py agents backends
+          python console/kanban.py overview

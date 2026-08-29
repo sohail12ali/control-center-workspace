@@ -71,20 +71,44 @@ def _save(repo_root, ticket_id, kind, data):
     tomlio.atomic_write(path, data)
 
 
-def _next_id(items, kind):
+def _seq_of(item_id, kind):
+    """The numeric tail of an id, or 0 if it doesn't parse."""
+    prefix = _ID_FORMATS[kind](0)[:-1]
+    if not item_id.startswith(prefix):
+        return 0
+    tail = item_id[len(prefix):]
+    return int(tail) if tail.isdigit() else 0
+
+
+def _next_id(data, kind):
+    """Allocate the next id from a monotonic counter in [meta].
+
+    Deriving the id from the *current* items instead — which is what this did
+    originally — hands out D-2 again after D-2 is removed. Tracker ids are
+    cited by id in durable markdown (verification, progress, decision-log), so
+    a reused id silently re-points an existing citation at a different item.
+    The counter never goes backwards, so a removed id stays retired.
+
+    `max(existing)` is the floor for a file written before the counter existed,
+    or hand-repaired since.
+    """
     fmt = _ID_FORMATS[kind]
-    existing = {it["id"] for it in items}
-    n = len(items) + 1
-    while fmt(n) in existing:
-        n += 1
-    return fmt(n)
+    items = data.get("items", [])
+    floor = max([_seq_of(it.get("id", ""), kind) for it in items] or [0])
+    try:
+        seq = int(data.get("meta", {}).get("seq", 0) or 0)
+    except (TypeError, ValueError):
+        seq = 0
+    seq = max(seq, floor) + 1
+    data.setdefault("meta", {})["seq"] = seq
+    return fmt(seq)
 
 
 def add(repo_root, ticket_id, kind, text, **fields):
     _check_kind(kind)
     repo_root = repo_root or find_repo_root()
     data = load(repo_root, ticket_id, kind)
-    item_id = _next_id(data["items"], kind)
+    item_id = _next_id(data, kind)
     today = date.today().isoformat()
     item = {"id": item_id, "status": _DEFAULT_STATUS[kind], "text": text}
 

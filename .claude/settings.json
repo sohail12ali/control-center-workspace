@@ -1,30 +1,22 @@
 {
-  "workspace": {
-    "path": "D:\\Workspace\\ai-workspace\\control-center-workspace",
-    "vault": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center",
-    "artifacts": "D:\\Workspace\\ai-workspace\\control-center-workspace\\knowledge-center\\artifacts",
-    "memory": "D:\\Workspace\\ai-workspace\\control-center-workspace\\.claude\\projects\\control-center\\memory"
+  "permissions": {
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git push --force:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Read(./**/*.key)",
+      "Read(./**/credentials.json)"
+    ]
   },
-  "agents": ["harness", "analyst", "planner", "builder", "verifier", "fixer", "deployer"],
-  "skills": [
-    "harness-standards", "do", "caveman",
-    "kickoff", "trace-context", "template", "consolidate", "console",
-    "analyze", "clarify", "questions",
-    "requirements", "challenge-requirements",
-    "tech-select",
-    "plan", "analyze-components", "breakdown-tasks", "estimate",
-    "replan", "challenge-plan",
-    "progress-tracker", "fix", "evolve",
-    "verify", "challenge-implementation", "criticize", "validate-artifacts",
-    "bugs", "todos",
-    "reconcile", "handoff", "standup", "close-work", "invoke-project-skill",
-    "ticket-draft", "investigate",
-    "log-work", "optimize-cursor-artifacts", "project-layout",
-    "simplify", "review", "security-review",
-    "update-config", "keybindings-help", "loop", "schedule", "claude-api"
-  ],
-  "claudeCode.defaultMode": "acceptEdits",
-  "claudeCode.permissions.allow": ["edit", "write", "mkdir", "touch"],
   "hooks": {
     "SessionStart": [
       {
