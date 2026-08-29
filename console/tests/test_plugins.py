@@ -111,7 +111,10 @@ class TestVerbRoutes:
         routes = self._apply(root)
         assert set(routes) == {
             ("GET", "verbs.list"), ("POST", "verbs.run"),
-            ("POST", "verbs.submit"), ("GET", "verbs.jobs")}
+            ("POST", "verbs.submit"), ("GET", "verbs.jobs"),
+            # Cancel is a POST: a GET that stops work is one a browser will
+            # repeat and a prefetcher will call unprompted.
+            ("POST", "verbs.job_cancel")}
 
     def test_listing_returns_the_real_registry(self, root):
         routes = self._apply(root)

@@ -124,6 +124,122 @@
     return host;
   }
 
+  /* ---------------- operations ----------------
+     Jobs and schedules live here rather than on a tab of their own: what is
+     running and what will run are exactly the "state of the work" questions
+     this dashboard already answers, and a tab you must navigate to is a tab
+     you check after it mattered.
+
+     Both panels REMOVE THEMSELVES when there is nothing to say. A workspace
+     using neither should not pay for them with two permanently empty boxes on
+     its landing page — the empty state is a panel that is not there. */
+
+  var JOB_TONE = {
+    running: "accent", queued: "warn", done: "ok",
+    error: "danger", interrupted: "warn", cancelled: null,
+  };
+  var ACTIVE_STATES = { queued: 1, running: 1 };
+
+  function jobRow(job, api, reload) {
+    var cancel = job.state === "queued"
+      ? C.el("button", {
+          class: "btn sm", title: "Cancel this queued job",
+          onclick: function (e) {
+            e.stopPropagation();
+            C.post("/api/jobs/" + encodeURIComponent(job.id) + "/cancel", {})
+              .then(function () { C.toast("Cancelled " + job.verb, "ok"); reload(); })
+              .catch(function (err) { C.toast(err.message, "err"); });
+          },
+        }, [C.icon("x")])
+      : null;
+
+    return C.el("div", { class: "lrow" }, [
+      C.el("span", { class: "chip " + (JOB_TONE[job.state] || ""), text: job.state }),
+      C.el("span", { class: "ltext" }, [
+        C.el("b", { text: job.verb }),
+        job.ticket ? C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: " " + job.ticket }) : null,
+      ]),
+      /* Why it failed matters more than that it failed, and the row is the
+         only place a person will look. */
+      job.error ? C.el("span", { class: "muted", title: job.error, text: String(job.error).slice(0, 40) }) : null,
+      C.el("span", { class: "muted mono", style: "font-size:11px", text: (job.submitted || "").slice(11, 16) }),
+      cancel,
+    ]);
+  }
+
+  function jobsPanel(api) {
+    var host = C.el("div");
+    function load() {
+      C.get("/api/jobs").then(function (d) {
+        C.clear(host);
+        var jobs = (d && d.jobs) || [];
+        if (!jobs.length) return;              // never used here — say nothing
+        var active = jobs.filter(function (j) { return ACTIVE_STATES[j.state]; });
+        /* Active first, then a short tail of finished work: a job that ended
+           three days ago is history, and history is what `kanban job list`
+           is for. */
+        var shown = active.concat(
+          jobs.filter(function (j) { return !ACTIVE_STATES[j.state]; }).slice(0, 5));
+        var rows = C.el("div", { class: "rows" });
+        shown.forEach(function (j) { rows.appendChild(jobRow(j, api, load)); });
+        host.appendChild(C.panel("Jobs", rows,
+          C.el("span", { class: "chip" + (active.length ? " accent" : " zero"),
+                         text: active.length ? active.length + " active" : "idle" }),
+          { icon: "queue", tone: active.length ? "info" : null }));
+      }).catch(function () { /* verbs plugin off, or a static export */ });
+    }
+    load();
+    return host;
+  }
+
+  function schedulesPanel() {
+    var host = C.el("div");
+    C.get("/api/schedules").then(function (d) {
+      var rows = (d && d.schedules) || [];
+      if (!rows.length && !(d && d.error)) return;
+      var box = C.el("div", { class: "rows" });
+
+      if (d.error) {
+        /* A cron expression that failed to parse is a config error the owner
+           has to see. Blanking the panel would hide it until the day the job
+           did not run. */
+        box.appendChild(C.el("div", { class: "lrow" }, [
+          C.el("span", { class: "chip danger" }, [C.icon("alert"), "config"]),
+          C.el("span", { class: "ltext", text: d.error }),
+        ]));
+      }
+
+      rows.forEach(function (s) {
+        box.appendChild(C.el("div", { class: "lrow" }, [
+          C.el("span", { class: "chip " + (s.enabled ? "ok" : "zero"),
+                         text: s.enabled ? "on" : "off" }),
+          C.el("span", { class: "ltext" }, [
+            C.el("b", { text: s.label || s.id }),
+            C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: " " + s.verb }),
+          ]),
+          C.el("code", { class: "mono", style: "font-size:11px", text: s.expr }),
+          C.el("span", { class: "muted", text: s.next_run || "—" }),
+        ]));
+      });
+
+      var on = (d.enabled_count || 0);
+      /* The caveat is the panel's most important line. Next-run times read as
+         a promise, and this deployment only keeps that promise while `serve`
+         is running — there is no daemon. Saying so here is the difference
+         between a schedule that quietly never fires and one you knew about. */
+      box.appendChild(C.el("p", { class: "muted", style: "margin:8px 0 0;font-size:11px",
+        text: on
+          ? "The running console is the clock — these fire only while the server is up. Missed runs are skipped, never replayed."
+          : "All schedules are parked. Nothing will fire." }));
+
+      host.appendChild(C.panel("Scheduled", box,
+        C.el("span", { class: "chip" + (on ? " ok" : " zero"),
+                       text: on ? on + " on" : "parked" }),
+        { icon: "clock" }));
+    }).catch(function () { /* ops plugin off, or a static export */ });
+    return host;
+  }
+
   function render(host, api) {
     C.load(host, C.get("/api/overview"), function (d) {
       var grid = C.el("div", { class: "grid" });
@@ -202,6 +318,9 @@
         ]));
       });
       grid.appendChild(C.panel("Recently touched", recent, null, { icon: "clock" }));
+
+      grid.appendChild(jobsPanel(api));
+      grid.appendChild(schedulesPanel());
 
       host.appendChild(grid);
     }, { skeletonRows: 5 });

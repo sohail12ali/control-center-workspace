@@ -65,6 +65,14 @@ id = "verbs"
 module = "features.verbs_feature"
 enabled = true
 
+# Read-only machine state (schedules, worktrees, notification health), shown
+# inside the tabs it qualifies rather than on a tab of its own. Disabling this
+# drops those panels; every tab that hosts one keeps working without it.
+[[plugin]]
+id = "ops"
+module = "features.ops_feature"
+enabled = true
+
 [[plugin]]
 id = "vault"
 module = "features.vault_feature"

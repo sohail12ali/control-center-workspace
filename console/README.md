@@ -147,6 +147,43 @@ quietly treats unknown as free is wrong in the direction that matters.
 skill invoked by hand in a terminal leaves no record, so never-fired is a
 candidate for review rather than a verdict.
 
+### Where these appear in the UI
+
+Everything above is also readable from the browser, placed **inside the tab
+that already answers the same question** rather than on an operations tab of
+its own. A tab you have to navigate to is a tab you check after it mattered.
+
+| What | Where | Can act? |
+| ---- | ----- | -------- |
+| Verbs | Command palette, "Run" group | Runs it; result opens in the drawer |
+| Jobs | Overview → **Jobs** | Cancels a *queued* job |
+| Schedules | Overview → **Scheduled** | Read-only |
+| Token and cost totals | Analytics → **Agent spend** | Read-only |
+| Audit trail | Work → **Console activity** | Read-only, collapsed by default |
+| Worktrees, notification health | Settings → **This machine** | Read-only |
+
+Two rules run through that table.
+
+**The panels remove themselves when they have nothing to say.** A workspace
+that uses no schedules does not get a permanently empty box on its landing
+page; the empty state is a panel that is not there. The exception is a panel
+reporting a *problem* — a cron expression that failed to parse is shown, because
+hiding it means discovering it on the morning the job did not run.
+
+**Reads move to the UI; writes stay in the CLI.** Adding a worktree checks out
+a branch, editing a schedule changes what fires while nobody is watching, and
+this server has no authentication of its own — see below. Those belong in a
+terminal that shows you the error. Cancelling a queued job is the one exception,
+and it refuses a *running* job rather than pretending: stopping work mid-flight
+needs the worker's cooperation, and reporting "cancelled" while it carries on
+would be worse than saying no.
+
+The spend panel never treats an unpriced turn as free. A model with no row in
+`config/pricing.toml` contributes tokens but no cost, and every total drawn
+from such a window carries a `*` and a count of the turns it excluded. A
+dashboard that quietly under-reports spend is worse than one that reports
+nothing, because it gets believed.
+
 ### Secrets: `.env` at the workspace root
 
 Create `<workspace root>/.env` — beside `CLAUDE.md`, **not** inside `console/`:

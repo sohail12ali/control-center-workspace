@@ -2,6 +2,7 @@
 
 import datetime
 
+from .. import audit
 from .. import worklog as worklog_mod
 from ..plugins.base import Plugin
 
@@ -29,9 +30,27 @@ def apply(ctx):
     def authors(req):
         return worklog_mod.known_authors(repo_root)
 
+    def trail(req):
+        """The audit trail, on the Work tab because it answers the same
+        question the timesheet does — what happened, and who did it — for the
+        half of the work that a human never types into a log file.
+
+        Local and gitignored: these rows carry client addresses.
+        """
+        try:
+            limit = max(1, min(int(req.query.get("limit", 50)), 500))
+        except ValueError:
+            limit = 50
+        return {"entries": audit.read(repo_root, limit=limit,
+                                      action=req.query.get("action"),
+                                      since=req.query.get("since")),
+                "enabled": audit.enabled(repo_root),
+                "actions": list(audit.ACTIONS)}
+
     ctx.get(r"^/api/work/day/?$", day, "work.day")
     ctx.get(r"^/api/work/range/?$", rng, "work.range")
     ctx.get(r"^/api/work/authors/?$", authors, "work.authors")
+    ctx.get(r"^/api/work/audit/?$", trail, "work.audit")
 
 
 PLUGIN = Plugin(

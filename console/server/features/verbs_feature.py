@@ -67,10 +67,30 @@ def apply(ctx):
         return {"jobs": jobs_mod.JobQueue(repo_root).list_jobs(
             state=req.query.get("state"), ticket=req.query.get("ticket"))}
 
+    def job_cancel(req, job_id):
+        """Cancel a QUEUED job. A running one is refused, not faked.
+
+        Stopping work mid-flight needs the worker's cooperation and a handler
+        that can be interrupted safely. Reporting "cancelled" while the job
+        carries on would be worse than saying no.
+        """
+        try:
+            job = jobs_mod.JobQueue(repo_root).cancel(job_id)
+        except Exception as exc:
+            # A refused cancel belongs in the trail as much as a granted one:
+            # "I tried to stop it and could not" is the fact you want later.
+            audit.record(repo_root, "job.cancel", actor=audit.actor_of(req),
+                         target=job_id, outcome="refused: %s" % exc)
+            raise
+        audit.record(repo_root, "job.cancel", actor=audit.actor_of(req),
+                     target=job_id)
+        return job
+
     ctx.get(r"^/api/verbs/?$", listing, "verbs.list")
     ctx.post(r"^/api/verbs/([A-Za-z0-9_-]+)/run/?$", run, "verbs.run")
     ctx.post(r"^/api/verbs/([A-Za-z0-9_-]+)/submit/?$", submit, "verbs.submit")
     ctx.get(r"^/api/jobs/?$", job_listing, "verbs.jobs")
+    ctx.post(r"^/api/jobs/([A-Za-z0-9]+)/cancel/?$", job_cancel, "verbs.job_cancel")
 
 
 PLUGIN = Plugin(

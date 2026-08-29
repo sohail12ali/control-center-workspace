@@ -97,12 +97,26 @@ def record(repo_root, action, *, actor=None, target="", detail=None,
 
 
 def read(repo_root, limit=200, action=None, since=None):
-    """Recent records, newest first. A corrupt line is skipped, not fatal."""
+    """Recent records, newest first. A corrupt line is skipped, not fatal.
+
+    Timestamps have one-second resolution, and bursts within a second are
+    normal rather than exotic — a verb run records twice, a chat start is
+    followed immediately by its first approval. Sorting on `ts` alone leaves
+    those ties to the sort's stability, which preserves the order they were
+    READ in, i.e. exactly backwards.
+
+    So files are walked oldest-first and each line is numbered as it is read.
+    That counter is chronological within a file by construction (the log is
+    append-only) and across files by the month in the filename, which makes it
+    a correct tiebreaker without changing the record format or reinterpreting
+    logs already on disk.
+    """
     folder = audit_dir(repo_root)
     if not os.path.isdir(folder):
         return []
     out = []
-    for name in sorted(os.listdir(folder), reverse=True):
+    order = 0
+    for name in sorted(os.listdir(folder)):
         if not name.endswith(".jsonl"):
             continue
         with open(os.path.join(folder, name), "r", encoding="utf-8") as fh:
@@ -114,13 +128,14 @@ def read(repo_root, limit=200, action=None, since=None):
                     entry = json.loads(line)
                 except ValueError:
                     continue
+                order += 1
                 if action and entry.get("action") != action:
                     continue
                 if since and entry.get("ts", "") < since:
                     continue
-                out.append(entry)
-    out.sort(key=lambda e: e.get("ts", ""), reverse=True)
-    return out[:limit]
+                out.append((entry.get("ts", ""), order, entry))
+    out.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return [entry for _ts, _order, entry in out[:limit]]
 
 
 def format_list(rows):

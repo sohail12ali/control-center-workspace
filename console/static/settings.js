@@ -290,6 +290,78 @@
     ]);
   }
 
+  /* Machine state — worktrees and whether an approval can reach a phone.
+     Both belong beside diagnostics: things about THIS checkout that you set
+     up once and then need to confirm months later, not things you operate.
+
+     Read-only on purpose. Adding a worktree checks out a branch; changing
+     notification settings decides whether a remote run can be unblocked at
+     all. Both are fine from a terminal that shows you the error, and neither
+     belongs behind a button on a page with no authentication of its own. */
+  function machine() {
+    var body = C.el("div", {}, [C.skeleton(2)]);
+
+    Promise.all([
+      C.get("/api/worktrees").catch(function () { return null; }),
+      C.get("/api/notify").catch(function () { return null; }),
+    ]).then(function (res) {
+      var wt = res[0], noti = res[1];
+      C.clear(body);
+      if (!wt && !noti) {
+        body.appendChild(C.empty("Ops plugin is disabled",
+          "Enable the `ops` row in console/config/plugins.toml.", "sliders"));
+        return;
+      }
+
+      if (noti) {
+        /* The reason field is the whole value of this row. "Not ready" alone
+           sends you reading source; "TELEGRAM_CHAT_ID is not set" does not. */
+        body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-bottom:8px" }, [
+          C.el("b", { text: "Approval notifications" }),
+          C.chip(noti.ready ? "ready" : "not ready", noti.ready ? "ok" : "warn"),
+          C.chip(noti.channel || "—"),
+          noti.reason ? C.el("span", { class: "muted", text: noti.reason }) : null,
+        ]));
+        body.appendChild(C.el("p", { class: "muted", style: "margin:0 0 12px;font-size:11px" }, [
+          "Credentials are reported as present or absent, never shown. Events: ",
+          C.el("code", {}, [(noti.events || []).join(", ") || "none"]),
+          ". Prove delivery with ", C.el("code", {}, ["kanban notify test"]), ".",
+        ]));
+      }
+
+      if (wt) {
+        body.appendChild(C.el("b", { text: "Worktrees" }));
+        if (wt.error) {
+          body.appendChild(C.el("p", { class: "muted", text: wt.error }));
+        } else if (!wt.worktrees.length) {
+          body.appendChild(C.el("p", { class: "muted", text: "None." }));
+        } else {
+          var rows = C.el("div", { class: "rows", style: "margin-top:6px" });
+          wt.worktrees.forEach(function (w) {
+            rows.appendChild(C.el("div", { class: "lrow" }, [
+              C.chip(w.is_main ? "main" : (w.managed ? "managed" : "external"),
+                     w.is_main ? "accent" : null),
+              C.el("span", { class: "ltext" }, [
+                C.el("b", { text: w.name || "—" }),
+                C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)",
+                               text: " " + (w.branch || "detached") }),
+              ]),
+              C.el("span", { class: "muted mono", style: "font-size:11px",
+                             text: (w.head || "").slice(0, 7) }),
+            ]));
+          });
+          body.appendChild(rows);
+        }
+        body.appendChild(C.el("p", { class: "muted", style: "margin:8px 0 0;font-size:11px" }, [
+          "Add and remove with ", C.el("code", {}, ["kanban worktree"]),
+          " — removing one with uncommitted work is refused there, and names what would be lost.",
+        ]));
+      }
+    });
+
+    return C.panel("This machine", [body], null, { icon: "wrench" });
+  }
+
   function storage(repaint) {
     var keys = [];
     try {
@@ -359,6 +431,7 @@
       // that is off would be a control with nothing behind it.
       var hasAgents = manifest.some(function (t) { return t.id === "agents"; });
       if (hasAgents && !C.IS_STATIC) kids.push(agentBackends(paint));
+      if (!C.IS_STATIC) kids.push(machine());
       h.appendChild(C.el("div", { class: "grid" }, kids));
       h.appendChild(C.el("div", { style: "margin-top:12px" }, [storage(paint)]));
       if (!C.IS_STATIC) {
