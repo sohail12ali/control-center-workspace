@@ -1,4 +1,8 @@
 [general]
+# What this workspace is called. Shows in the brand header, the browser tab and
+# every static export. Leaving it at the stock "Delivery Console" is what the
+# onboarding checklist nags about.
+title          = "Noble Delivery Console"
 data_root      = "knowledge-center/artifacts"
 id_pattern     = "^[A-Z][A-Za-z0-9-]{1,31}$"
 # Loopback by default, and it should usually stay that way.
