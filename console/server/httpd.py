@@ -53,14 +53,21 @@ class Request:
     """What a plugin handler receives. Narrow on purpose — a handler that
     needs the raw socket is doing transport work in the wrong layer."""
 
-    __slots__ = ("method", "path", "query", "body", "repo_root")
+    __slots__ = ("method", "path", "query", "body", "repo_root",
+                 "client_addr", "user_agent")
 
-    def __init__(self, method, path, query, body, repo_root):
+    def __init__(self, method, path, query, body, repo_root,
+                 client_addr="", user_agent=""):
         self.method = method
         self.path = path
         self.query = query
         self.body = body
         self.repo_root = repo_root
+        # Who is asking. Only used for the audit trail — never for a decision.
+        # Behind a tailnet the peer address is the identity in any practical
+        # sense; treating a client-controlled header as one would be theatre.
+        self.client_addr = client_addr
+        self.user_agent = user_agent
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -117,7 +124,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no such route"})
             return
 
-        req = Request(method, path, query, body, self.repo_root)
+        req = Request(method, path, query, body, self.repo_root,
+                      client_addr=(self.client_address[0]
+                                   if self.client_address else ""),
+                      user_agent=self.headers.get("User-Agent", "") or "")
         try:
             result = handler(req, *groups)
         except FileNotFoundError as exc:
@@ -184,6 +194,92 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST", body)
 
 
+#: Addresses that reach only this machine. Anything else is other people's
+#: machines too, and that must never be a quiet fact.
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def _announce_env(repo_root):
+    """Say which variable NAMES came from .env — never their values.
+
+    Worth a line because the alternative is a backend that reports "not
+    installed" while a key sits in a file two directories up, with nothing to
+    say whether it was read.
+    """
+    from . import dotenv
+    info = dotenv.describe(repo_root)
+    if not info["present"]:
+        return
+    if info["names"]:
+        print("  .env: %s" % ", ".join(info["names"]))
+    else:
+        print("  .env: present but defines nothing")
+
+
+def _announce_binding(host):
+    """Say clearly when the console is listening beyond this machine.
+
+    The console has no authentication of its own — by design, because the
+    supported way to reach it remotely is a private network (Tailscale or
+    similar) that authenticates first. That decision is only safe while it is
+    *known*, so a non-loopback bind announces itself every single start rather
+    than being something you have to remember configuring six months ago.
+    """
+    if host in LOOPBACK:
+        return
+    print("  BINDING: %s — reachable from other machines." % host)
+    print("           The console has NO authentication of its own. This is")
+    print("           only safe behind a private network (Tailscale or")
+    print("           similar) that authenticates before traffic arrives.")
+    print("           Do not expose this port to the internet.")
+
+
+def _announce_notifications(repo_root):
+    """Say whether a parked approval can actually reach anyone.
+
+    Silence here is the failure: a run started from a phone stalls at its first
+    gated tool and dies on the timeout, and without this line there is nothing
+    to suggest why.
+    """
+    from . import notify
+    state = notify.status(repo_root)
+    if state["ready"]:
+        print("  notifications: %s -> %s"
+              % (state["channel"], ", ".join(state["events"])))
+    elif state["enabled"]:
+        print("  notifications: CONFIGURED BUT NOT READY — %s" % state["reason"])
+        print("                 A parked approval will not reach you.")
+
+
+def _start_scheduler(repo_root):
+    """Start the clock, or explain why there isn't one.
+
+    Silence in either direction is the failure to avoid: someone who parked
+    every schedule should not wonder whether the ticker is broken, and someone
+    whose config has a typo should not discover it a week later when the job
+    they expected never ran.
+    """
+    from . import jobs as jobs_mod
+    from . import schedules as schedules_mod
+    try:
+        registry = schedules_mod.registry(repo_root, force=True)
+    except schedules_mod.ScheduleError as exc:
+        print(f"  scheduler: OFF — {exc}")
+        return None
+
+    enabled = [s for s in registry.values() if s.enabled]
+    if not enabled:
+        print(f"  scheduler: idle ({len(registry)} schedule(s), all parked)")
+        return None
+
+    queue = jobs_mod.JobQueue(repo_root).start()
+    ticker = schedules_mod.Ticker(repo_root, queue).start()
+    for schedule in sorted(enabled, key=lambda s: s.id):
+        print(f"  scheduler: {schedule.id} ({schedule.expr}) "
+              f"-> {schedule.verb}, next {schedule.describe()['next_run'] or '-'}")
+    return ticker
+
+
 def serve(repo_root=None, host=None, port=None):
     repo_root = repo_root or find_repo_root()
     console_config = boards_mod.load_console_config(repo_root)
@@ -201,11 +297,22 @@ def serve(repo_root=None, host=None, port=None):
     httpd = ThreadingHTTPServer((host, port), Handler)
     print(f"Delivery Console serving http://{host}:{port} (repo: {repo_root})")
     print(f"  plugins: {', '.join(sorted(ctx.tabs()))}")
+    _announce_env(repo_root)
+    _announce_binding(host)
+    _announce_notifications(repo_root)
+
+    # The clock. Started here rather than in a plugin because it belongs to the
+    # server's lifetime, not to a tab — and stated out loud, because a
+    # scheduler nobody can see running is a scheduler nobody trusts.
+    ticker = _start_scheduler(repo_root)
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if ticker is not None:
+            ticker.stop()
         httpd.server_close()
         # Agent sessions are child processes of this server. Without this they
         # survive it — still running, still holding their transcript files

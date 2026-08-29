@@ -46,6 +46,7 @@ Exactly **7 agents** — no additions without explicit user intent. Free-form en
 ## Console sync
 
 - Ticket + tracker state lives in TOML under the ticket dir, mutated **only** via `console/kanban.py` (directly or through `kickoff`/`questions`/`bugs`/`todos`/`close-work`).
+- **Compute, don't reason.** Anything with one right answer is a **verb** (`console/config/verbs.toml`) — run it, don't re-derive it. `console context {T}` replaces reading a ticket's artifacts (~16x fewer tokens); `trace-context` uses it. The same verbs are MCP tools via `console/mcp_server.py`.
 - Stage → lane: `kickoff` → `open` · first build task → `in-progress` · blocker → `blocked` · verification → `verify` · `close-work` → `done` (via `ticket move`; mapping canonical in the `console` skill).
 - The Work tab reads `log-work`'s daily files; the Agents tab launches backends from `console/config/agents.toml`; session hooks run `refresh --quiet`.
 

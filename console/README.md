@@ -71,7 +71,291 @@ agents launch BACKEND "prompt" [--cwd DIR]
 agents jobs
 agents show JOB_ID
 agents stop JOB_ID
+
+telemetry [--by ticket|model|skill|persona|backend|day] [--ticket T]
+          [--skill S] [--since D] [--until D] [--json]
+telemetry skills [--json]
+
+harness lint [--strict] [--json]
+
+context TICKET [--json]
+
+verb list [--ticket T] [--json]
+verb run VERB [--ticket T] [--confirm] [--set KEY=VALUE ...]
+
+schedule list [--json]
+schedule due [--json]
+
+audit [--limit N] [--action A] [--since D] [--json]
+notify status
+notify chat-id [--json]
+notify test [--text "..."]
+
+job submit VERB [--ticket T] [--confirm] [--set K=V] [--detach] [--timeout N]
+job list [--state S] [--ticket T] [--json]
+job show JOB_ID
+job cancel JOB_ID
+
+worktree list [--json]
+worktree add NAME [--base REF] [--branch NAME]
+worktree remove NAME [--force]
+worktree prune
 ```
+
+`context` is the one-call ticket digest: lane, blockers, unchecked plan tasks,
+open trackers, artifacts, recent progress and spend, already reduced. On a
+mid-sized ticket it is ~1.7 KB against ~27 KB of raw artifacts — a 16x
+reduction, per turn. Every cap it applies is stated in the output, so silence
+means the picture is complete. `trace-context` calls this instead of opening
+eight files.
+
+`verb` runs deterministic jobs declared in `config/verbs.toml` — no model
+involved. Each verb declares its own gates (`needs_ticket`, `needs_confirm`,
+board `kinds`/`lanes`), so the CLI, the queue and the MCP server all enforce the
+same rules without reimplementing any of them. Handler paths resolve at registry
+load, so a typo is a startup error rather than a surprise mid-run.
+
+`job` is the durable queue those verbs run on: records on disk are the source of
+truth, the concurrency cap comes from `[jobs] max_concurrent`, and a job
+orphaned by a dead process is reported as `interrupted` — not `done` (a lie) and
+not `error` (a guess).
+
+`schedule` is cron-driven verbs, and **the running console is the clock** — there
+is no daemon to install, and nothing fires while `serve` is not running. That
+trade is stated rather than hidden: on startup the server prints either the
+enabled schedules and their next run, or `scheduler: idle (N schedule(s), all
+parked)`. Missed firings are **skipped, not replayed**; catching up after a
+weekend would run every job dozens of times at once, and these submit real work.
+A schedule whose verb needs confirmation must be granted it in the file, because
+a scheduled job runs with nobody watching. `schedule due` is a dry run.
+
+The cron subset is `*`, `N`, `A-B`, `*/S`, `A-B/S` and comma lists. Nicknames
+(`@daily`), `L`, `W` and `#` are **rejected at load with the schedule id** rather
+than silently treated as `*` — a schedule firing every minute because its
+expression was not understood is the worst outcome available here. Day-of-month
+and day-of-week together mean AND, not real cron's OR.
+
+`worktree` gives a run its own checkout. It refuses to reuse a path, refuses to
+remove uncommitted work without `--force`, and names what would be lost when it
+refuses.
+
+`telemetry` reports token and cost totals per turn. A cost the backend did not
+report and that `config/pricing.toml` cannot price is shown as **unpriced** and
+excluded from the total, marked with `*` — never as zero, because a total that
+quietly treats unknown as free is wrong in the direction that matters.
+`telemetry skills` partitions the skill roster into fired and never-fired; a
+skill invoked by hand in a terminal leaves no record, so never-fired is a
+candidate for review rather than a verdict.
+
+### Secrets: `.env` at the workspace root
+
+Create `<workspace root>/.env` — beside `CLAUDE.md`, **not** inside `console/`:
+
+```dotenv
+OPENROUTER_API_KEY=sk-or-v1-...
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+It is gitignored (`.gitignore` line 38, `.env`), and every entry point loads it —
+`kanban` for the CLI, `serve` for the web UI, `mcp_server.py` for MCP clients. So
+a key in this file reaches the Agents tab, the CLI and Cursor without exporting
+anything. There are no dependencies to install; the parser is forty lines of
+stdlib in `server/dotenv.py`.
+
+Three rules worth knowing:
+
+- **An exported variable always wins.** A stale value in `.env` will never
+  silently shadow one you set in your shell, because the resulting confusion is
+  unbounded: the key you can see is not the key in use, and nothing says so.
+- **Only names are ever printed.** On startup the console lists the variable
+  names it found (`.env: OPENROUTER_API_KEY`) and never a value, so you can
+  confirm the file was read without putting a credential in your scrollback, a
+  screenshot, or a CI log.
+- **Agents cannot read it.** `.env` and `.env.*` are in the workspace tools'
+  refused-paths list and are skipped by the search tool — an agent
+  authenticating with a key cannot read that key back.
+
+To use OpenRouter after setting the key, flip `enabled = true` on the
+`openrouter` row in `config/agents.toml`. The model picker ships empty on
+purpose: availability and pricing move, and a stale hardcoded list is worse than
+a paste box. `kanban agents backends` will show `installed: true` once the key
+is found.
+
+If a key does get committed, rotate it. Removing the commit does not un-publish
+it.
+
+### Telegram: making a parked approval reach you
+
+Without this, a remote run stalls at its first gated write and denies 300
+seconds later with nothing to tell you it happened. Four steps:
+
+1. **Make the bot.** In Telegram, message [@BotFather](https://t.me/BotFather),
+   send `/newbot`, and answer the two prompts. It replies with a token that
+   looks like `1234567890:AA...`. That token *is* the bot — treat it like a
+   password.
+2. **Put it in `.env`** as `TELEGRAM_BOT_TOKEN=`.
+3. **Find your chat id.** Telegram never tells you your own; you have to read it
+   out of an update. Send your new bot any message (for a group, add the bot to
+   it first and post there), then run:
+
+   ```bash
+   python console/kanban.py notify chat-id
+   ```
+
+   It prints one row per chat that has spoken to the bot — id, type, name — and
+   nothing else. Copy the id into `.env` as `TELEGRAM_CHAT_ID=`. Group ids are
+   negative; keep the minus sign, or you get an id that looks plausible and
+   silently delivers nowhere.
+
+   The documented alternative is pasting `getUpdates` into a browser with the
+   token in the URL, which writes a live credential into your history, your
+   address bar, and any screenshot of either. This command makes the same call
+   from the process that already holds the token.
+4. **Turn it on** — `enabled = true` under `[notify]` in `config/console.toml` —
+   then prove it end to end:
+
+   ```bash
+   python console/kanban.py notify test
+   ```
+
+   That sends a real message and exits non-zero if it did not arrive. A
+   notification path you have not tested is one you discover at the moment it
+   is least useful to discover.
+
+`notify status` answers "why didn't my phone buzz?" by reporting whether each
+piece is *present* — never its value.
+
+`events` is `["approval"]` by default, and widening it is a real trade: a phone
+that buzzes for every turn gets muted, and then it buzzes for nothing. The other
+kinds are `turn_end` and `job_error`.
+
+Two properties hold regardless: a send that fails **never** blocks, delays, or
+fails the run it describes — the approval still appears in the browser and still
+times out exactly as before, you are simply not told. And a bot token is a
+credential in a URL, so the failure path reports the status code and never the
+URL it called.
+
+### Reaching the console from elsewhere
+
+The console has **no authentication of its own**, and that is a decision rather
+than an omission. The supported way to reach it remotely is a private network —
+Tailscale or equivalent — that authenticates before traffic ever arrives. Adding
+a second, weaker authentication layer beside a working one would add risk
+without adding safety.
+
+That only holds while it is *known*, so set `[general] host` to the tailnet
+address (or `0.0.0.0` if the machine is only on the tailnet) and the server
+prints a warning at **every** start. A console listening beyond this machine
+must never be a fact you forgot configuring. Never expose the port to the
+internet.
+
+`[notify]` pushes a parked approval to a phone. This is what makes remote
+running work rather than a decoration on top of it: without it, a run started
+from anywhere but this desk stalls at its first gated tool and dies on the
+300-second timeout with nothing said about it. Telegram today; the seam is one
+function in `server/notify.py`. Credentials come from the environment, are read
+per send, and never reach an event, a transcript, an audit record or a log
+line — the failure path reports a status code and not the URL it called,
+because the URL contains the bot token.
+
+Delivery is best-effort and off the request thread. If the provider is
+unreachable the approval still appears in the browser and still denies on the
+same timeout — you are simply not told, which is no worse than not having it
+configured. Check with `notify status`, and prove it with `notify test`: a
+notification path you have not tested is one you find out about at the moment
+it matters.
+
+`audit` records what *starts work or changes state* — a chat started, a verb run
+or queued, an approval answered, with the client address. Not reads: a log that
+records every board poll is one nobody scrolls through. Local and gitignored,
+because those lines are a fact about your network rather than about the project.
+
+### Reviewing before approving
+
+A gated tool call parks on a "Permission needed" card. That card used to show the tool's
+arguments as JSON — for a file write, a wall of escaped text with an escaped newline between
+every line. Nobody reads that, so it got approved unread, which makes the gate a speed bump
+with a log rather than a gate.
+
+`server/tool_preview.py` now computes what the call would actually do and sends it with the
+request: a unified diff with `+N/-M` for a write or an edit, the command and working
+directory for a shell call. Computed server-side, so the CLI hook path and the in-process API
+loop get it from one implementation and cannot drift.
+
+It is honest about its limits. An edit whose target text is not in the file says the call
+will fail — before you approve it. An ambiguous edit says how many occurrences exist and
+which one wins. A shell command is shown, never predicted. And a preview that fails to build
+never stops the question being asked: a gated tool must not run unreviewed because a diff
+crashed.
+
+### Command palette
+
+`Ctrl`/`Cmd`-`K`. Every tab, ticket, verb and skill, filtered by subsequence — `hl` finds
+"harness lint". Sourced from the tab manifest, the boards, the verb registry and the skill
+catalogue, so anything that exists anywhere else appears here without this file changing. A
+verb that needs a ticket is greyed with the reason rather than offered and then failed.
+
+### The `openai_api` transport
+
+Three of the four transports spawn somebody else's agent and inherit its tools,
+its permission model, and its idea of what a skill is. `openai_api` has no
+process: the console talks to an OpenAI-compatible endpoint and runs the loop
+itself.
+
+That is the point rather than the cost. Because the loop is ours:
+
+- the agent holds **the console's own verbs as tools** (`console_context`,
+  `console_blockers`, …) alongside file and shell tools, so reading a ticket is
+  one call it *has* rather than a convention it has to remember;
+- gated calls raise the **same "Permission needed" card** — in-process, with no
+  hook subprocess and no HTTP round trip;
+- tokens and cost are recorded through the same telemetry path as every other
+  backend.
+
+A model with no slash-command system cannot resolve `/plan`, so choosing a skill
+here **injects its text** into the system prompt (`server/prompt_build.py`).
+That is why the roadmap's token work had to come first: every skill is now paid
+for, in tokens, on every turn that selects it. If a section does not fit the
+budget, the prompt says so — a silently truncated skill is the worst failure
+available, because the agent follows the half it received and the transcript
+gives no sign.
+
+To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console and
+flip `enabled = true` on the `openrouter` row in `config/agents.toml`. It ships
+disabled because this template has no key and cannot verify one. `installed` for
+an API backend means "the key is set", not "a binary is on PATH" — asking PATH
+would report it missing and grey out something that would have worked.
+
+The key is read per request, never stored on the session, and never written to
+an event, a transcript, or a telemetry record.
+
+Safety, honestly stated: file tools are confined to the workspace (resolved
+paths, so a symlink cannot step out) and refuse credential-shaped files; writes
+and shell are gated by a human. Read-only `console_*` verbs are deliberately
+**not** gated — asking someone to approve "look up this ticket's lane" trains
+them to click allow without reading, which is how a gate stops working for the
+calls that matter. A tool-call round cap ends a runaway turn with a visible
+notice rather than silently.
+
+### MCP
+
+`python console/mcp_server.py` serves the same verbs to any MCP client over
+stdio — Claude Code, Cursor, and the OpenRouter backend Phase 2 adds all get an
+identical tool set from one implementation instead of three integrations that
+drift. `.mcp.json` at the repo root wires it up.
+
+There is no tool table in the server: `tools/list` walks the verb registry and
+derives each schema from its handler's signature, so a new row in `verbs.toml`
+becomes a new tool with no code change. A failed gate comes back as a tool error
+with the reason, not a JSON-RPC error code, so the model can correct itself.
+
+`harness lint` type-checks `.claude/` config that nothing else validates:
+frontmatter names against their directory/filename, `.claude/...` paths against
+what exists, orphan skills, and the roster counts CLAUDE.md states. Exits
+non-zero on errors; warnings need `--strict` to fail. Run in CI by
+`.github/workflows/verify.yml` and, for harness-touching commits only, by
+`.githooks/pre-commit`.
 
 `questions`/`bugs`/`todos` skill docs (`.claude/skills/{questions,bugs,todos}/SKILL.md`)
 describe their own verbs (`answer`, `fix`, `verify`, `close`, `doing`, `done`,

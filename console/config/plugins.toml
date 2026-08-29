@@ -56,6 +56,15 @@ id = "todos"
 module = "features.todos_feature"
 enabled = true
 
+# Deterministic jobs over HTTP. No tab — verbs are run from wherever you
+# already are (the command palette, a card), not somewhere you navigate to.
+# Disabling this leaves the palette without its "run" section; everything else
+# keeps working.
+[[plugin]]
+id = "verbs"
+module = "features.verbs_feature"
+enabled = true
+
 [[plugin]]
 id = "vault"
 module = "features.vault_feature"
