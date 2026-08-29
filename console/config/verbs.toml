@@ -1,0 +1,79 @@
+# Verbs — deterministic jobs that run without a model.
+#
+# The rule for what belongs here: if the work has exactly one right answer and
+# no judgement in it, it is a verb. Asking a language model to compute it costs
+# tokens and can come back subtly wrong; computing it in Python costs nothing
+# and is the same answer every time.
+#
+# Fields:
+#   id             what callers name. Stable — an agent, a board button, a
+#                  scheduler and an MCP tool all address the verb by this.
+#   handler        dotted path into a console module, resolved at REGISTRY
+#                  LOAD. A typo fails at startup, listed with the verb id,
+#                  rather than when someone finally runs it.
+#   needs_ticket   a ticket id is required
+#   needs_confirm  the caller must pass confirm — for anything that mutates
+#                  git or the filesystem, so a stray click or a hallucinated
+#                  tool call cannot trigger it
+#   kinds / lanes  which board kinds and lanes it applies to (empty = any)
+#   enabled        false removes it from every caller at once
+#
+# Handlers all take `(repo_root, ticket=None, **args)`. That fixed signature is
+# what lets a verb be dispatched from config with no per-verb glue anywhere.
+# Adapters live in console/server/verb_handlers.py and should stay one-liners.
+#
+# Every verb below is READ-ONLY. `needs_confirm` exists and is enforced (see
+# verbs.py), but nothing here yet needs it — the first mutating verb should set
+# it, and the tests already cover the gate.
+
+[[verb]]
+id = "context"
+label = "Ticket context"
+hint = "Everything about one ticket in one call — replaces reading 8 artifacts"
+handler = "verb_handlers.ticket_context"
+needs_ticket = true
+
+[[verb]]
+id = "blockers"
+label = "Blocking items"
+hint = "Open critical questions and unverified critical bugs, by each tracker's own rule"
+handler = "verb_handlers.ticket_blockers"
+needs_ticket = true
+
+[[verb]]
+id = "plan-status"
+label = "Plan status"
+hint = "Which plan tasks are still unchecked"
+handler = "verb_handlers.plan_status"
+needs_ticket = true
+
+[[verb]]
+id = "artifacts"
+label = "Ticket artifacts"
+hint = "Markdown artifacts and any ticket-scripts folder"
+handler = "verb_handlers.ticket_artifacts"
+needs_ticket = true
+
+[[verb]]
+id = "todos"
+label = "Open todos"
+hint = "This ticket's open todos, or every scope's when no ticket is given"
+handler = "verb_handlers.open_todos"
+
+[[verb]]
+id = "harness-lint"
+label = "Harness lint"
+hint = "Frontmatter, dead .claude paths, orphan skills, stale roster counts"
+handler = "verb_handlers.harness_lint_verb"
+
+[[verb]]
+id = "telemetry"
+label = "Token and cost totals"
+hint = "Per ticket by default; pass by=model|skill|backend|day to regroup"
+handler = "verb_handlers.telemetry_summary"
+
+[[verb]]
+id = "skill-usage"
+label = "Skill usage"
+hint = "Which skills have fired, and which never have"
+handler = "verb_handlers.skill_usage"
