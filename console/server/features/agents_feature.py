@@ -8,7 +8,7 @@ hiding a button.
 
 from .. import agent_approvals, agent_backends, agent_manager, audit
 from .. import agents as agents_mod
-from .. import model_catalog
+from .. import model_catalog, prompt_tokens
 from ..httpd import EventSource
 from ..plugins.base import Plugin
 
@@ -40,6 +40,23 @@ def apply(ctx):
         # route used to repeat the globs, so the tab and the CLI could disagree
         # about what the roster even was.
         return agents_mod.list_catalog(repo_root)
+
+    def files(req):
+        """Workspace paths for the composer's `#` picker.
+
+        Confined and filtered by `prompt_tokens`, which uses `agent_tools`' own
+        skip list and secret patterns — so the picker can never offer a path
+        the agent's tools would then refuse to read. `.env` is the one that
+        matters: it holds every key this console authenticates with.
+        """
+        query = (req.query.get("q") or "").strip()
+        try:
+            limit = max(1, min(int(req.query.get("limit", 25)),
+                               prompt_tokens.MAX_FILE_RESULTS))
+        except (TypeError, ValueError):
+            limit = 25
+        return {"query": query,
+                "files": prompt_tokens.search_files(repo_root, query, limit)}
 
     def models(req):
         """The CACHED catalogue. Deliberately offline: this is a GET, and a GET
@@ -184,6 +201,7 @@ def apply(ctx):
 
     ctx.get(r"^/api/agents/backends/?$", backends, "agents.backends")
     ctx.get(r"^/api/agents/catalog/?$", catalog, "agents.catalog")
+    ctx.get(r"^/api/agents/files/?$", files, "agents.files")
     ctx.get(r"^/api/agents/models/?$", models, "agents.models")
     ctx.post(r"^/api/agents/models/refresh/?$", models_refresh, "agents.models_refresh")
     ctx.get(r"^/api/agents/chats/?$", chats, "agents.chats")

@@ -648,6 +648,42 @@ main#view.app { padding: 0; overflow: hidden; min-height: 0; }
 }
 .ap-items { flex: 1 1 auto; overflow-y: auto; padding: 7px; min-height: 0; }
 
+/* -- folding the list away --------------------------------------------------
+
+   ONE state (`agents.js`'s `listShown`) written to two classes, because the
+   two widths need different mechanics: above the breakpoint `.hide-list`
+   collapses the grid column, below it `.show-main` is the pane swap this shell
+   already had. Only one of them does anything at a given width.
+
+   `.list-reveal` is the only control left once the list is gone. */
+.list-reveal {
+  display: none; position: absolute; top: 8px; left: 8px; z-index: 6;
+  width: 26px; height: 26px; padding: 0;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--ink-2); cursor: pointer;
+  box-shadow: var(--shadow-1);
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.list-reveal:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.appshell.hide-list .list-reveal { display: inline-flex; }
+/* Room for it, so it never lands on the chat title. */
+.appshell.hide-list .ap-main > header { padding-left: 42px; }
+
+@media (min-width: 901px) {
+  .appshell.hide-list { grid-template-columns: 0 1fr; }
+  /* display:none rather than a zero-width column — nothing focusable should
+     survive off-screen in a pane the user folded away. */
+  .appshell.hide-list .ap-rail { display: none; }
+  /* ...but display:none also takes the rail OUT of grid flow, and then
+     auto-placement slides the main pane into column 1 — the `0` one, blanking
+     the whole tab. Both children are pinned so neither moves when the other
+     leaves. Only inside this query: below the breakpoint the grid is a single
+     column, where a pinned `grid-column: 2` would invent a second one. */
+  .ap-rail { grid-column: 1; }
+  .ap-main { grid-column: 2; }
+}
+
 .ap-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .ap-main > header {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap; row-gap: 5px;
@@ -1087,6 +1123,44 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pick-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Why an unavailable backend cannot be used. It sits ON the card because that
+   is where the choice is made — "not installed" in a tooltip taught nobody
+   that the real problem was an unset key or a server that was not running. */
+.pick-why {
+  font-size: 10.8px; line-height: 1.42; color: var(--warn, var(--ink-3));
+  white-space: normal;
+}
+.pick-why.muted { color: var(--ink-3); }
+
+/* The two kinds of agent. A heading per group, because the difference (whose
+   tools, whose permission gate) decides the choice and was invisible when both
+   rendered as one flat list of identical cards. */
+.pick-group { margin: 12px 0 6px; display: flex; flex-direction: column; gap: 2px; }
+.pick-group:first-child { margin-top: 0; }
+.pick-group b { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+.pick-group .muted { font-size: 11px; line-height: 1.45; }
+
+/* -- inline / @ # picker ----------------------------------------------------
+   Floats over the transcript rather than pushing the composer around as rows
+   arrive: an input that jumps while you type is one you mistype into. */
+.cpick-anchor { position: relative; display: flex; min-width: 0; }
+.cpick-anchor > textarea { width: 100%; }
+.cpick {
+  position: absolute; bottom: calc(100% + 6px); left: 0;
+  width: min(460px, 100%); max-height: 264px; overflow-y: auto; z-index: 20;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); box-shadow: var(--shadow-2, var(--shadow-1));
+  padding: 4px;
+}
+.cpick-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 7px 6px; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--line-soft); margin-bottom: 3px;
+}
+.cpick-head svg.ico { width: 13px; height: 13px; }
+.cpick-row { cursor: pointer; }
 
 /* ---------------- vault ----------------
    Three columns: collapsible card sidebar, canvas stage, and a file viewer

@@ -89,6 +89,9 @@ class TestRoutesExist:
         ("GET", "/api/notify"),
         ("GET", "/api/work/audit"),
         ("GET", "/api/analytics"),
+        # The composer's inline pickers and its model list.
+        ("GET", "/api/agents/files"),
+        ("GET", "/api/agents/models"),
     ])
     def test_the_tab_endpoints_are_routed(self, app, method, path):
         assert routed(app, method, path), "%s %s is not routed" % (method, path)
@@ -98,6 +101,82 @@ class TestRoutesExist:
         # a prefetcher will call without being asked.
         assert routed(app, "POST", "/api/jobs/abc123/cancel")
         assert not routed(app, "GET", "/api/jobs/abc123/cancel")
+
+    def test_refreshing_models_is_a_post_not_a_get(self, app):
+        # Same rule, sharper: this one leaves the machine and spends the
+        # workspace's credentials. Reading the CACHE is the GET.
+        assert routed(app, "POST", "/api/agents/models/refresh")
+        assert not routed(app, "GET", "/api/agents/models/refresh")
+
+
+class TestFilePicker:
+    """`#` offers workspace paths. What it must never offer is the file that
+    holds every key this console authenticates with."""
+
+    def test_it_finds_a_file_by_substring(self, app, repo):
+        _write(repo, "src/widget.py", "x = 1\n")
+        paths = [f["path"] for f in call(app, "GET", "/api/agents/files",
+                                         {"q": "widget"})["files"]]
+        assert "src/widget.py" in paths
+
+    def test_it_never_offers_dotenv(self, app, repo):
+        _write(repo, ".env", "OPENROUTER_API_KEY=sk-secret\n")
+        for query in ("", "env", ".env"):
+            paths = [f["path"] for f in call(app, "GET", "/api/agents/files",
+                                             {"q": query, "limit": "50"})["files"]]
+            assert not any(p.endswith(".env") for p in paths), query
+
+    def test_an_absurd_limit_is_clamped_not_obeyed(self, app):
+        out = call(app, "GET", "/api/agents/files", {"q": "", "limit": "99999"})
+        assert len(out["files"]) <= 50
+
+    def test_a_junk_limit_falls_back(self, app):
+        out = call(app, "GET", "/api/agents/files", {"q": "", "limit": "banana"})
+        assert isinstance(out["files"], list)
+
+    def test_an_empty_workspace_returns_a_list_not_an_error(self, app):
+        assert call(app, "GET", "/api/agents/files", {"q": "zzz"})["files"] == []
+
+
+class TestModelsEndpoint:
+    def test_with_no_backend_it_summarises_providers(self, app):
+        out = call(app, "GET", "/api/agents/models")
+        assert isinstance(out["providers"], list)
+
+    def test_a_cli_backend_is_told_it_has_no_catalogue(self, app):
+        # "alpha" is the scratch workspace's own CLI row (see conftest), not a
+        # real product — these tests must not depend on what is installed on
+        # the machine running them.
+        out = call(app, "GET", "/api/agents/models", {"backend": "alpha"})
+        assert out["count"] == 0 and "is a CLI" in out["error"]
+
+    def test_an_unknown_backend_says_unknown(self, app):
+        out = call(app, "GET", "/api/agents/models", {"backend": "nope"})
+        assert "unknown backend" in out["error"]
+
+    def test_reading_the_cache_never_reaches_the_network(self, app, monkeypatch):
+        # The property that makes this safe as a GET. If the handler ever
+        # starts fetching, this fails rather than quietly costing money on
+        # every back-navigation.
+        import urllib.request
+
+        def forbidden(*a, **k):
+            raise AssertionError("a GET reached the network")
+
+        monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+        call(app, "GET", "/api/agents/models", {"backend": "alpha"})
+        call(app, "GET", "/api/agents/models")
+
+    def test_a_refresh_with_no_backend_is_refused(self, app):
+        with pytest.raises(ValueError):
+            call(app, "POST", "/api/agents/models/refresh", body={})
+
+    def test_a_failed_refresh_is_still_audited(self, app, repo):
+        from server import audit
+        call(app, "POST", "/api/agents/models/refresh", body={"backend": "alpha"})
+        row = audit.read(repo)[0]
+        assert row["action"] == "models.refresh"
+        assert row["target"] == "alpha" and "error" in row["outcome"]
 
 
 class TestSchedules:

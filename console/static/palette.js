@@ -107,26 +107,10 @@ window.Console = window.Console || {};
 
   /* ---------------- matching ---------------- */
 
-  /* Subsequence matching, so "hl" finds "harness lint" — the way every
-     palette worth using behaves. Scored so that earlier and tighter matches
-     sort first, and an exact prefix always wins. */
-  function score(text, query) {
-    if (!query) return 1;
-    var haystack = text.toLowerCase(), needle = query.toLowerCase();
-    if (haystack.indexOf(needle) === 0) return 1000;
-    var direct = haystack.indexOf(needle);
-    if (direct > 0) return 500 - direct;
-
-    var hi = 0, gaps = 0, last = -1;
-    for (var qi = 0; qi < needle.length; qi++) {
-      var found = haystack.indexOf(needle[qi], hi);
-      if (found === -1) return 0;
-      if (last >= 0) gaps += found - last - 1;
-      last = found;
-      hi = found + 1;
-    }
-    return Math.max(1, 200 - gaps);
-  }
+  /* Subsequence matching lives in core.js — the composer's inline picker
+     needs the identical behaviour, and two copies would have drifted the
+     first time either was tuned. */
+  var score = C.score;
 
   function filter() {
     var q = st.query.trim();

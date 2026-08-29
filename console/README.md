@@ -67,6 +67,8 @@ vault graph
 
 agents backends
 agents catalog
+agents doctor [--json]
+agents models [BACKEND] [--refresh] [--json]
 agents launch BACKEND "prompt" [--cwd DIR]
 agents jobs
 agents show JOB_ID
@@ -161,6 +163,8 @@ its own. A tab you have to navigate to is a tab you check after it mattered.
 | Token and cost totals | Analytics → **Agent spend** | Read-only |
 | Audit trail | Work → **Console activity** | Read-only, collapsed by default |
 | Worktrees, notification health | Settings → **This machine** | Read-only |
+| Provider health, model cache | Settings → **Model providers** | Refreshes a catalogue |
+| Picker triggers, list folding | Settings → **Composer** | Browser-local prefs |
 
 Two rules run through that table.
 
@@ -214,13 +218,104 @@ Three rules worth knowing:
   authenticating with a key cannot read that key back.
 
 To use OpenRouter after setting the key, flip `enabled = true` on the
-`openrouter` row in `config/agents.toml`. The model picker ships empty on
-purpose: availability and pricing move, and a stale hardcoded list is worse than
-a paste box. `kanban agents backends` will show `installed: true` once the key
-is found.
+`openrouter` row in `config/agents.toml`. The model shortlist ships empty on
+purpose — see **Model catalogues** below, which is how the picker gets filled.
 
 If a key does get committed, rotate it. Removing the commit does not un-publish
 it.
+
+### Why a backend is unusable, specifically
+
+`kanban agents doctor` answers it per row. This exists because "not installed"
+used to be the console's reply to four different problems, and one word for
+four fixes is no help:
+
+| Kind | Available when | Typical fix |
+| ---- | -------------- | ----------- |
+| CLI | the command is on PATH | install it, or correct `command` |
+| `auth = "key"` | the env var is set | put the key in `.env` |
+| `auth = "none"` | the server answers | start it (`ollama serve`) |
+| any | its row is `enabled = true` | flip the row |
+
+A local runtime is judged by a **probe**, not by a key it does not have. That
+was the bug: availability asked every API backend whether a key was set, so a
+keyless provider was unavailable forever.
+
+The probe is cached for ten seconds, because `/api/agents/backends` is polled
+by the open tab. On Windows a closed loopback port raises `TimeoutError`, not
+`ConnectionRefusedError` — so a timeout to `127.0.0.1` is reported as "not
+running" (a listening local port answers in microseconds) while a remote
+timeout keeps the honest "did not answer".
+
+### Local models: Ollama and LM Studio
+
+Both ship as `[[backend]]` rows with `enabled = false`. Flip the row, start the
+server, then:
+
+```bash
+ollama serve                                   # or LM Studio's Developer tab
+python console/kanban.py agents models ollama --refresh
+```
+
+One caveat decides whether this is useful to you: **the console runs the agent
+loop, and that loop needs tool calling.** Local support is uneven — a model
+without it will hold a conversation but never read a file or run a verb. Pick a
+tool-capable model. For LM Studio the server answering is not enough; a model
+must also be *loaded*.
+
+### Model catalogues
+
+A hand-written shortlist works for claude, which has eight ids worth naming. It
+is useless for OpenRouter (hundreds, changing weekly) and wrong for Ollama,
+whose list is a fact about your machine.
+
+```bash
+python console/kanban.py agents models                    # per-provider summary
+python console/kanban.py agents models openrouter --refresh
+```
+
+The result is cached to `console/.cache/models/{backend}.toml` — **gitignored**,
+because a fetched catalogue is a fact about one account at one moment, and
+committing it to a template other people clone is the mistake the audit log
+already avoids. The composer offers **cache → shortlist → paste box**, in that
+order, with the cache's age shown.
+
+Nothing here rewrites `agents.toml`. That file is hand-maintained and mostly
+comments, and the TOML writer does not preserve comments — one "save" would
+silently delete the documentation that makes it usable.
+
+Reading the cache is a `GET` and never touches the network; refreshing is a
+`POST` and is audited, because it leaves the machine with your credentials.
+
+### Naming a skill, an agent or a file inline
+
+In either composer — the New-chat form or a live chat — type:
+
+| Trigger | Offers | Example |
+| ------- | ------ | ------- |
+| `/` | skills from `.claude/skills/` | `/plan` |
+| `@` | agents from `.claude/agents/` | `@builder` |
+| `#` | workspace files and folders | `#console/server/audit.py` |
+
+Two rules keep this from ruining ordinary prose:
+
+- A trigger only opens the menu **at the start of a word**, so `and/or`, `24/7`
+  and `a@b.com` are left alone.
+- A token is rewritten **only if it names something real**. `#1234` is not a
+  file, so it stays as typed. A typo degrades to plain text rather than to a
+  broken reference.
+
+What a token *becomes* is resolved server-side per backend (`prompt_tokens.py`),
+which is why the tab and the CLI can never disagree about it: claude parses
+`/plan` itself and takes `@path` for a file; cursor-agent needs a sentence
+naming the file on disk; an API model gets the path and reads it with
+`read_file`. A file is **named, never inlined** — the prompt budget is 24k
+characters and one file can exceed it alone.
+
+The `#` picker refuses everything `agent_tools` refuses, sharing one pattern
+list. `.env` is the one that matters: offering it would be a menu item whose
+only outcome is the agent declining to read it, after the path is already on
+screen.
 
 ### Telegram: making a parked approval reach you
 
@@ -590,6 +685,7 @@ with an argv list (never a shell string, so prompt content can't inject
 shell syntax), output captured in the background and polled by the UI.
 
 Deliberately smaller than a full agent-orchestration UI:
+
 - **No live steering.** You can watch a run and stop it, not talk to it mid-turn.
 - **No worktree isolation.** Every run executes directly in the workspace
   root (or a `cwd` you pass, still inside the workspace). Don't launch two
@@ -607,6 +703,33 @@ Job records live in process memory plus a best-effort JSON snapshot under
 `console/.cache/agent-runs/` (gitignored) written when a job finishes — a
 server restart mid-run loses live tracking of that job (the OS process
 itself is unaffected).
+
+### Two kinds of agent, shown as two groups
+
+The composer groups backends by which one is running the loop, because that is
+what the choice is actually between:
+
+- **CLI agents** (`stream_json`, `resume`, `oneshot`) — the console spawns
+  somebody else's agent. It inherits that CLI's tools, its permission model and
+  its idea of what a skill is. The console watches, records and gates what it
+  can.
+- **Console agents** (`openai_api`) — no process at all. The console runs the
+  loop, so the tools are its own verbs plus the workspace tools, the gate is
+  the same "Permission needed" card, the skill is text injected by
+  `prompt_build`, and the turn is attributable to a ticket.
+
+Both rendered as identical cards in one flat list until this was split out,
+which made the most consequential choice in the composer invisible.
+
+### Folding the chat list
+
+The chat list folds away, and one flag drives both behaviours because they are
+one state: above 900px it collapses the grid column, below it swaps panes.
+
+The preference is written **only from a desktop**. Below the breakpoint the
+list is a pane you swap to, and swapping away from it after picking a chat is
+navigation rather than a setting — persisting it would silently fold the list
+away on the next wide session.
 
 ## Security notes
 

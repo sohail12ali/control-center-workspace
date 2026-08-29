@@ -81,7 +81,8 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         _sessions[sid] = sess
     sess.start()
 
-    wire = backend.compose_prompt(text, skill=skill, persona=persona)
+    wire = backend.compose_prompt(text, skill=skill, persona=persona,
+                                  repo_root=repo_root)
     sess.send(wire, mode="auto", display=text)
     return sess.snapshot()
 
@@ -176,9 +177,19 @@ def subscribe(repo_root, sid, from_seq=0):
 
 
 def send(sid, text, mode="auto"):
+    """One message into a running chat.
+
+    `sess.cwd` IS the workspace root (chats run there — see `create`), and
+    passing it is what makes an inline `/skill`, `@agent` or `#file` work
+    mid-conversation. Without it this call resolved nothing, so a skill could
+    only ever be chosen at the moment a chat was started.
+
+    `display` keeps what the user typed, so the transcript shows `#src/app.py`
+    while the wire carries whatever this backend needed it to become.
+    """
     sess = require(sid)
     backend = sess.backend
-    wire = backend.compose_prompt(text, skill="", persona="")
+    wire = backend.compose_prompt(text, skill="", persona="", repo_root=sess.cwd)
     return {"result": sess.send(wire, mode=mode, display=text)}
 
 

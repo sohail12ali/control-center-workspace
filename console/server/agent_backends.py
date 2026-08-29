@@ -43,6 +43,7 @@ import urllib.parse
 import urllib.request
 
 from . import boards as boards_mod
+from . import prompt_tokens
 from . import tomlio
 
 CONFIG_REL = os.path.join("console", "config", "agents.toml")
@@ -470,35 +471,27 @@ class Backend:
             "resume_id": resume_id,
         })
 
-    def compose_prompt(self, text, skill="", persona=""):
-        """How this backend wants a skill/persona referenced.
+    @property
+    def prompt_prefix_style(self):
+        return self.raw.get("prompt_prefix_style", "slash")
+
+    def compose_prompt(self, text, skill="", persona="", repo_root=None):
+        """How this backend wants a skill/persona/file referenced.
 
         `slash`  -> "@persona /skill text"   (a CLI with slash commands)
         `inline` -> a sentence naming the skill file, for a CLI that has no
                     slash-command system — worst case it just reads the file,
                     which is literally what a skill is.
-        `none`   -> the text, untouched.
+        `none`   -> the text, plus any references named.
+
+        Passing `repo_root` additionally resolves inline `/skill`, `@agent` and
+        `#file` tokens typed in the message itself — see `prompt_tokens`. It is
+        optional only so a caller with no workspace in hand still works; every
+        real call site has one.
         """
-        style = self.raw.get("prompt_prefix_style", "slash")
-        text = (text or "").strip()
-        if style == "none" or (not skill and not persona):
-            return text
-        if style == "inline":
-            bits = []
-            if skill:
-                bits.append(
-                    "Follow the instructions in .claude/skills/%s/SKILL.md." % skill)
-            if persona:
-                bits.append("Act as the %s role in .claude/agents/%s.md." % (persona, persona))
-            bits.append(text)
-            return "\n\n".join(b for b in bits if b)
-        parts = []
-        if persona:
-            parts.append("@" + persona)
-        if skill:
-            parts.append("/" + skill)
-        prefix = " ".join(parts)
-        return (prefix + " " + text).strip() if prefix else text
+        return prompt_tokens.compose(
+            repo_root, text, self.prompt_prefix_style,
+            skill=skill, persona=persona)[0]
 
 
 def registry(repo_root, force=False):

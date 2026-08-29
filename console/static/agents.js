@@ -26,6 +26,7 @@
   var Store = window.ConsoleChatStore;
   var Render = window.ConsoleChatRender;
   var Voice = window.ConsoleVoice;
+  var Pick = window.ConsoleComposerPick;
 
   var st = {
     host: null, chats: [], sel: null, mode: "new",
@@ -36,7 +37,44 @@
     poll: null,
     pending: null,      // one-shot handoff from another tab
     pendingTicket: "",
+    catalogs: {},       // backend id -> fetched model catalogue (cached server-side)
+    listShown: true,
   };
+
+  /* ---------------- chat list: shown or folded ----------------
+
+     ONE flag drives two affordances, because they are one state. Above the
+     breakpoint `.hide-list` collapses the grid column; below it, the same flag
+     drives `.show-main`, which is the pane swap this shell already had — so on
+     a narrow window "hide the list" means "show the chat", not "show nothing".
+
+     The preference is remembered, but only from a desktop. Below the
+     breakpoint the list is a pane you swap to, and swapping away from it after
+     picking a chat is an interaction, not a setting: persisting it would
+     silently fold the list away on the next wide session. */
+  var NARROW = function () { return window.matchMedia("(max-width: 900px)").matches; };
+
+  function applyShell() {
+    var shell = document.getElementById("agShell");
+    if (!shell) return;
+    // Two classes, one state. `hide-list` collapses the grid column on a wide
+    // window; `show-main` is the pane swap the narrow layout already used.
+    // Only one of them does anything at any given width.
+    shell.classList.toggle("hide-list", !st.listShown);
+    shell.classList.toggle("show-main", !st.listShown);
+    var fold = document.getElementById("agFold");
+    var reveal = document.getElementById("agReveal");
+    // Each button is visible in exactly one state, and both report the state
+    // of the LIST rather than what pressing them would do.
+    if (fold) fold.setAttribute("aria-expanded", String(st.listShown));
+    if (reveal) reveal.setAttribute("aria-expanded", String(st.listShown));
+  }
+
+  function setListShown(on) {
+    st.listShown = !!on;
+    if (!NARROW()) C.prefs.set("chatListHidden", !st.listShown);
+    applyShell();
+  }
 
   function backend(id) {
     return st.backends.filter(function (b) { return b.id === id; })[0] || null;
@@ -136,11 +174,56 @@
     ]);
   }
 
+  /* The fetched catalogue for a provider, if one has been cached.
+
+     Read-only and offline: this GETs what `kanban agents models --refresh`
+     (or the Settings button) last stored. A GET that reached a paid API would
+     be one a browser repeats on back-navigation and a prefetcher makes
+     unprompted, so refreshing is never something merely opening this form
+     does. */
+  function loadCatalog(id) {
+    var b = backend(id);
+    if (!b || !b.is_api || st.catalogs[id] !== undefined) return;
+    st.catalogs[id] = null;   // in flight; do not ask twice
+    C.get("/api/agents/models?backend=" + encodeURIComponent(id))
+      .then(function (d) {
+        st.catalogs[id] = d.error ? { models: [] } : d;
+        if (st.mode === "new" && st.form.backend === id) paintMain();
+      })
+      .catch(function () { st.catalogs[id] = { models: [] }; });
+  }
+
+  function fmtPrice(m) {
+    // An unpriced model must never render as $0.00 — that reads as free, which
+    // is the one thing the cost panels refuse to say without evidence. Local
+    // models genuinely are free, and their card already says "local".
+    if (m.input_per_mtok === undefined && m.output_per_mtok === undefined) return "";
+    return "$" + (m.input_per_mtok || 0).toFixed(2) + "/" +
+           (m.output_per_mtok || 0).toFixed(2) + " per Mtok";
+  }
+
   function modelField() {
     var b = backend(st.form.backend);
     var models = (b && b.models) || [];
-    var opts = [["", "(backend default)", "send no --model flag — the CLI's own default"]]
-      .concat(models.map(function (m) { return [m.id, m.label || m.id, m.hint || ""]; }))
+    var cat = (b && st.catalogs[b.id]) || null;
+    var fetched = (cat && cat.models) || [];
+
+    /* Cache first, hand-curated shortlist second, paste box last. The
+       shortlist is a handful of ids worth one click; the catalogue is the
+       provider's real answer, which for OpenRouter is several hundred rows and
+       could never live in a committed file without rotting. */
+    var opts = [["", "(backend default)", "send no --model flag — the backend's own default"]]
+      .concat(fetched.map(function (m) {
+        var ctx = m.context ? C.fmtNum(m.context) + " ctx" : "";
+        return [m.id, m.label || m.id,
+                [ctx, fmtPrice(m)].filter(Boolean).join(" · ")];
+      }))
+      .concat(models
+        .filter(function (m) {
+          // Don't list an id twice when the catalogue already carries it.
+          return !fetched.some(function (f) { return f.id === m.id; });
+        })
+        .map(function (m) { return [m.id, m.label || m.id, m.hint || ""]; }))
       .concat([[CUSTOM_MODEL, "— custom id… —", "type any model id; sent verbatim"]]);
     var sel = select(opts, st.form.modelCustom ? CUSTOM_MODEL : st.form.model, function (v) {
       if (v === CUSTOM_MODEL) { st.form.modelCustom = true; st.form.model = ""; }
@@ -186,32 +269,75 @@
      mid-turn. You had to open it, read one line, and remember the rest. Cards
      show all of that at once, and an uninstalled backend can say so in place
      rather than looking identical to a working one until you press Start. */
+  function backendCard(b) {
+    var chosen = b.id === st.form.backend;
+    // What identifies it: a CLI is its command, a provider is its endpoint.
+    var subtitle = b.is_api ? (b.base_url || "") : b.command;
+    return C.el("button", {
+      class: "pick-card" + (chosen ? " on" : "") + (b.installed ? "" : " off"),
+      role: "radio", "aria-checked": String(chosen),
+      title: b.installed ? subtitle : (b.unavailable_reason || subtitle),
+      // A model id is meaningless on another backend, so switching clears it.
+      onclick: function () {
+        st.form.backend = b.id; st.form.mode = ""; st.form.model = "";
+        st.form.modelCustom = false;
+        loadCatalog(b.id);
+        paintMain();
+      },
+    }, [
+      C.el("div", { class: "pick-top" }, [
+        C.icon(b.is_api ? (b.is_local ? "cpu" : "external") : "wrench"),
+        C.el("span", { class: "pick-name", text: b.label }),
+        chosen ? C.icon("check") : null,
+      ]),
+      C.el("div", { class: "pick-cmd mono truncate", text: subtitle }),
+      C.el("div", { class: "pick-tags" }, [
+        b.installed ? null : C.el("span", { class: "chip danger", text: "unavailable" }),
+        b.is_local ? C.el("span", { class: "chip ok", title:
+          "Runs on this machine — free, private, works offline." }, ["local"]) : null,
+        C.el("span", { class: "chip" + (b.steerable ? " ok" : ""), title: b.steerable
+          ? "A message sent mid-turn lands immediately and changes what happens next."
+          : "This backend runs one turn at a time, so a message can only be queued." },
+          [b.steerable ? "steerable" : "queue-only"]),
+        C.el("span", { class: "chip", title: "Transport", text: b.transport }),
+      ]),
+      /* The card is where an unavailable backend explains itself. It used to
+         say "not on PATH" for everything, which is simply wrong for a provider
+         with no binary — it sent people off to install something when the real
+         problem was an unset key or a server that was not running. */
+      b.installed || !b.unavailable_reason ? null
+        : C.el("div", { class: "pick-why", text: b.unavailable_reason }),
+      b.notes ? C.el("div", { class: "pick-why muted", text: b.notes }) : null,
+    ]);
+  }
+
+  /* Two kinds of agent, shown as two groups.
+
+     This is the most consequential choice in the composer and it was invisible:
+     both kinds rendered as identical cards in one flat list. A CLI spawns
+     somebody else's agent and inherits its tools and its permission model. A
+     console agent has no process at all — this console runs the loop, so the
+     tools are its own verbs, the gate is the same approval card, and the turn
+     is attributable to a ticket. */
+  var GROUPS = [
+    { key: false, title: "CLI agents",
+      blurb: "Their tools, their permission model. The console watches and records." },
+    { key: true, title: "Console agents",
+      blurb: "This console runs the loop — its own verbs as tools, the same approval card, cost attributed to a ticket." },
+  ];
+
   function backendCards() {
-    var wrap = C.el("div", { class: "pick", role: "radiogroup", "aria-label": "Agent CLI" });
-    st.backends.forEach(function (b) {
-      var chosen = b.id === st.form.backend;
-      wrap.appendChild(C.el("button", {
-        class: "pick-card" + (chosen ? " on" : "") + (b.installed ? "" : " off"),
-        role: "radio", "aria-checked": String(chosen),
-        title: b.installed ? b.command : b.command + " is not on PATH",
-        // A model id is meaningless on another backend, so switching clears it.
-        onclick: function () { st.form.backend = b.id; st.form.mode = ""; st.form.model = ""; st.form.modelCustom = false; paintMain(); },
-      }, [
-        C.el("div", { class: "pick-top" }, [
-          C.icon("cpu"),
-          C.el("span", { class: "pick-name", text: b.label }),
-          chosen ? C.icon("check") : null,
-        ]),
-        C.el("div", { class: "pick-cmd mono", text: b.command }),
-        C.el("div", { class: "pick-tags" }, [
-          b.installed ? null : C.el("span", { class: "chip danger", text: "not installed" }),
-          C.el("span", { class: "chip" + (b.steerable ? " ok" : ""), title: b.steerable
-            ? "A message sent mid-turn lands immediately and changes what happens next."
-            : "This CLI runs one process per turn, so a message can only be queued." },
-            [b.steerable ? "steerable" : "queue-only"]),
-          C.el("span", { class: "chip", title: "Transport", text: b.transport }),
-        ]),
+    var wrap = C.el("div", { role: "radiogroup", "aria-label": "Agent backend" });
+    GROUPS.forEach(function (group) {
+      var rows = st.backends.filter(function (b) { return !!b.is_api === group.key; });
+      if (!rows.length) return;   // a workspace with no API provider says nothing
+      wrap.appendChild(C.el("div", { class: "pick-group" }, [
+        C.el("b", { text: group.title }),
+        C.el("span", { class: "muted", text: group.blurb }),
       ]));
+      var cards = C.el("div", { class: "pick" });
+      rows.forEach(function (b) { cards.appendChild(backendCard(b)); });
+      wrap.appendChild(cards);
     });
     return wrap;
   }
@@ -225,13 +351,20 @@
     var b = backend(st.form.backend);
 
     var prompt = C.el("textarea", {
-      placeholder: "What should the agent do?  (Ctrl+Enter to start)",
+      placeholder: "What should the agent do?   / skill   @ agent   # file",
       "aria-label": "Opening message", rows: "6",
       oninput: function (e) { st.form.prompt = e.target.value; syncStart(); },
     });
     prompt.value = st.form.prompt;
     prompt.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); startChat(); }
+    });
+    // The wrapper is what the menu positions against; the textarea itself
+    // cannot hold an absolutely-positioned child.
+    var promptWrap = C.el("div", { class: "cpick-anchor" }, [prompt]);
+    Pick.attach(prompt, {
+      catalog: st.catalog, mount: promptWrap,
+      onChange: function (v) { st.form.prompt = v; syncStart(); },
     });
 
     var micWrap = C.el("div", { class: "row", style: "margin-bottom:10px" }, [
@@ -276,7 +409,8 @@
         modelField(),
       ]),
       ticketField(),
-      field("Opening message", "", prompt),
+      field("Opening message",
+            "type / for a skill, @ for an agent, # for a file", promptWrap),
       micWrap,
       C.el("div", { class: "row", style: "flex-wrap:wrap" }, [
         C.el("button", { class: "btn primary", id: "agStart", disabled: true, onclick: startChat },
@@ -339,9 +473,15 @@
     paintMain();
   }
 
+  /* Narrow-window pane swap: opening a chat shows it, Back returns to the
+     list. Deliberately does nothing on a wide window, where both panes are
+     visible and folding the list is a separate, deliberate choice — and never
+     writes the preference, because swapping panes is navigation, not a
+     setting you meant to keep. */
   function showMain(on) {
-    var shell = document.getElementById("agShell");
-    if (shell) shell.classList.toggle("show-main", !!on);
+    if (!NARROW()) return;
+    st.listShown = !on;
+    applyShell();
   }
 
   function backBtn() {
@@ -554,7 +694,7 @@
       class: "ct-input", rows: "2",
       placeholder: s.busy
         ? (steerable ? "Steer the run in flight…  (Enter to send)" : "Queue a follow-up…  (Enter to send)")
-        : "Reply…  (Enter to send, Shift+Enter for a newline)",
+        : "Reply…   / skill   @ agent   # file",
       "aria-label": "Message",
     });
     ta.addEventListener("keydown", function (e) {
@@ -636,8 +776,15 @@
       !steerable ? C.el("span", { class: "chip", title:
         "This backend runs one process per turn, so a message can only be queued." }, ["queue-only"]) : null,
     ]));
+    /* The picker attaches to the LIVE composer too, which is the point of the
+       whole change: skill and persona used to be choosable only at the moment
+       a chat was started, and `agent_manager.send` resolved nothing for a
+       message typed afterwards. */
+    var taWrap = C.el("div", { class: "cpick-anchor grow" }, [ta]);
+    Pick.attach(ta, { catalog: st.catalog, mount: taWrap });
+
     composer.appendChild(C.el("div", { class: "ct-inputrow" }, [
-      ta,
+      taWrap,
       C.el("button", { class: "btn primary ct-go", onclick: fire, title: sendLabel },
         [C.icon(sendIcon), C.el("span", { class: "blab", text: sendLabel })]),
     ]));
@@ -687,6 +834,11 @@
               C.el("span", { class: "chip zero", id: "agLive", text: "0" }),
               C.el("button", { class: "btn sm primary", title: "Start a new chat", onclick: newChat },
                 [C.icon("play"), "New"]),
+              C.el("button", {
+                class: "btn sm iconly", id: "agFold", "aria-label": "Hide the chat list",
+                title: "Hide the chat list", "aria-expanded": "true",
+                onclick: function () { setListShown(false); },
+              }, [C.icon("chevLeft")]),
             ]),
             C.el("div", { class: "ap-items", id: "agChats" }, [C.skeleton(3)]),
           ]),
@@ -694,7 +846,24 @@
             C.el("header", { id: "agHead" }, []),
             C.el("div", { class: "ap-body", id: "agBody" }, []),
           ]),
+          // The only control visible once the list is folded away.
+          C.el("button", {
+            class: "list-reveal", id: "agReveal", "aria-label": "Show the chat list",
+            title: "Show the chat list", "aria-expanded": "false",
+            onclick: function () { setListShown(true); },
+          }, [C.icon("chevRight")]),
         ]));
+
+        /* Entry, and every crossing of the breakpoint: a narrow window opens
+           on the chat rather than the list, a wide one restores your choice. */
+        st.listShown = NARROW() ? false : !C.prefs.get("chatListHidden", false);
+        applyShell();
+        if (st.mql) st.mql.onchange = null;
+        st.mql = window.matchMedia("(max-width: 900px)");
+        st.mql.onchange = function () {
+          st.listShown = NARROW() ? false : !C.prefs.get("chatListHidden", false);
+          applyShell();
+        };
 
         refreshChats().then(function () {
           // A handoff wins over "resume the newest chat": someone who just

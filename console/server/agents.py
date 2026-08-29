@@ -192,7 +192,8 @@ def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None,
         raise ValueError("prompt is empty")
     # How a skill/persona is referenced is the backend's own convention
     # (slash commands vs. naming the SKILL.md path), so the backend composes it.
-    prompt = backend.compose_prompt(prompt, skill=skill or "", persona=persona or "")
+    prompt = backend.compose_prompt(prompt, skill=skill or "",
+                                    persona=persona or "", repo_root=repo_root)
 
     run_cwd = os.path.join(repo_root, cwd) if cwd else repo_root
     run_cwd = os.path.abspath(run_cwd)

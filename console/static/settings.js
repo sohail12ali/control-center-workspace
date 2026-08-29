@@ -243,6 +243,134 @@
       { icon: "cpu" });
   }
 
+  /* Model providers — the API backends, and what each one still needs.
+
+     Separate from "Agent CLIs" above because they are a different kind of
+     thing with different failure modes: a CLI needs a binary on PATH, a hosted
+     provider needs a key, a local runtime needs a server that is running. One
+     "not installed" for all three was the console's old answer and it sent
+     people to fix the wrong thing.
+
+     Everything here is a read except Refresh, which fetches the provider's
+     catalogue into a gitignored cache. No console config is written from this
+     page — agents.toml is hand-maintained and mostly comments, which
+     tomlio.dumps() would silently delete. */
+  function providers(repaint) {
+    var body = C.el("div", {}, [C.skeleton(2)]);
+
+    function paintRows(rows) {
+      C.clear(body);
+      if (!rows.length) {
+        body.appendChild(C.empty("No model providers enabled",
+          "Enable the ollama, lm-studio or openrouter row in console/config/agents.toml.",
+          "cpu"));
+        return;
+      }
+      rows.forEach(function (p) {
+        var busy = false;
+
+        var refresh = C.el("button", {
+          class: "btn sm",
+          title: p.available
+            ? "Ask " + p.label + " for its current model list"
+            : "Unavailable — fix the reason below first",
+          onclick: function (e) {
+            if (busy) return;
+            busy = true;
+            var btn = e.currentTarget;
+            btn.disabled = true;
+            btn.textContent = "Fetching…";
+            C.post("/api/agents/models/refresh", { backend: p.id })
+              .then(function (d) {
+                if (d.error) C.toast(d.error, "err");
+                else C.toast(p.label + ": " + d.count + " models cached", "ok");
+                load();
+              })
+              .catch(function (err) { C.toast(err.message, "err"); load(); });
+          },
+        }, ["Refresh models"]);
+        if (!p.available) refresh.disabled = true;
+
+        body.appendChild(C.el("div", { class: "setrow" }, [
+          C.icon(p.is_local ? "cpu" : "external"),
+          C.el("div", { class: "settext" }, [
+            C.el("b", {}, [
+              p.label,
+              p.is_local ? C.el("span", { class: "chip ok", style: "margin-left:6px" },
+                ["local"]) : null,
+            ]),
+            /* The reason is the whole value of this row. "Unusable" alone
+               sends someone reading source; "nothing is listening on
+               127.0.0.1:11434 — is the server running?" does not. */
+            C.el("span", { text: p.available
+              ? (p.cached
+                  ? p.count + " models cached · " + p.age_days + " days old"
+                  : "ready — no catalogue fetched yet")
+              : (p.reason || "unavailable") }),
+          ]),
+          C.chip(p.available ? "ready" : "unusable", p.available ? "ok" : "warn"),
+          refresh,
+        ]));
+      });
+    }
+
+    function load() {
+      C.get("/api/agents/models")
+        .then(function (d) { paintRows(d.providers || []); })
+        .catch(function (err) { C.clear(body).appendChild(C.errbox(err)); });
+    }
+    load();
+
+    return C.panel("Model providers", [
+      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
+        "Fetched catalogues are cached under ",
+        C.el("code", {}, ["console/.cache/models/"]),
+        " — gitignored, because a model list is a fact about your account at ",
+        "one moment, not about this template. The hand-picked shortlist in ",
+        C.el("code", {}, ["agents.toml"]), " is offered alongside it.",
+      ]),
+      body,
+    ], null, { icon: "cpu" });
+  }
+
+  /* Composer — how the message box behaves. Browser-local, like the switches
+     above: these are view preferences, not deployment decisions. */
+  function composer(repaint) {
+    function toggle(key, dflt, label, hint) {
+      var on = C.prefs.get(key, dflt);
+      var input = C.el("input", {
+        type: "checkbox", "aria-label": label,
+        onchange: function (e) { C.prefs.set(key, e.target.checked); repaint(); },
+      });
+      input.checked = !!on;
+      return C.el("div", { class: "setrow" }, [
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: label }), C.el("span", { text: hint }),
+        ]),
+        C.el("label", { class: "switch" }, [
+          input, C.el("span", { class: "track" }), C.el("span", { class: "knob" }),
+        ]),
+      ]);
+    }
+
+    return C.panel("Composer", [
+      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
+        "Type ", C.el("code", {}, ["/"]), " for a skill, ",
+        C.el("code", {}, ["@"]), " for an agent, ", C.el("code", {}, ["#"]),
+        " for a file. A trigger only opens the menu at the start of a word, so ",
+        C.el("code", {}, ["and/or"]), " and ", C.el("code", {}, ["#1234"]),
+        " are left alone — and a reference that names nothing real is sent as ",
+        "plain text rather than as an error.",
+      ]),
+      toggle("pickSkills", true, "Skill menu (/)", "offers .claude/skills"),
+      toggle("pickAgents", true, "Agent menu (@)", "offers .claude/agents"),
+      toggle("pickFiles", true, "File menu (#)",
+             "searches the workspace; never offers .env or other secrets"),
+      toggle("chatListHidden", false, "Start with the chat list folded",
+             "wide windows only — a narrow one always opens on the chat"),
+    ], null, { icon: "pencil" });
+  }
+
   /* Diagnostics — the server's own answer to "what is actually loaded".
      Deliberately next to the tab switches above: one is a preference, this
      is the deployment. */
@@ -430,7 +558,11 @@
       // Only when the Agents feature actually loaded — a switch for a plugin
       // that is off would be a control with nothing behind it.
       var hasAgents = manifest.some(function (t) { return t.id === "agents"; });
-      if (hasAgents && !C.IS_STATIC) kids.push(agentBackends(paint));
+      if (hasAgents && !C.IS_STATIC) {
+        kids.push(agentBackends(paint));
+        kids.push(providers(paint));
+        kids.push(composer(paint));
+      }
       if (!C.IS_STATIC) kids.push(machine());
       h.appendChild(C.el("div", { class: "grid" }, kids));
       h.appendChild(C.el("div", { style: "margin-top:12px" }, [storage(paint)]));

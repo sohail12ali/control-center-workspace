@@ -386,8 +386,35 @@ window.Console = (function () {
     });
   }
 
+  /* Subsequence match with a score, so "hl" finds "harness lint" — the way
+     every picker worth using behaves. Earlier and tighter matches sort first
+     and an exact prefix always wins. Returns 0 for no match.
+
+     Lives here because two surfaces need it: the command palette and the
+     composer's inline / @ # picker. It was written for the palette; the second
+     caller is what moved it, since a copy would have drifted the moment either
+     one was tuned. */
+  function score(text, query) {
+    if (!query) return 1;
+    var haystack = String(text).toLowerCase(), needle = query.toLowerCase();
+    if (haystack.indexOf(needle) === 0) return 1000;
+    var direct = haystack.indexOf(needle);
+    if (direct > 0) return 500 - direct;
+
+    var hi = 0, gaps = 0, last = -1;
+    for (var qi = 0; qi < needle.length; qi++) {
+      var found = haystack.indexOf(needle[qi], hi);
+      if (found === -1) return 0;
+      if (last >= 0) gaps += found - last - 1;
+      last = found;
+      hi = found + 1;
+    }
+    return Math.max(1, 200 - gaps);
+  }
+
   return {
     IS_STATIC: IS_STATIC,
+    score: score,
     tab: tab, tabImpl: tabImpl, tabIds: tabIds,
     get: get, post: post,
     el: el, append: append, clear: clear, icon: icon,
