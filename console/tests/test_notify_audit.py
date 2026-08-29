@@ -9,6 +9,7 @@ break the thing it is describing.** A failed send and a failed audit write are
 both dropped, never raised.
 """
 
+import datetime
 import json
 import os
 import urllib.error
@@ -386,3 +387,134 @@ class TestChatIdDiscovery:
         ]})
         rows, _ = notify.discover_chat_ids(configured, opener=opener)
         assert rows[0]["name"] == "Ops"
+
+
+class TestPrefs:
+    """The browser may quiet the channel. It may never widen it.
+
+    This console has no authentication of its own, and since inbound Telegram
+    landed a tap can approve `run_command`. So the Settings panel writes an
+    overlay that is intersected with the committed config rather than replacing
+    it — the worst a visitor to the page can do is stop a phone buzzing.
+    """
+
+    def test_an_overlay_can_switch_an_event_off(self, configured):
+        notify.apply_prefs(configured, {"events": []})
+        assert notify.config(configured)["events"] == []
+
+    def test_an_overlay_cannot_switch_on_what_config_forbids(self, configured):
+        # console.toml here allows only "approval". Asking for the other two
+        # must not grant them.
+        notify.apply_prefs(configured,
+                           {"events": ["approval", "turn_end", "job_error"]})
+        assert notify.config(configured)["events"] == ["approval"]
+
+    def test_only_the_two_quieting_keys_are_ever_stored(self, configured):
+        # Anything that widens access must not survive a round trip, however
+        # it is spelled in the request body.
+        notify.apply_prefs(configured, {
+            "events": ["approval"], "quiet_from": "22:00",
+            "inbound": True, "allowed_users_env": "EVIL",
+            "token_env": "EVIL", "enabled": True, "channel": "smoke-signal",
+        })
+        stored = notify.load_prefs(configured)
+        assert set(stored) <= set(notify.WRITABLE), stored
+        # And the resolved config is untouched by the rejected keys.
+        cfg = notify.config(configured)
+        assert cfg["token_env"] == "TEST_TG_TOKEN"
+        assert cfg["channel"] == "telegram"
+
+    def test_a_nonsense_clock_disables_quiet_hours_rather_than_crashing(self, configured):
+        for junk in ("25:00", "nope", "12:99", "", "8"):
+            notify.apply_prefs(configured, {"quiet_from": junk})
+            assert notify.config(configured)["quiet_from"] == ""
+
+
+class TestQuietHours:
+    def test_a_window_that_wraps_midnight_is_understood(self):
+        cfg = {"quiet_from": "22:00", "quiet_to": "07:00"}
+        at = lambda h, m=0: datetime.datetime(2026, 8, 29, h, m)
+        assert notify.in_quiet_hours(cfg, at(23)) is True
+        assert notify.in_quiet_hours(cfg, at(3)) is True
+        assert notify.in_quiet_hours(cfg, at(12)) is False
+        # A naive start <= now <= end is false for every minute of this window.
+
+    def test_a_same_day_window_is_understood(self):
+        cfg = {"quiet_from": "09:00", "quiet_to": "17:00"}
+        at = lambda h: datetime.datetime(2026, 8, 29, h)
+        assert notify.in_quiet_hours(cfg, at(12)) is True
+        assert notify.in_quiet_hours(cfg, at(20)) is False
+
+    def test_no_window_is_never_quiet(self):
+        assert notify.in_quiet_hours({"quiet_from": "", "quiet_to": ""}) is False
+        assert notify.in_quiet_hours({"quiet_from": "9", "quiet_to": "9"}) is False
+
+    def test_quiet_hours_never_silence_an_approval(self, configured, monkeypatch):
+        """The one rule in this file that must not be relaxed.
+
+        A parked approval denies on its timeout, so silencing it does not delay
+        a buzz — it kills the run. Quiet hours exist for the two events that
+        merely inform.
+        """
+        notify.apply_prefs(configured, {"quiet_from": "00:00", "quiet_to": "23:59"})
+        assert notify.in_quiet_hours(notify.config(configured)) is True
+        sent = Sent()
+        out = notify.send(configured, "approval", "blocked", opener=sent, block=True)
+        assert out["sent"] is True, out
+        assert sent.requests, "the approval must still have gone out"
+
+    def test_quiet_hours_do_hold_an_informational_event(self, configured):
+        with open(os.path.join(configured, "console", "config", "console.toml"),
+                  "a", encoding="utf-8") as fh:
+            fh.write('\n[notify]\nevents = ["approval", "turn_end"]\n')
+        boards._console_cache.clear()
+        notify.apply_prefs(configured, {"quiet_from": "00:00", "quiet_to": "23:59"})
+        sent = Sent()
+        out = notify.send(configured, "turn_end", "done", opener=sent, block=True)
+        assert out["sent"] is False and out["reason"] == "quiet hours"
+        assert sent.requests == []
+
+
+class TestHandEditedOverlay:
+    """The overlay is a plain file on disk, so it is also an input.
+
+    Going through `apply_prefs` is the polite path and it narrows on the way
+    in. These cover the impolite one — someone opening
+    `console/config/notify-local.toml` in an editor — which is where the
+    read-time defences actually earn their place.
+    """
+
+    def _write(self, repo_root, body):
+        with open(notify.prefs_path(repo_root), "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def test_a_widened_event_list_on_disk_is_still_narrowed_on_read(self, configured):
+        # console.toml allows only "approval". The file asks for all three.
+        self._write(configured,
+                    '[notify]\nevents = ["approval", "turn_end", "job_error"]\n')
+        assert notify.config(configured)["events"] == ["approval"]
+
+    def test_junk_keys_on_disk_never_reach_the_resolved_config(self, configured):
+        self._write(configured, '[notify]\ntoken_env = "EVIL"\n'
+                                'channel = "smoke-signal"\nenabled = false\n')
+        cfg = notify.config(configured)
+        assert cfg["token_env"] == "TEST_TG_TOKEN"
+        assert cfg["channel"] == "telegram"
+        assert cfg["enabled"] is True
+
+    def test_junk_keys_are_dropped_the_next_time_prefs_are_saved(self, configured):
+        # `apply_prefs` starts from what is on disk, so without the filter it
+        # would faithfully write someone's hand-added keys back out.
+        self._write(configured, '[notify]\ntoken_env = "EVIL"\nquiet_from = "22:00"\n')
+        notify.apply_prefs(configured, {"quiet_to": "07:00"})
+        stored = notify.load_prefs(configured)
+        assert set(stored) <= set(notify.WRITABLE), stored
+        assert "token_env" not in stored
+        # The legitimate value it found there survives.
+        assert stored["quiet_from"] == "22:00"
+
+    def test_a_corrupt_overlay_is_ignored_rather_than_fatal(self, configured):
+        self._write(configured, "this is not toml [[[")
+        assert notify.load_prefs(configured) == {}
+        # The committed config still works on its own.
+        assert notify.config(configured)["events"] == ["approval"]

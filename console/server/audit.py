@@ -49,7 +49,9 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # Inbound Telegram. `rejected` is the more important of the two:
            # a bot token addresses a public endpoint, so a stranger probing it
            # is a thing that happens, and this is the only place it is visible.
-           "telegram.command", "telegram.rejected")
+           "telegram.command", "telegram.rejected",
+           # Both quiet the channel or prove it works; neither can widen it.
+           "notify.prefs", "notify.test")
 
 
 def audit_dir(repo_root):

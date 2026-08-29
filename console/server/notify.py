@@ -27,6 +27,7 @@ still a token, so the failure path deliberately reports the status code and not
 the URL it called.
 """
 
+import datetime
 import json
 import os
 import threading
@@ -35,6 +36,7 @@ import urllib.parse
 import urllib.request
 
 from . import boards as boards_mod
+from . import tomlio
 
 DEFAULT_TIMEOUT = 8
 TELEGRAM_API = "https://api.telegram.org"
@@ -45,14 +47,107 @@ TELEGRAM_API = "https://api.telegram.org"
 KINDS = ("approval", "turn_end", "job_error")
 
 
+#: Where the browser's preferences live. A generated, machine-local file, kept
+#: apart from `console.toml` for the same reason `agents.toml` is never
+#: rewritten: that file is mostly comments, and `tomlio.dumps` drops them.
+PREFS_REL = os.path.join("console", "config", "notify-local.toml")
+
+#: The ONLY keys the browser may write, and both can only ever make the bot
+#: quieter. Nothing that could widen who reaches this machine is settable from
+#: a page that has no authentication of its own — see `apply_prefs`.
+WRITABLE = ("events", "quiet_from", "quiet_to")
+
+
+def prefs_path(repo_root):
+    return os.path.join(repo_root, PREFS_REL)
+
+
+def load_prefs(repo_root):
+    path = prefs_path(repo_root)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        return tomlio.load(path).get("notify", {}) or {}
+    except Exception:  # noqa: BLE001
+        # A hand-mangled overlay must not take the console down; the committed
+        # config is the source of truth and still works on its own.
+        return {}
+
+
+def apply_prefs(repo_root, incoming):
+    """Persist the browser's choices. Returns the stored dict.
+
+    **Narrowing only.** `events` is intersected with what `console.toml`
+    already allows, so the page can switch a notification off but never on for
+    a kind the checkout has not opted into — and can never touch `inbound`,
+    the allowlist, or a credential.
+
+    That asymmetry is the point. This console has no authentication, and since
+    inbound landed a Telegram tap can approve `run_command`. Anything that
+    widens who can reach this machine stays in the terminal, where there is at
+    least a shell someone had to already have.
+    """
+    committed = boards_mod.load_console_config(repo_root).get("notify", {}) or {}
+    allowed = [e for e in committed.get("events", ["approval"]) if e in KINDS]
+
+    stored = load_prefs(repo_root)
+    if "events" in incoming:
+        asked = [e for e in (incoming.get("events") or []) if e in KINDS]
+        stored["events"] = [e for e in asked if e in allowed]
+    for key in ("quiet_from", "quiet_to"):
+        if key in incoming:
+            stored[key] = _clock(incoming.get(key))
+    stored = {k: v for k, v in stored.items() if k in WRITABLE}
+    tomlio.atomic_write(prefs_path(repo_root), {"notify": stored})
+    return stored
+
+
+def _clock(value):
+    """`"23:30"` → `"23:30"`, anything else → `""` (meaning: no quiet hours)."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = text.split(":")
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return ""
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        return ""
+    return "%02d:%02d" % (hour, minute)
+
+
+def in_quiet_hours(cfg, now=None):
+    """True when the clock is inside the configured quiet window.
+
+    Handles a window that wraps midnight (22:00 → 07:00), which is the usual
+    shape — a naive `start <= now <= end` is false for every minute of it.
+    """
+    start, end = cfg.get("quiet_from") or "", cfg.get("quiet_to") or ""
+    if not start or not end or start == end:
+        return False
+    stamp = (now or datetime.datetime.now()).strftime("%H:%M")
+    if start < end:
+        return start <= stamp < end
+    return stamp >= start or stamp < end
+
+
 def config(repo_root):
     cfg = boards_mod.load_console_config(repo_root).get("notify", {}) or {}
+    local = load_prefs(repo_root)
+    events = [e for e in cfg.get("events", ["approval"]) if e in KINDS]
+    if "events" in local:
+        # Intersected, not replaced: the overlay narrows what the committed
+        # config permits and can never extend it.
+        events = [e for e in events if e in (local.get("events") or [])]
     return {
         "enabled": bool(cfg.get("enabled", False)),
         "channel": cfg.get("channel", "telegram"),
         "token_env": cfg.get("token_env") or "TELEGRAM_BOT_TOKEN",
         "chat_id_env": cfg.get("chat_id_env") or "TELEGRAM_CHAT_ID",
-        "events": [e for e in cfg.get("events", ["approval"]) if e in KINDS],
+        "events": events,
+        "quiet_from": _clock(local.get("quiet_from")),
+        "quiet_to": _clock(local.get("quiet_to")),
         "timeout": int(cfg.get("timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT),
     }
 
@@ -279,6 +374,13 @@ def send(repo_root, kind, text, *, opener=None, block=False, buttons=None,
         return {"sent": False, "reason": "disabled"}
     if kind not in cfg["events"]:
         return {"sent": False, "reason": "%s not in the enabled events" % kind}
+    # Quiet hours never apply to an approval, and this is deliberate rather
+    # than an oversight worth "fixing" later. A parked approval denies after
+    # its timeout, so silencing one does not postpone a buzz — it kills the
+    # run. The two events quiet hours exist for are the ones that are merely
+    # informative: a finished run and a failed job both keep until morning.
+    if kind != "approval" and in_quiet_hours(cfg):
+        return {"sent": False, "reason": "quiet hours"}
     channel = CHANNELS.get(cfg["channel"])
     if channel is None:
         return {"sent": False, "reason": "unknown channel %r" % cfg["channel"]}

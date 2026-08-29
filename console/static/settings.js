@@ -429,32 +429,18 @@
   function machine() {
     var body = C.el("div", {}, [C.skeleton(2)]);
 
+    // Notification health used to be reported here too. It now has its own
+    // panel, which says the same things and more; leaving a second copy would
+    // guarantee the two drift the first time either is edited.
     Promise.all([
       C.get("/api/worktrees").catch(function () { return null; }),
-      C.get("/api/notify").catch(function () { return null; }),
     ]).then(function (res) {
-      var wt = res[0], noti = res[1];
+      var wt = res[0];
       C.clear(body);
-      if (!wt && !noti) {
+      if (!wt) {
         body.appendChild(C.empty("Ops plugin is disabled",
           "Enable the `ops` row in console/config/plugins.toml.", "sliders"));
         return;
-      }
-
-      if (noti) {
-        /* The reason field is the whole value of this row. "Not ready" alone
-           sends you reading source; "TELEGRAM_CHAT_ID is not set" does not. */
-        body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-bottom:8px" }, [
-          C.el("b", { text: "Approval notifications" }),
-          C.chip(noti.ready ? "ready" : "not ready", noti.ready ? "ok" : "warn"),
-          C.chip(noti.channel || "—"),
-          noti.reason ? C.el("span", { class: "muted", text: noti.reason }) : null,
-        ]));
-        body.appendChild(C.el("p", { class: "muted", style: "margin:0 0 12px;font-size:11px" }, [
-          "Credentials are reported as present or absent, never shown. Events: ",
-          C.el("code", {}, [(noti.events || []).join(", ") || "none"]),
-          ". Prove delivery with ", C.el("code", {}, ["kanban notify test"]), ".",
-        ]));
       }
 
       if (wt) {
@@ -488,6 +474,163 @@
     });
 
     return C.panel("This machine", [body], null, { icon: "wrench" });
+  }
+
+  /* Telegram — when it fires, and who may drive it.
+
+     The split down the middle of this panel is the whole design. This page has
+     no authentication of its own, and since inbound landed a Telegram tap can
+     approve `run_command`. So:
+
+       settable here   what QUIETS the bot — which events fire, quiet hours.
+                       The worst a visitor can do is stop your phone buzzing.
+       terminal only   anything that WIDENS it — inbound on/off, the allowlist,
+                       the credentials. Granting access from an unauthenticated
+                       page is the one thing that cannot be undone by reading
+                       the audit log afterwards.
+
+     The read-only half is still shown, because "why is my phone silent" is
+     answered by facts this page has and the terminal does not put in front of
+     you. */
+  var KIND_BLURB = {
+    approval: "A gated tool is waiting on you. Never silenced by quiet hours — "
+            + "it denies on a timeout, so silencing it kills the run.",
+    turn_end: "A run finished, or failed.",
+    job_error: "A scheduled job died. Nobody is watching a 3am job.",
+  };
+
+  function telegram(repaint) {
+    var body = C.el("div", {}, [C.skeleton(3)]);
+
+    function paint(d) {
+      C.clear(body);
+
+      body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-bottom:6px" }, [
+        C.chip(d.ready ? "ready" : "not ready", d.ready ? "ok" : "warn"),
+        C.chip(d.channel || "—"),
+        d.inbound ? C.chip("inbound on", "accent") : C.chip("inbound off"),
+        d.quiet_now ? C.chip("quiet hours", "warn") : null,
+      ]));
+      if (d.reason) {
+        // The whole value of this row. "Not ready" sends you reading source;
+        // naming the variable and the value does not.
+        body.appendChild(C.el("div", { class: "errbox", style: "margin-bottom:10px",
+                                       text: d.reason }));
+      }
+
+      // -- when it fires (settable: these can only quiet it) ---------------
+      body.appendChild(C.el("b", { text: "When it fires" }));
+      (d.kinds || []).forEach(function (kind) {
+        var on = (d.events || []).indexOf(kind) !== -1;
+        var box = C.el("input", { type: "checkbox" });
+        box.checked = on;
+        box.addEventListener("change", function () {
+          var next = (d.events || []).filter(function (e) { return e !== kind; });
+          if (box.checked) next.push(kind);
+          save({ events: next });
+        });
+        body.appendChild(C.el("label", { class: "setrow" }, [
+          box,
+          C.el("span", { class: "settext" }, [
+            C.el("b", { text: kind }),
+            C.el("span", { text: KIND_BLURB[kind] || "" }),
+          ]),
+        ]));
+      });
+
+      // -- quiet hours ------------------------------------------------------
+      function clock(id, value) {
+        var input = C.el("input", { type: "time", "aria-label": id,
+                                    style: "width:7.5em" });
+        input.value = value || "";
+        input.addEventListener("change", function () {
+          var patch = {};
+          patch[id] = input.value;
+          save(patch);
+        });
+        return input;
+      }
+      body.appendChild(C.el("div", { class: "setrow" }, [
+        C.icon("clock"),
+        C.el("span", { class: "settext" }, [
+          C.el("b", { text: "Quiet hours" }),
+          C.el("span", { text: d.quiet_from && d.quiet_to
+            ? "turn_end and job_error are held between these times. Approvals still come through."
+            : "Off — set both times to hold the informational events overnight." }),
+        ]),
+        clock("quiet_from", d.quiet_from),
+        C.el("span", { class: "muted", text: "to" }),
+        clock("quiet_to", d.quiet_to),
+      ]));
+
+      // -- who may drive it (read-only, deliberately) -----------------------
+      body.appendChild(C.el("b", { style: "display:block;margin-top:12px",
+                                   text: "Who may drive it" }));
+      var who = d.allow_all
+        ? "EVERY user — anyone who finds this bot can drive it"
+        : (d.allowed_count
+            ? d.allowed_count + " allowed user" + (d.allowed_count === 1 ? "" : "s")
+            : "nobody — the allowlist is empty, so inbound does nothing");
+      body.appendChild(C.el("div", { class: "setrow" }, [
+        C.icon(d.allow_all ? "alert" : "user"),
+        C.el("span", { class: "settext" }, [
+          C.el("b", { text: who }),
+          C.el("span", { text: d.inbound
+            ? "A tap can approve any gated tool, including shell commands."
+            : "Inbound is off, so buttons do nothing and only outbound messages are sent." }),
+        ]),
+        C.chip(d.allow_all ? "allow-all" : "fail-closed", d.allow_all ? "danger" : "ok"),
+      ]));
+      body.appendChild(C.el("p", { class: "muted", style: "margin:6px 0 0;font-size:11px" }, [
+        "Set with ", C.el("code", {}, [d.self_user_env || "TELEGRAM_USER_ID"]),
+        " or ", C.el("code", {}, [d.allowed_users_env || "TELEGRAM_ALLOWED_USERS"]),
+        " in the workspace's .env, and ", C.el("code", {}, ["inbound"]),
+        " in console.toml. Not editable here on purpose: this page has no "
+        + "authentication, so anything that widens who can reach this machine "
+        + "stays in a terminal. Check it with ",
+        C.el("code", {}, ["kanban notify who"]), ".",
+      ]));
+
+      body.appendChild(C.el("div", { class: "row", style: "margin-top:10px" }, [
+        C.el("button", { class: "btn sm", onclick: test }, [C.icon("send"), "Send test message"]),
+        C.el("span", { class: "muted", text: "Credentials are reported present or absent, never shown." }),
+      ]));
+    }
+
+    function save(patch) {
+      C.post("/api/notify/prefs", patch)
+        .then(function (d) { paint(merge(d.config)); C.toast("Saved", "ok"); })
+        .catch(function (err) { C.toast(err.message, "err"); load(); });
+    }
+
+    // The prefs response carries the resolved config but not the read-only
+    // facts, so the last full status is kept to fill them back in.
+    var last = {};
+    function merge(cfg) {
+      var out = {};
+      Object.keys(last).forEach(function (k) { out[k] = last[k]; });
+      Object.keys(cfg || {}).forEach(function (k) { out[k] = cfg[k]; });
+      last = out;
+      return out;
+    }
+
+    function test() {
+      C.post("/api/notify/test", {})
+        .then(function (d) {
+          C.toast(d.sent ? "Sent — check your phone" : (d.reason || "Not sent"),
+                  d.sent ? "ok" : "err");
+        })
+        .catch(function (err) { C.toast(err.message, "err"); });
+    }
+
+    function load() {
+      C.get("/api/notify")
+        .then(function (d) { last = d; paint(d); })
+        .catch(function (err) { C.clear(body).appendChild(C.errbox(err)); });
+    }
+    load();
+
+    return C.panel("Telegram", [body], null, { icon: "send" });
   }
 
   function storage(repaint) {
@@ -563,7 +706,10 @@
         kids.push(providers(paint));
         kids.push(composer(paint));
       }
-      if (!C.IS_STATIC) kids.push(machine());
+      if (!C.IS_STATIC) {
+        kids.push(telegram(paint));
+        kids.push(machine());
+      }
       h.appendChild(C.el("div", { class: "grid" }, kids));
       h.appendChild(C.el("div", { style: "margin-top:12px" }, [storage(paint)]));
       if (!C.IS_STATIC) {
