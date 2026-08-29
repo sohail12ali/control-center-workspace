@@ -1,0 +1,37 @@
+# Named jobs on a clock. The running console is the clock — nothing fires while
+# `kanban serve` is not running, and missed firings are skipped rather than
+# replayed. That is a deliberate trade: a scheduler that caught up would, after
+# a weekend, run every job dozens of times at once, and these submit real work.
+#
+#   id       what the job record is attributed to (`submitted_by`)
+#   expr     5-field cron — minute hour day month weekday — local time.
+#            Supported per field: * N A-B */S A-B/S and comma lists.
+#            NOT supported: @daily nicknames, L, W, #. An unsupported
+#            expression is rejected at load with its schedule id, never
+#            silently treated as *.
+#   verb     an id from verbs.toml
+#   ticket   passed to the verb, for verbs that need one
+#   args     extra handler arguments
+#   confirm  a scheduled job runs with nobody watching, so a verb that would
+#            ask for confirmation must be granted it here, deliberately, in a
+#            committed file
+#   enabled  false parks a row without deleting it (still parsed, so a broken
+#            expression is found now rather than when someone re-enables it)
+#
+# The two rows below are parked on purpose. They are useful and safe — both are
+# read-only reports — but a template should not start firing jobs on a schedule
+# nobody chose. Turn them on when you want them.
+
+[[schedule]]
+id = "harness-lint-weekday"
+label = "Weekday harness check"
+expr = "0 9 * * 1-5"
+verb = "harness-lint"
+enabled = false
+
+[[schedule]]
+id = "skill-usage-weekly"
+label = "Weekly skill usage report"
+expr = "0 10 * * 1"
+verb = "skill-usage"
+enabled = false
