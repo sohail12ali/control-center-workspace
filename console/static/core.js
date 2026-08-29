@@ -412,9 +412,193 @@ window.Console = (function () {
     return Math.max(1, 200 - gaps);
   }
 
+  /* A dropdown you can type into.
+
+     A native <select> stops working somewhere around fifty options, and the
+     model picker now gets fed a fetched catalogue — OpenRouter alone returns
+     396 rows, each with a price and a context window that a <select> can only
+     hide in a `title` you have to hover one row at a time to read. It was
+     unusable the moment catalogue fetching landed.
+
+     Lives in core beside `score()` rather than in the tab that needed it
+     first: the same control fits every long list this console has (models,
+     backends, tickets), and a second copy would drift the moment either was
+     tuned — which is the argument that moved `score()` here too.
+
+     opts: {rows:[{value,label,hint}], value, onPick, ariaLabel, placeholder,
+            searchPlaceholder, emptyText, custom:{label,hint}} */
+  function filterPicker(opts) {
+    opts = opts || {};
+    var rows = opts.rows || [];
+    var value = opts.value || "";
+    var shown = [];
+    var index = 0;
+
+    var wrap = el("div", { class: "fpick" });
+    var btn = el("button", {
+      type: "button", class: "fpick-btn",
+      "aria-haspopup": "listbox", "aria-expanded": "false",
+      "aria-label": opts.ariaLabel || "",
+      onclick: function (e) { e.preventDefault(); toggle(); },
+    });
+    var input = el("input", {
+      type: "text", class: "fpick-input",
+      placeholder: opts.searchPlaceholder || "Type to filter…",
+      "aria-label": (opts.ariaLabel || "Options") + " filter",
+      // A form would submit on Enter and reload the page under the panel.
+      onkeydown: function (e) { keys(e); },
+      oninput: function () { render(); },
+    });
+    var list = el("div", { class: "fpick-list", role: "listbox",
+                           "aria-label": opts.ariaLabel || "" });
+    var foot = el("div", { class: "fpick-foot" });
+    var panel = el("div", { class: "fpick-panel", hidden: true }, [
+      el("div", { class: "fpick-search" }, [icon("search"), input]),
+      list, foot,
+    ]);
+    append(wrap, [btn, panel]);
+
+    function labelFor(v) {
+      for (var i = 0; i < rows.length; i++) if (rows[i].value === v) return rows[i].label || v;
+      // A value with no row is one that was typed — still a real choice, and
+      // showing it beats showing the placeholder as if nothing were selected.
+      return v || (opts.placeholder || "(none)");
+    }
+
+    function paintButton() {
+      clear(btn);
+      append(btn, [
+        el("span", { class: "fpick-val truncate", text: labelFor(value) }),
+        icon("chevDown"),
+      ]);
+      btn.title = value || opts.placeholder || "";
+    }
+
+    function matches() {
+      var q = input.value.trim();
+      var out = [];
+      rows.forEach(function (r) {
+        // Search the hint too: "128k" and "free" are how people actually look
+        // for a model, and neither is in its id.
+        var s = Math.max(score(r.label || r.value, q),
+                         score(r.value, q),
+                         q ? score(r.hint || "", q) * 0.4 : 0);
+        if (s > 0) out.push({ row: r, s: s });
+      });
+      out.sort(function (a, b) { return b.s - a.s; });
+      return out.map(function (o) { return o.row; });
+    }
+
+    function render() {
+      shown = matches();
+      var q = input.value.trim();
+      // An exact-match row makes the custom escape hatch noise.
+      var exact = shown.some(function (r) { return r.value === q; });
+      if (opts.custom && q && !exact) {
+        shown = shown.concat([{
+          value: q, custom: true,
+          label: (opts.custom.label || "Use") + " “" + q + "”",
+          hint: opts.custom.hint || "",
+        }]);
+      }
+      if (index >= shown.length) index = Math.max(0, shown.length - 1);
+      clear(list);
+      if (!shown.length) {
+        list.appendChild(el("div", { class: "fpick-empty muted",
+          text: opts.emptyText || "Nothing matches." }));
+      }
+      shown.forEach(function (r, i) {
+        list.appendChild(el("div", {
+          class: "cp-row fpick-row" + (i === index ? " on" : "") +
+                 (r.custom ? " fpick-custom" : ""),
+          role: "option", "aria-selected": String(r.value === value),
+          onmousedown: function (e) { e.preventDefault(); pick(i); },
+          onmouseenter: function () { index = i; mark(); },
+        }, [
+          r.value === value ? icon("check") : el("span", { class: "fpick-gap" }),
+          el("span", { class: "cp-label", text: r.label || r.value }),
+          r.hint ? el("span", { class: "cp-hint muted", text: r.hint }) : null,
+        ]));
+      });
+      foot.textContent = q
+        ? shown.length + " of " + rows.length
+        : rows.length + (rows.length === 1 ? " option" : " options");
+    }
+
+    function mark() {
+      var kids = list.childNodes;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i].classList) kids[i].classList.toggle("on", i === index);
+      }
+      var cur = kids[index];
+      if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest" });
+    }
+
+    function pick(i) {
+      var r = shown[i];
+      if (!r) return;
+      value = r.value;
+      paintButton();
+      close();
+      if (opts.onPick) opts.onPick(value, r);
+    }
+
+    function keys(e) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!shown.length) return;
+        index = (index + (e.key === "ArrowDown" ? 1 : -1) + shown.length) % shown.length;
+        mark();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        pick(index);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+        btn.focus();
+      }
+    }
+
+    function outside(e) { if (!wrap.contains(e.target)) close(); }
+
+    function open() {
+      panel.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      input.value = "";
+      index = 0;
+      render();
+      /* Flip above the control when there is not room below it. Measured
+         rather than assumed: this control is reused, and where it sits on the
+         page is the caller's business, not something to hard-code here. */
+      var box = btn.getBoundingClientRect();
+      var need = Math.min(panel.offsetHeight || 300, 300);
+      wrap.classList.toggle("up",
+        box.bottom + need > window.innerHeight && box.top > need);
+      input.focus();
+      // Registered only while open, and removed on close — a listener per
+      // picker left on the document is how a long session gets slow.
+      document.addEventListener("mousedown", outside, true);
+    }
+
+    function close() {
+      if (panel.hidden) return;
+      panel.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("mousedown", outside, true);
+    }
+
+    function toggle() { if (panel.hidden) open(); else close(); }
+
+    paintButton();
+    wrap.setValue = function (v) { value = v || ""; paintButton(); };
+    wrap.setRows = function (next) { rows = next || []; paintButton(); if (!panel.hidden) render(); };
+    return wrap;
+  }
+
   return {
     IS_STATIC: IS_STATIC,
     score: score,
+    filterPicker: filterPicker,
     tab: tab, tabImpl: tabImpl, tabIds: tabIds,
     get: get, post: post,
     el: el, append: append, clear: clear, icon: icon,

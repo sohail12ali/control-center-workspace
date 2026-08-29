@@ -1290,6 +1290,57 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 .cpick-head svg.ico { width: 13px; height: 13px; }
 .cpick-row { cursor: pointer; }
 
+/* -- filter picker: a dropdown you can type into -----------------------------
+
+   A native <select> stops being usable somewhere around fifty options, and the
+   model picker is handed a fetched catalogue — OpenRouter alone returns 396
+   rows, each carrying a price and a context window that a <select> can only
+   put in a `title` you hover one row at a time. Reuses the palette's `.cp-row`
+   / `.cp-label` / `.cp-hint` so a row looks the same wherever it is listed. */
+.fpick { position: relative; min-width: 0; display: flex; }
+.fpick-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+  padding: 5px 8px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  transition: border-color .14s var(--ease);
+}
+.fpick-btn:hover { border-color: var(--accent-line); }
+.fpick-btn[aria-expanded="true"] { border-color: var(--accent); box-shadow: var(--glow); }
+.fpick-val { flex: 1 1 auto; min-width: 0; }
+.fpick-btn > svg.ico { flex: none; color: var(--ink-3); }
+
+.fpick-panel {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0;
+  width: max(100%, 320px); max-width: min(460px, 88vw);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); box-shadow: var(--shadow-3);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* Above the control instead, when it sits low enough that a panel below would
+   fall off the viewport. */
+.fpick.up .fpick-panel { top: auto; bottom: calc(100% + 4px); }
+.fpick-search {
+  display: flex; align-items: center; gap: 7px; padding: 7px 9px;
+  border-bottom: 1px solid var(--line-soft); color: var(--ink-3);
+}
+.fpick-search svg.ico { flex: none; }
+.fpick-input {
+  flex: 1 1 auto; min-width: 0; border: 0; outline: none;
+  background: transparent; font: inherit; font-size: 12.5px; color: var(--ink);
+  padding: 0;
+}
+.fpick-list { max-height: 246px; overflow-y: auto; padding: 4px; }
+.fpick-row { cursor: pointer; border-radius: 6px; }
+.fpick-gap { width: 13px; flex: none; }
+.fpick-custom .cp-label { font-style: italic; }
+.fpick-empty { padding: 12px 10px; text-align: center; font-size: 11.5px; }
+.fpick-foot {
+  padding: 5px 10px; border-top: 1px solid var(--line-soft);
+  background: var(--surface-2); color: var(--ink-3);
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+
 /* ---------------- vault ----------------
    Three columns: collapsible card sidebar, canvas stage, and a file viewer
    that only claims width when a file is open. No colour is set on the canvas

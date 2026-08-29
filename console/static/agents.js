@@ -90,7 +90,7 @@
     var usable = rows.filter(function (b) { return b.installed; })[0];
     var pick = usable || rows[0];
     st.form.backend = pick ? pick.id : "";
-    st.form.mode = ""; st.form.model = ""; st.form.modelCustom = false;
+    st.form.mode = ""; st.form.model = "";
     if (pick) loadCatalog(pick.id);
     if (repaint !== false) paintMain();
   }
@@ -251,11 +251,6 @@
     }));
   }
 
-  /* A value no real model id can collide with — picking it swaps the model
-     dropdown for a free-text box, so the shortlist in agents.toml never has
-     to be a catalogue. Written as an escape, not a literal NUL byte: the raw
-     byte made this file read as binary to grep and every other text tool. */
-  var CUSTOM_MODEL = "\u0000custom";
 
   /* Which ticket this chat is working on. Optional on purpose — an
      exploratory chat belongs to no ticket, and forcing a choice would get one
@@ -307,42 +302,66 @@
            (m.output_per_mtok || 0).toFixed(2) + " per Mtok";
   }
 
+  /* The model picker.
+
+     Was a native <select>. That was survivable while the only entries were a
+     hand-written shortlist of five, and stopped being so the moment catalogue
+     fetching landed: OpenRouter returns 396 rows, and a <select> can only put
+     each row's price and context window in a `title` you hover one at a time.
+     Now a `C.filterPicker` — type to narrow, over id, label AND hint, so
+     "128k" and "free" find models the way people actually look for them.
+
+     Order is unchanged and deliberate: cache first, hand-curated shortlist
+     second, free-text last. The shortlist is a handful of ids worth one click;
+     the catalogue is the provider's real answer, and could never live in a
+     committed file without rotting. */
   function modelField() {
     var b = backend(st.form.backend);
     var models = (b && b.models) || [];
     var cat = (b && st.catalogs[b.id]) || null;
     var fetched = (cat && cat.models) || [];
 
-    /* Cache first, hand-curated shortlist second, paste box last. The
-       shortlist is a handful of ids worth one click; the catalogue is the
-       provider's real answer, which for OpenRouter is several hundred rows and
-       could never live in a committed file without rotting. */
-    var opts = [["", "(backend default)", "send no --model flag — the backend's own default"]]
+    var rows = [{ value: "", label: "(backend default)",
+                  hint: "send no --model flag" }]
       .concat(fetched.map(function (m) {
         var ctx = m.context ? C.fmtNum(m.context) + " ctx" : "";
-        return [m.id, m.label || m.id,
-                [ctx, fmtPrice(m)].filter(Boolean).join(" · ")];
+        var price = fmtPrice(m);
+        // A model priced at zero on both sides IS free, and saying so is the
+        // difference between a row you can choose confidently and one you have
+        // to go and look up.
+        if (m.input_per_mtok === 0 && m.output_per_mtok === 0) price = "free";
+        return { value: m.id, label: m.label || m.id,
+                 hint: [ctx, price].filter(Boolean).join(" · ") };
       }))
       .concat(models
+        // Don't list an id twice when the catalogue already carries it.
         .filter(function (m) {
-          // Don't list an id twice when the catalogue already carries it.
           return !fetched.some(function (f) { return f.id === m.id; });
         })
-        .map(function (m) { return [m.id, m.label || m.id, m.hint || ""]; }))
-      .concat([[CUSTOM_MODEL, "— custom id… —", "type any model id; sent verbatim"]]);
-    var sel = select(opts, st.form.modelCustom ? CUSTOM_MODEL : st.form.model, function (v) {
-      if (v === CUSTOM_MODEL) { st.form.modelCustom = true; st.form.model = ""; }
-      else { st.form.modelCustom = false; st.form.model = v; }
-      paintMain();
-    }, "Model");
-    if (!st.form.modelCustom) return field("Model", "", sel);
-    var box = C.el("input", {
-      type: "text", placeholder: "exact model id, sent verbatim",
-      "aria-label": "Custom model id",
-      oninput: function (e) { st.form.model = e.target.value.trim(); },
+        .map(function (m) {
+          return { value: m.id, label: m.label || m.id, hint: m.hint || "" };
+        }));
+
+    var picker = C.filterPicker({
+      rows: rows,
+      value: st.form.model,
+      ariaLabel: "Model",
+      placeholder: "(backend default)",
+      searchPlaceholder: "Filter models…",
+      emptyText: "No model matches. Type a full id to use it anyway.",
+      // The paste box the old picker kept beside it, folded in: anything typed
+      // that matches no row is offered as an id and sent verbatim.
+      custom: { label: "Use", hint: "sent verbatim" },
+      onPick: function (v) { st.form.model = v; },
     });
-    box.value = st.form.model;
-    return field("Model", "custom id", C.el("div", { class: "row", style: "gap:6px;flex-wrap:wrap" }, [sel, box]));
+
+    var hint = "";
+    if (b && b.is_api) {
+      hint = cat && cat.count
+        ? cat.count + " fetched" + (cat.age_days ? " · " + cat.age_days + "d old" : "")
+        : "no catalogue cached — Settings ▸ Refresh models";
+    }
+    return field("Model", hint, picker);
   }
 
   function modeRow() {
@@ -390,7 +409,6 @@
       // A model id is meaningless on another backend, so switching clears it.
       onclick: function () {
         st.form.backend = b.id; st.form.mode = ""; st.form.model = "";
-        st.form.modelCustom = false;
         loadCatalog(b.id);
         paintMain();
       },
