@@ -65,7 +65,6 @@ def status(repo_root):
     cfg = config(repo_root)
     token = os.environ.get(cfg["token_env"], "").strip()
     chat_id = os.environ.get(cfg["chat_id_env"], "").strip()
-    ready = bool(cfg["enabled"] and token and chat_id)
     reason = ""
     if not cfg["enabled"]:
         reason = "notifications are disabled in console.toml"
@@ -73,36 +72,138 @@ def status(repo_root):
         reason = "%s is not set" % cfg["token_env"]
     elif not chat_id:
         reason = "%s is not set" % cfg["chat_id_env"]
+    else:
+        # Set is not the same as workable. This one case can be proven wrong
+        # without a network call, and it used to report ready: true while every
+        # send failed with a 403 that named no cause.
+        reason = misconfigured(repo_root)
+    ready = bool(cfg["enabled"] and token and chat_id and not reason)
     return {"enabled": cfg["enabled"], "channel": cfg["channel"],
             "events": cfg["events"], "ready": ready, "reason": reason,
             "token_present": bool(token), "chat_id_present": bool(chat_id)}
 
 
-def _post_telegram(cfg, text, opener=None):
-    """Send one message. Returns (ok, detail). Never raises."""
+def bot_id(token):
+    """The bot's own numeric id — the public half of its token.
+
+    A Telegram token is `<bot_id>:<secret>`. The id before the colon is not a
+    credential: it is in every message the bot sends. Splitting it out lets us
+    catch a misconfiguration offline (see `misconfigured`).
+    """
+    return (token or "").split(":", 1)[0].strip()
+
+
+def misconfigured(repo_root):
+    """A configuration error that no network call is needed to see.
+
+    `status()` reports whether the two variables are SET, which is not the same
+    as whether they can work — and the gap is not theoretical. Setting
+    `TELEGRAM_CHAT_ID` to the id in front of the colon in the bot token is an
+    easy mistake (both are long numbers printed near each other by BotFather),
+    and it is always wrong: it asks the bot to message itself, which Telegram
+    answers with a bare 403 that names no cause.
+
+    Returns a sentence, or "" when nothing is provably wrong.
+    """
+    cfg = config(repo_root)
     token = os.environ.get(cfg["token_env"], "").strip()
     chat_id = os.environ.get(cfg["chat_id_env"], "").strip()
     if not token or not chat_id:
-        return False, "credentials not set"
+        return ""
+    if chat_id == bot_id(token):
+        return ("%s is set to the bot's own id, so every send is a bot "
+                "messaging itself and Telegram answers 403. Set it to YOUR "
+                "chat id — `kanban notify chat-id` prints it."
+                % cfg["chat_id_env"])
+    return ""
 
-    url = "%s/bot%s/sendMessage" % (TELEGRAM_API, token)
-    body = urllib.parse.urlencode({
-        "chat_id": chat_id,
-        "text": text[:4000],          # Telegram's own limit is 4096
-        "disable_web_page_preview": "true",
-    }).encode("utf-8")
+
+def api_call(cfg, method, params, opener=None):
+    """One Bot API call. Returns `(result, detail)`. Never raises.
+
+    **`detail` is the success signal, not `result`.** Telegram's `ok` field
+    says whether the call worked; `result` is merely its payload, and different
+    methods return an object, a bare `true`, or nothing at all. Treating a
+    missing `result` as failure marks successful calls as failed — which is
+    exactly what `sendMessage` did here until a test caught it.
+
+    Every Telegram call in this console goes through this one function so the
+    rules about credentials hold in one place: the token is read per call, and
+    a failure reports the status code and never the URL — the URL contains the
+    token, so logging it would leak the credential into whatever read the log.
+    """
+    token = os.environ.get(cfg["token_env"], "").strip()
+    if not token:
+        return None, "%s is not set" % cfg["token_env"]
+
+    url = "%s/bot%s/%s" % (TELEGRAM_API, token, method)
+    body = urllib.parse.urlencode(
+        {k: v for k, v in params.items() if v is not None}).encode("utf-8")
     request = urllib.request.Request(
         url, data=body, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         with (opener or urllib.request.urlopen)(request, timeout=cfg["timeout"]) as resp:
             payload = json.loads(resp.read().decode("utf-8", "replace") or "{}")
-            return bool(payload.get("ok")), ""
+        if not payload.get("ok"):
+            return None, str(payload.get("description") or "telegram reported not-ok")
+        return payload.get("result"), ""
     except urllib.error.HTTPError as exc:
         # The status, never the URL: the URL contains the bot token.
-        return False, "telegram returned HTTP %s" % exc.code
+        return None, "telegram returned HTTP %s" % exc.code
     except Exception as exc:  # noqa: BLE001
-        return False, "%s" % type(exc).__name__
+        return None, "%s" % type(exc).__name__
+
+
+def _post_telegram(cfg, text, opener=None, buttons=None, chat_id=None):
+    """Send one message. Returns (ok, detail). Never raises.
+
+    `buttons` is a list of rows, each a list of `(label, callback_data)`. They
+    are what turns a notification into an answer: without them the message says
+    a run is blocked and leaves you to find a browser, which on a phone means
+    the run dies on its timeout anyway.
+    """
+    target = (chat_id or os.environ.get(cfg["chat_id_env"], "")).strip()
+    if not target:
+        return False, "credentials not set"
+
+    params = {
+        "chat_id": target,
+        "text": text[:4000],          # Telegram's own limit is 4096
+        "disable_web_page_preview": "true",
+    }
+    if buttons:
+        params["reply_markup"] = json.dumps({"inline_keyboard": [
+            [{"text": label, "callback_data": data} for label, data in row]
+            for row in buttons]})
+    _result, detail = api_call(cfg, "sendMessage", params, opener=opener)
+    return (not detail), detail
+
+
+def edit_message(cfg, chat_id, message_id, text, opener=None):
+    """Replace a sent message's text and drop its buttons.
+
+    Called once a decision is made. A button that has already been used but
+    still looks live invites a second tap, and the second tap hits an approval
+    that is no longer pending — so the honest thing is to remove the buttons
+    and say what happened.
+    """
+    return api_call(cfg, "editMessageText", {
+        "chat_id": chat_id, "message_id": message_id,
+        "text": text[:4000], "disable_web_page_preview": "true",
+    }, opener=opener)
+
+
+def answer_callback(cfg, callback_id, text="", opener=None):
+    """Stop the spinner on a tapped button.
+
+    Telegram shows a loading state on an inline button until this is called.
+    Skipping it leaves the button spinning for ~15s even when the action
+    already succeeded, which reads as a hang.
+    """
+    return api_call(cfg, "answerCallbackQuery", {
+        "callback_query_id": callback_id, "text": text[:200],
+    }, opener=opener)
 
 
 CHANNELS = {"telegram": _post_telegram}
@@ -156,12 +257,17 @@ def discover_chat_ids(repo_root, opener=None):
     return rows, ""
 
 
-def send(repo_root, kind, text, *, opener=None, block=False):
+def send(repo_root, kind, text, *, opener=None, block=False, buttons=None,
+         chat_id=None):
     """Deliver `text` if this kind is enabled. Returns a small result dict.
 
     Fires on a daemon thread by default so a slow or hanging provider cannot
     add latency to an agent turn. `block=True` is for tests and for the CLI,
     where there is no turn to protect and the caller wants the answer.
+
+    `buttons` reaches the channel unchanged; a channel that has no concept of
+    them ignores the argument rather than failing, which is what keeps
+    `CHANNELS` a seam other services can be added to.
     """
     cfg = config(repo_root)
     if not cfg["enabled"]:
@@ -172,12 +278,13 @@ def send(repo_root, kind, text, *, opener=None, block=False):
     if channel is None:
         return {"sent": False, "reason": "unknown channel %r" % cfg["channel"]}
 
+    kw = {"opener": opener, "buttons": buttons, "chat_id": chat_id}
     if block:
-        ok, detail = channel(cfg, text, opener=opener)
+        ok, detail = channel(cfg, text, **kw)
         return {"sent": ok, "reason": detail}
 
-    threading.Thread(target=channel, args=(cfg, text),
-                     kwargs={"opener": opener}, daemon=True).start()
+    threading.Thread(target=channel, args=(cfg, text), kwargs=kw,
+                     daemon=True).start()
     return {"sent": True, "reason": "dispatched"}
 
 
@@ -213,4 +320,63 @@ def approval_message(tool, tool_input, preview, timeout, chat_title=""):
         lines.append(_shorten(json.dumps(tool_input or {}, default=str), 300))
 
     lines.append("Denies in %ds if nobody answers." % int(timeout or 0))
+    return "\n".join(lines)
+
+
+#: Prefix for approval callbacks. Telegram caps `callback_data` at 64 BYTES and
+#: silently rejects the whole keyboard past it, so the budget is worth stating:
+#: "ap:" + at most "session" + ":" + a 12-hex key = 23 bytes. The key comes from
+#: `uuid4().hex[:12]`, so this cannot drift without that changing too.
+CALLBACK_PREFIX = "ap:"
+CALLBACK_MAX = 64
+
+
+def approval_buttons(key, session_offer=True):
+    """Allow once / allow for this chat / deny, as one row plus one.
+
+    The three map exactly onto what `agent_approvals.REGISTRY.decide` already
+    accepts, so answering from a phone runs the same code as answering from the
+    browser — no second decision path to keep in step.
+    """
+    row = [("✅ Allow once", CALLBACK_PREFIX + "allow:" + key)]
+    if session_offer:
+        row.append(("✅ Allow for this chat", CALLBACK_PREFIX + "session:" + key))
+    return [row, [("❌ Deny", CALLBACK_PREFIX + "deny:" + key)]]
+
+
+def parse_callback(data):
+    """`ap:allow:<key>` → `("allow", "<key>")`, or `(None, "")`."""
+    text = str(data or "")
+    if not text.startswith(CALLBACK_PREFIX):
+        return None, ""
+    parts = text[len(CALLBACK_PREFIX):].split(":", 1)
+    if len(parts) != 2 or parts[0] not in ("allow", "session", "deny"):
+        return None, ""
+    return parts[0], parts[1]
+
+
+def turn_end_message(title, agent, model, turns, cost_usd, error=False):
+    """"Your run finished" — the other reason to look at a phone.
+
+    Cost is omitted rather than shown as $0.00 when nothing reported one: a
+    zero that means "unknown" is the single misreading the cost rules in this
+    console exist to prevent.
+    """
+    head = "Run failed" if error else "Run finished"
+    lines = ["%s: %s" % (head, _shorten(title or "(untitled)", 90))]
+    facts = [f for f in (agent, model, "%d turn%s" % (turns, "" if turns == 1 else "s")
+                         if turns else "") if f]
+    if cost_usd:
+        facts.append("$%.4f" % cost_usd)
+    if facts:
+        lines.append(" · ".join(facts))
+    return "\n".join(lines)
+
+
+def job_error_message(verb, ticket, error):
+    """A scheduled job died. Nobody is watching a 3am job by definition."""
+    lines = ["Job failed: %s" % (verb or "?")]
+    if ticket:
+        lines.append("ticket %s" % ticket)
+    lines.append(_shorten(error, 300))
     return "\n".join(lines)

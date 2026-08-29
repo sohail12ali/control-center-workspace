@@ -45,7 +45,11 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # An outbound call made with the workspace's credentials. Reading
            # the cached catalogue is a read and is not recorded; re-fetching
            # leaves this machine, which is the line everything else here draws.
-           "models.refresh")
+           "models.refresh",
+           # Inbound Telegram. `rejected` is the more important of the two:
+           # a bot token addresses a public endpoint, so a stranger probing it
+           # is a thing that happens, and this is the only place it is visible.
+           "telegram.command", "telegram.rejected")
 
 
 def audit_dir(repo_root):

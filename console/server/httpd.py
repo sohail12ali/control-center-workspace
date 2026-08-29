@@ -306,6 +306,13 @@ def serve(repo_root=None, host=None, port=None):
     # scheduler nobody can see running is a scheduler nobody trusts.
     ticker = _start_scheduler(repo_root)
 
+    # Inbound Telegram, for the same reason as the scheduler: it belongs to the
+    # server's lifetime rather than to a tab, and it is stated out loud because
+    # a process quietly accepting remote commands is one nobody should have to
+    # guess about.
+    from . import telegram_bot
+    poller = telegram_bot.start(repo_root, server_port=port)
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -313,6 +320,8 @@ def serve(repo_root=None, host=None, port=None):
     finally:
         if ticker is not None:
             ticker.stop()
+        if poller is not None:
+            poller.stop()
         httpd.server_close()
         # Agent sessions are child processes of this server. Without this they
         # survive it — still running, still holding their transcript files

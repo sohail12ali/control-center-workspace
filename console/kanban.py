@@ -180,6 +180,35 @@ def cmd_notify_test(args, repo_root):
         sys.exit(1)
 
 
+def cmd_notify_who(args, repo_root):
+    """Who has messaged this bot, and would the console listen to them.
+
+    A dry run: it reads pending updates and answers the only question that
+    matters when setting the allowlist up — "is my id on it yet" — without
+    acting on a single message. Setting `TELEGRAM_ALLOWED_USERS` otherwise
+    means editing a variable, restarting, and guessing from silence.
+    """
+    from server import telegram_bot
+    cfg = notify.config(repo_root)
+    result, detail = notify.api_call(cfg, "getUpdates", {"offset": -1,
+                                                         "timeout": 0})
+    if detail:
+        _die(detail)
+
+    listed = telegram_bot.allowed_users(repo_root)
+    print("allowlist: %s" % (", ".join(sorted(listed)) if listed
+                             else "EMPTY — the bot answers nobody"))
+    if telegram_bot.allow_all(repo_root):
+        print("allow-all: ON — anyone who finds this bot can drive it")
+    if not result:
+        _die("no pending updates — send the bot a message, then re-run.")
+    for update in result:
+        uid, name = telegram_bot.identity(update)
+        ok, why = telegram_bot.authorize(repo_root, uid)
+        print("%-16s %-20s %s" % (uid, name or "-",
+                                  "ALLOWED" if ok else "denied (%s)" % why))
+
+
 def cmd_notify_chat_id(args, repo_root):
     """Print the chat ids that have talked to this bot, so one can be copied."""
     rows, error = notify.discover_chat_ids(repo_root)
@@ -639,6 +668,8 @@ def build_parser():
     p = noti_sub.add_parser("test", help="send one real message")
     p.add_argument("--text")
     p.set_defaults(func=cmd_notify_test)
+    p = noti_sub.add_parser("who", help="who may drive the bot (dry run)")
+    p.set_defaults(func=cmd_notify_who)
 
     sched = sub.add_parser("schedule", help="cron-driven verbs (the console is the clock)")
     sched_sub = sched.add_subparsers(dest="schedule_cmd", required=True)

@@ -100,9 +100,14 @@ class Approvals:
         if repo_root:
             try:
                 from . import notify
+                # Buttons, so the answer can happen where the notification
+                # arrived. Without them the message says a run is blocked and
+                # leaves you to find a browser — which on a phone means the
+                # run dies on this same timeout regardless.
                 notify.send(repo_root, "approval",
                             notify.approval_message(tool, tool_input, preview,
-                                                    timeout, chat_title=title))
+                                                    timeout, chat_title=title),
+                            buttons=notify.approval_buttons(key))
             except Exception:  # noqa: BLE001
                 pass
 

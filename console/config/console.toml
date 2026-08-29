@@ -60,8 +60,30 @@ token_env   = "TELEGRAM_BOT_TOKEN"
 chat_id_env = "TELEGRAM_CHAT_ID"
 # "approval" is the one that matters. A phone that buzzes for everything gets
 # muted, and then it buzzes for nothing.
-events      = ["approval"]
+#   approval   a gated tool is waiting on a human
+#   turn_end   a run finished (or failed)
+#   job_error  a scheduled job died — by definition nobody was watching
+events      = ["approval", "turn_end", "job_error"]
 timeout     = 8
+
+# --- inbound: answering from the phone, not just being told ------------------
+# Off by default, and it should stay off unless you have set the allowlist.
+#
+# With this on, tapping a button answers a parked approval — including
+# `run_command`, which runs a shell command on this machine. The allowlist is
+# then the ONLY thing between a Telegram message and that shell, because a bot
+# token addresses a public endpoint that anyone who finds it can message.
+#
+# TELEGRAM_ALLOWED_USERS is a comma-separated list of numeric Telegram USER
+# ids (not chat ids) — `kanban notify chat-id` prints yours. It is FAIL-CLOSED:
+# empty or unset means the bot answers nobody. That is deliberate; treating an
+# empty list as "everyone" is how a pasted token becomes a remote shell.
+inbound              = false
+allowed_users_env    = "TELEGRAM_ALLOWED_USERS"
+# Development only. Named so it cannot be set by accident, and announced at
+# every start when it is on.
+allow_all_users_env  = "TELEGRAM_ALLOW_ALL_USERS"
+poll_timeout         = 25
 
 # Who asked the console to start work or change state, and from where.
 # Records only actions that DO something — starting a chat, running or queuing

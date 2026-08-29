@@ -264,7 +264,28 @@ class BaseSession:
             self.tokens_out += turn_out
             self._turn_in = self._turn_out = 0
             self._record_turn(ev, turn_in, turn_out)
+            self._notify_turn_end(ev)
             self._on_turn_end()
+
+    def _notify_turn_end(self, ev):
+        """Tell a phone the run finished.
+
+        Here rather than in either transport because every transport funnels
+        through `_observe` — the CLI sessions by reading their own stream, and
+        `agent_api_session` by calling this method directly — so one hook
+        covers both kinds of agent.
+
+        Best-effort and never raised: a notification that cannot be delivered
+        must not fail the turn it is describing.
+        """
+        try:
+            from . import notify
+            notify.send(self.cwd, "turn_end", notify.turn_end_message(
+                self.title, self.agent, self.model,
+                int(ev.get("num_turns") or 0), self.cost_usd,
+                error=bool(ev.get("is_error"))))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _record_turn(self, ev, turn_in, turn_out):
         """Persist this turn's measurement.

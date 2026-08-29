@@ -282,6 +282,20 @@ class JobQueue:
             job["result"] = result
             job["finished"] = _now()
             self._write(job)
+            verb, ticket = job["verb"], job.get("ticket") or ""
+
+        # Only on ERROR, and deliberately never on `interrupted`: that state
+        # exists precisely because nobody knows whether the work failed, and a
+        # message saying it did would assert something untrue. A scheduled job
+        # dying at 3am is the case this notification is for — by definition
+        # nobody is watching the board.
+        if state == ERROR:
+            try:
+                from . import notify
+                notify.send(self.repo_root, "job_error",
+                            notify.job_error_message(verb, ticket, error))
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- reading -----------------------------------------------------------
     def get(self, job_id):
