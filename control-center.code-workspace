@@ -3,27 +3,6 @@
 		{
 			"name": "control center",
 			"path": "."
-		},
-		{
-			"path": "../../shoplc-workspace/lc-wms-cursor-config"
-		},
-		{
-			"path": "../deepseek-harness"
-		},
-		{
-			"path": "../prime-agent"
-		},
-		{
-			"path": "../skills"
-		},
-		{
-			"path": "../Understand-Anything"
-		},
-		{
-			"path": "../pi"
-		},
-		{
-			"path": "../hermes-agent"
 		}
 	],
 	"settings": {}
