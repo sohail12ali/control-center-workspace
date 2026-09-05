@@ -1,0 +1,458 @@
+# Desktop feature registry — tray, hotkeys, and Settings all project this file.
+# Schema is documented in knowledge-center/wiki/desktop-assistant.md
+# (Tray as the desktop control surface). Do not grow the tray independently.
+#
+# Each [[features]] row:
+#   id                 stable key; tray rows and hotkeys share this id
+#   label              menu text
+#   phase              1 shell · 2 capture/multimodal · 3 local STT · 4 clipboard/OCR
+#                      · 5 actuation · 6 watch
+#   group              window | listen | session | clipboard | capture | speak | watch | quit
+#   risk               none | gated | dangerous
+#   requires           capability tags the host must have:
+#                      live_chat | stt_local | webview_speech | clipboard_read | capture
+#   tray               show | hide | submenu | header
+#   available          host can actually perform this from the tray today
+#   enabled_default    off for mic, clipboard-read, capture, actuation
+#   skeleton           first tray ticket (T-002) wires only these
+#   never_one_click    tray may open the window / start listen; it must not approve
+#   parent             submenu owner id (optional)
+#   reason_unavailable shown when available=false (same honesty as voice.js)
+#   hotkey             empty = unbound; Settings stores desktop.hotkey.{id}
+
+[meta]
+schema_version = 1
+webview_speech_from_tray = false  # vendor STT from the tray needs an explicit later accept
+
+[projection]
+# Console Settings tab, desktop-only section (html.in-shell). Browser hides it.
+settings_section = "desktop"
+unavailable = "disabled"           # hide | disabled — default matches voice.js
+prefs_prefix = "desktop.feature."  # C.prefs: desktop.feature.{id} = bool (clutter)
+left_click_pref = "desktop.tray.left_click"          # show_window | listen_toggle
+left_click_default = "show_window"
+close_window_pref = "desktop.window.close_action"    # hide_to_tray | quit
+close_window_default = "hide_to_tray"
+hide_unavailable_pref = "desktop.tray.hide_unavailable"
+hotkey_pref_prefix = "desktop.hotkey."               # desktop.hotkey.{id}
+
+# ---------------------------------------------------------------------------
+# Header (not a button) — cloud consent reminder
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "session_backend"
+label = "Current chat backend"
+phase = 1
+group = "session"
+risk = "none"
+requires = ["live_chat"]
+tray = "header"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Window
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "show_window"
+label = "Show window"
+phase = 1
+group = "window"
+risk = "none"
+requires = []
+tray = "show"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+[[features]]
+id = "open_last_chat"
+label = "Open last chat"
+phase = 1
+group = "window"
+risk = "none"
+requires = ["live_chat"]
+tray = "hide"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Not in the tray skeleton; Settings can surface it later"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Listen — three modes; do not collapse into one mic item
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "listen_mode"
+label = "Listening"
+phase = 3
+group = "listen"
+risk = "none"
+requires = ["stt_local"]
+tray = "submenu"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+hotkey = ""
+
+[[features]]
+id = "listen_off"
+label = "Off"
+phase = 3
+group = "listen"
+risk = "none"
+requires = []
+tray = "show"
+parent = "listen_mode"
+available = false
+enabled_default = true
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+hotkey = ""
+
+[[features]]
+id = "listen_short_take"
+label = "Short take"
+phase = 3
+group = "listen"
+risk = "none"
+requires = ["stt_local", "live_chat"]
+tray = "show"
+parent = "listen_mode"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+hotkey = ""
+
+[[features]]
+id = "listen_hands_free"
+label = "Hands-free"
+phase = 3
+group = "listen"
+risk = "gated"
+requires = ["stt_local", "live_chat"]
+tray = "show"
+parent = "listen_mode"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 3 local STT plus VAD and barge-in"
+hotkey = ""
+
+[[features]]
+id = "dictate"
+label = "Dictate"
+phase = 3
+group = "listen"
+risk = "none"
+requires = ["stt_local"]
+tray = "show"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 3 local STT. Web Speech from the tray is off unless explicitly accepted"
+hotkey = ""
+
+[[features]]
+id = "mic_muted"
+label = "Mic muted"
+phase = 3
+group = "listen"
+risk = "none"
+requires = []
+tray = "hide"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Distinct from listening-off; not in the root menu until listen exists"
+hotkey = ""
+
+[[features]]
+id = "pause_listen_on_permission"
+label = "Pause listening when a permission card is open"
+phase = 3
+group = "listen"
+risk = "none"
+requires = ["stt_local"]
+tray = "hide"
+available = false
+enabled_default = true
+skeleton = false
+never_one_click = false
+reason_unavailable = "Behaviour flag, not a menu row. Lands with phase 3"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Session — no free-text box in the tray
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "new_chat"
+label = "New chat"
+phase = 1
+group = "session"
+risk = "none"
+requires = ["live_chat"]
+tray = "show"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+[[features]]
+id = "saved_prompts"
+label = "Saved prompts"
+phase = 1
+group = "session"
+risk = "none"
+requires = ["live_chat"]
+tray = "submenu"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Optional clutter. Settings may enable a short tell-it-to list later"
+hotkey = ""
+
+[[features]]
+id = "interrupt"
+label = "Interrupt current turn"
+phase = 1
+group = "session"
+risk = "none"
+requires = ["live_chat"]
+tray = "show"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Clipboard — write vs gated read
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "clipboard_menu"
+label = "Clipboard"
+phase = 4
+group = "clipboard"
+risk = "none"
+requires = []
+tray = "submenu"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 4"
+hotkey = ""
+
+[[features]]
+id = "clipboard_copy_last"
+label = "Copy last reply"
+phase = 4
+group = "clipboard"
+risk = "none"
+requires = ["live_chat"]
+tray = "show"
+parent = "clipboard_menu"
+available = false
+enabled_default = true
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 4 clipboard write"
+hotkey = ""
+
+[[features]]
+id = "clipboard_send"
+label = "Send clipboard…"
+phase = 4
+group = "clipboard"
+risk = "gated"
+requires = ["clipboard_read", "live_chat"]
+tray = "show"
+parent = "clipboard_menu"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Needs phase 4. Tray must not approve; in-chat Permission needed gate"
+hotkey = ""
+
+[[features]]
+id = "clipboard_attach_no_send"
+label = "Attach clipboard as context, do not send yet"
+phase = 4
+group = "clipboard"
+risk = "gated"
+requires = ["clipboard_read"]
+tray = "hide"
+parent = "clipboard_menu"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Optional. Same gate as clipboard-read"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Capture — destination chip still required; never screenshot-to-cloud one-click
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "capture_this_turn"
+label = "This turn includes screenshot"
+phase = 2
+group = "capture"
+risk = "gated"
+requires = ["capture", "live_chat"]
+tray = "show"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Needs phase 2 multimodal send. Grey until wired. Destination chip still required"
+hotkey = ""
+
+[[features]]
+id = "capture_region"
+label = "Region"
+phase = 2
+group = "capture"
+risk = "gated"
+requires = ["capture"]
+tray = "show"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Needs phase 2 region capture. Grey until wired"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Speak / quiet
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "mute_replies"
+label = "Mute replies"
+phase = 1
+group = "speak"
+risk = "none"
+requires = []
+tray = "show"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+[[features]]
+id = "dnd"
+label = "Do not disturb"
+phase = 1
+group = "speak"
+risk = "none"
+requires = []
+tray = "hide"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Optional. Reuse notify-local if it fits; not in the root menu"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Watch (phase 6) — hard visual indicator required
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "watch_toggle"
+label = "Watch"
+phase = 6
+group = "watch"
+risk = "gated"
+requires = ["capture"]
+tray = "show"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = false
+reason_unavailable = "Needs phase 6. Icon must show watch-on; never silent"
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Quit
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "quit"
+label = "Quit"
+phase = 1
+group = "quit"
+risk = "none"
+requires = []
+tray = "show"
+available = true
+enabled_default = true
+skeleton = true
+never_one_click = false
+reason_unavailable = ""
+hotkey = ""
+
+# ---------------------------------------------------------------------------
+# Never tray one-click (in-chat Permission needed only)
+# ---------------------------------------------------------------------------
+
+[[features]]
+id = "act_uia_click"
+label = "UIA click"
+phase = 5
+group = "session"
+risk = "dangerous"
+requires = []
+tray = "hide"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Actuation stays behind the in-chat Permission needed gate"
+hotkey = ""
+
+[[features]]
+id = "act_app_launch"
+label = "App launch"
+phase = 5
+group = "session"
+risk = "dangerous"
+requires = []
+tray = "hide"
+available = false
+enabled_default = false
+skeleton = false
+never_one_click = true
+reason_unavailable = "Allowlist launch stays behind the in-chat Permission needed gate"
+hotkey = ""

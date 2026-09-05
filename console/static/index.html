@@ -25,6 +25,11 @@
         <span class="dot"></span><span class="stext" id="connText">live</span>
       </span>
       <button class="btn sm iconly" id="refreshBtn" title="Reload this tab" aria-label="Reload this tab"></button>
+      <div class="win-controls" id="winControls" hidden>
+        <button type="button" class="win-btn" id="winMin" title="Minimize" aria-label="Minimize"></button>
+        <button type="button" class="win-btn" id="winMax" title="Maximize" aria-label="Maximize"></button>
+        <button type="button" class="win-btn win-close" id="winClose" title="Close" aria-label="Close"></button>
+      </div>
     </div>
     <nav class="tabs" id="tabs" role="tablist" aria-label="Console sections"></nav>
   </header>
@@ -34,10 +39,12 @@
 <!-- Icons first: core.js and every tab build DOM with them. -->
 <script src="icons.js"></script>
 <script src="core.js"></script>
+<script src="desktop-chrome.js"></script>
 <!-- Chat plumbing: markdown, voice, SSE store, transcript renderer. Loaded
      before the tabs so agents.js can use them at registration time. -->
 <script src="chat-md.js"></script>
 <script src="voice.js"></script>
+<script src="desktop-tray.js"></script>
 <script src="chat-store.js"></script>
 <script src="chat-render.js"></script>
 <!-- Command palette: needs core for DOM + fetch, and is called by app.js's

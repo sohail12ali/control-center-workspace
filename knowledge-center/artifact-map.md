@@ -4,6 +4,9 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
+- [[T-001-summary]] — Native desktop shell spike wrapping the Delivery Console — Verify — Sohail Ali — 2026-09-05
+- [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Verify — Sohail Ali — 2026-09-05
+
 ## Blocked
 
 ## Completed

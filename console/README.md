@@ -11,6 +11,14 @@ Not implemented (by explicit choice, not oversight): **Migrations**/**Releases**
 boards (present in config, disabled by default — see Config below) and
 **Projects**/**Files** tabs (not built at all in this template).
 
+This stdlib server also does **not** capture the desktop, run OCR, drive
+mouse/keyboard, or keep a private microphone. A browser tab on `127.0.0.1`
+cannot do those things; live chat `/send` is text-only. Screen, voice, and
+OS control belong in a planned native shell that wraps this UI and reuses
+the Agents backends — see
+`knowledge-center/wiki/desktop-assistant.md`. Windows shell spike:
+`desktop/README.md`.
+
 ## Onboarding
 
 `python console/kanban.py onboard` (and the "Getting started" card on

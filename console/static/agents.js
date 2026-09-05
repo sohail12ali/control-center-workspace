@@ -763,6 +763,7 @@
     paintRail();
     showMain(true);
     paintMain();
+    emitTray("");
   }
 
   /* Narrow-window pane swap: opening a chat shows it, Back returns to the
@@ -964,6 +965,7 @@
             .catch(function (e) { C.toast(e.message, "err"); });
         } }, [C.icon("trash")]),
     ]);
+    emitTray(meta.agent);
   }
 
   /* Budget pressure, for a chat whose loop this console is running.
@@ -1201,6 +1203,7 @@
           cb.addEventListener("change", function () {
             Voice.setPrefs({ autoRead: cb.checked });
             if (!cb.checked) Voice.stopSpeaking();
+            emitTray();
           });
           return cb;
         })(),
@@ -1359,6 +1362,62 @@
       });
   }
 
+  function emitTray(backend) {
+    if (!window.ConsoleDesktopTray || !ConsoleDesktopTray.emitSession) return;
+    var agent = backend;
+    if (agent === undefined) {
+      agent = "";
+      if (st.store && st.store.state) {
+        var meta = st.store.state.snapshot || st.store.state.meta || {};
+        agent = meta.agent || "";
+      }
+    }
+    ConsoleDesktopTray.emitSession(agent || "");
+  }
+
+  function busyChatId() {
+    if (st.store && st.store.state && st.store.state.busy && st.sel) return st.sel;
+    var list = st.chats || [];
+    var hit = list.filter(function (c) { return c.busy; })[0];
+    return hit ? hit.id : "";
+  }
+
+  function trayInterrupt() {
+    if (window.ConsoleApp && ConsoleApp.go) ConsoleApp.go("agents");
+    function post(id) {
+      if (!id) {
+        C.toast("Nothing is running", "warn");
+        return;
+      }
+      C.post("/api/agents/chats/" + encodeURIComponent(id) + "/interrupt", {})
+        .catch(function (e) { C.toast(e.message, "err"); });
+    }
+    var id = busyChatId();
+    if (id) { post(id); return; }
+    C.get("/api/agents/chats").then(function (d) {
+      var hit = (d.chats || []).filter(function (c) { return c.busy; })[0];
+      post(hit ? hit.id : "");
+    }).catch(function (e) { C.toast(e.message, "err"); });
+  }
+
+  /* Called from the native tray via window.eval. Ids match desktop/features.toml. */
+  function trayAction(id) {
+    if (id === "new_chat") {
+      if (window.ConsoleApp && ConsoleApp.go) ConsoleApp.go("agents");
+      newChat();
+      return;
+    }
+    if (id === "mute_on" || id === "mute_off") {
+      var muted = id === "mute_on";
+      Voice.setPrefs({ autoRead: !muted });
+      if (muted) Voice.stopSpeaking();
+      emitTray();
+      if (st.mode === "chat" && st.repaintChat) st.repaintChat();
+      return;
+    }
+    if (id === "interrupt") trayInterrupt();
+  }
+
   /* Handoff from elsewhere in the console (the ticket drawer's "Start
      agent"). Stored rather than acted on immediately: the tab may not be
      mounted yet, and render() picks it up when it is. One-shot — cleared on
@@ -1367,6 +1426,7 @@
     compose: function (payload) {
       st.pending = payload || null;
     },
+    trayAction: trayAction,
   };
 
   C.tab("agents", {

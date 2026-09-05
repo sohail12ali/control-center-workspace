@@ -280,6 +280,38 @@ svg.ico { width: 15px; height: 15px; flex: none; stroke-width: 1.9; }
   min-width: 0;
 }
 
+/* Desktop shell only (html.in-shell from the Tauri host). Browser stays
+   unchanged: .win-controls stays hidden and there is no extra padding. */
+html.in-shell.os-mac .brandrow { padding-left: 78px; }
+html.in-shell:not(.os-mac) .brandrow { padding-right: 0; }
+
+.win-controls {
+  display: none;
+  align-items: stretch;
+  align-self: stretch;
+  height: 100%;
+  margin-left: 4px;
+  flex: none;
+}
+html.in-shell:not(.os-mac) .win-controls { display: flex; }
+
+.win-btn {
+  width: 46px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.win-btn svg.ico { width: 12px; height: 12px; }
+.win-btn:hover { background: var(--surface-hi); color: var(--ink); }
+.win-btn.win-close:hover { background: #e81123; color: #fff; }
+
 .brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .brand h1 { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand .brand-sub { color: var(--ink-3); font-size: 12px; white-space: nowrap; }

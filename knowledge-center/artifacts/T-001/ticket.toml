@@ -1,0 +1,14 @@
+[ticket]
+id = "T-001"
+title = "Native desktop shell spike wrapping the Delivery Console"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-05"
+updated = "2026-09-05"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
