@@ -54,6 +54,9 @@ onboard [--json]        first-run setup steps, ending at the requirements pipeli
 serve [--host H] [--port N]
 export --out DIR
 refresh [--quiet]
+reset [--yes] [--dry-run] [--keep-logs] [--keep-investigations]
+                         wipe tickets/investigations/logs/telemetry back to an empty
+                         template — see knowledge-center/wiki/reset-to-clean-slate.md
 
 overview
 todos [--status S] [--owner O]

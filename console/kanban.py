@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime  # noqa: E402
 
-from server import agent_backends, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
+from server import agent_backends, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
@@ -459,6 +459,27 @@ def cmd_export(args, repo_root):
     print(f"exported to {path}")
 
 
+def cmd_reset(args, repo_root):
+    actions = reset_mod.plan(repo_root, keep_logs=args.keep_logs, keep_investigations=args.keep_investigations)
+    if not actions:
+        print("reset: nothing to do — already a clean slate")
+        return
+    print("reset would:")
+    for kind, path in actions:
+        verb = {"rmtree": "delete", "remove": "delete", "write": "reset"}[kind]
+        print(f"  {verb}  {os.path.relpath(path, repo_root)}")
+    if args.dry_run:
+        print("\ndry run - nothing changed. Re-run with --yes to apply.")
+        return
+    if not args.yes:
+        reply = input(f"\nThis deletes {len(actions)} path(s) and cannot be undone. Type 'reset' to continue: ")
+        if reply.strip() != "reset":
+            print("aborted")
+            return
+    reset_mod.run(repo_root, apply=True, keep_logs=args.keep_logs, keep_investigations=args.keep_investigations)
+    print(f"\ndone - {len(actions)} path(s) reset.")
+
+
 def cmd_refresh(args, repo_root):
     # Cheap re-index: touch every board's ticket list once so a broken
     # config/data file surfaces immediately instead of silently on next use.
@@ -630,6 +651,13 @@ def build_parser():
     p = sub.add_parser("export")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("reset", help="wipe tickets/investigations/logs/telemetry back to an empty template")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.add_argument("--dry-run", action="store_true", help="print the plan and exit without changing anything")
+    p.add_argument("--keep-logs", action="store_true", help="keep knowledge-center/logs/ daily logs")
+    p.add_argument("--keep-investigations", action="store_true", help="keep knowledge-center/investigations/")
+    p.set_defaults(func=cmd_reset)
 
     p = sub.add_parser("refresh")
     p.add_argument("--quiet", action="store_true")
