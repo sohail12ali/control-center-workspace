@@ -55,6 +55,15 @@ DEFAULTS = {
     "reply_chars": 400,         # spoken-form cap
     "ticket_prefix": "T-",
 
+    # -- the tray (T-009) ----------------------------------------------------
+    # What ONE left-click on the tray icon does. "listen" is state-aware: talk
+    # when idle, send the take you are in the middle of, stop a reply being
+    # read aloud, and show the window when only a human can help (a permission
+    # card, or a turn already in flight). "show" restores the plain
+    # open-the-window behaviour for anyone who expects a tray click to do that,
+    # and "hands_free" makes the icon an arm/disarm switch.
+    "tray_click_action": "listen",
+
     # -- hands-free (T-008) --------------------------------------------------
     # An always-on microphone is a different proposition from push-to-talk, so
     # every one of these defaults to the cautious answer.
@@ -74,12 +83,17 @@ DEFAULTS = {
     "hands_free_max_minutes": 30,
 }
 
+#: The three things a tray click can mean. Validated rather than free text:
+#: an unrecognised value would leave the icon doing nothing, with the setting
+#: looking as if it had been accepted.
+TRAY_CLICK_ACTIONS = ("listen", "show", "hands_free")
+
 #: Keys a POST may change. `vision_models` is excluded on purpose: it is a
 #: capability statement about models, which belongs in the committed file
 #: where it can be reviewed, not in a per-machine override.
 WRITABLE = frozenset({
     "backend", "model", "mode", "session_idle_minutes", "speak",
-    "reply_chars", "ticket_prefix",
+    "reply_chars", "ticket_prefix", "tray_click_action",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
@@ -185,6 +199,9 @@ def update(repo_root, patch, installed_backends=()):
         raise ValueError("session_idle_minutes must be at least 1")
     if "reply_chars" in clean and clean["reply_chars"] < 1:
         raise ValueError("reply_chars must be at least 1")
+    if "tray_click_action" in clean and clean["tray_click_action"] not in TRAY_CLICK_ACTIONS:
+        raise ValueError("tray_click_action must be one of: %s"
+                         % ", ".join(TRAY_CLICK_ACTIONS))
     if "hands_free_max_minutes" in clean and clean["hands_free_max_minutes"] < 1:
         raise ValueError("hands_free_max_minutes must be at least 1")
     if "hands_free_wake_word" in clean:

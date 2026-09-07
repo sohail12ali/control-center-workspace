@@ -18,6 +18,11 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum State {
     Idle,
+    /// The mic is open but gated: hands-free with a wake word, where audio is
+    /// transcribed locally and dropped unless it was addressed. Distinct from
+    /// `Listening` because what happens to the audio is different, and the
+    /// user is entitled to see which of the two they are in.
+    Armed,
     Listening,
     Thinking,
     Speaking,
@@ -28,6 +33,7 @@ impl State {
     pub fn as_str(self) -> &'static str {
         match self {
             State::Idle => "idle",
+            State::Armed => "armed",
             State::Listening => "listening",
             State::Thinking => "thinking",
             State::Speaking => "speaking",
@@ -50,6 +56,7 @@ macro_rules! icon_set {
 type Set = (&'static [u8], &'static [u8], &'static [u8], &'static [u8]);
 
 const IDLE: Set = icon_set!("idle");
+const ARMED: Set = icon_set!("armed");
 const LISTENING: Set = icon_set!("listening");
 const THINKING: Set = icon_set!("thinking");
 const SPEAKING: Set = icon_set!("speaking");
@@ -63,6 +70,7 @@ const MUTED: Set = icon_set!("muted");
 pub fn icon_bytes(state: State, approval: bool, template: bool) -> &'static [u8] {
     let set = match state {
         State::Idle => IDLE,
+        State::Armed => ARMED,
         State::Listening => LISTENING,
         State::Thinking => THINKING,
         State::Speaking => SPEAKING,
@@ -85,8 +93,9 @@ pub const fn wants_template() -> bool {
 mod tests {
     use super::*;
 
-    const ALL: [State; 5] = [
+    const ALL: [State; 6] = [
         State::Idle,
+        State::Armed,
         State::Listening,
         State::Thinking,
         State::Speaking,

@@ -300,6 +300,33 @@ class TestSettings:
             assistant_config.update(str(tmp_path), {key: 0})
 
 
+class TestTrayClickSetting:
+    """T-009. One left-click on the tray icon has a meaning, and this is where
+    it is chosen."""
+
+    def test_the_default_is_the_state_aware_one(self, tmp_path):
+        assert assistant_config.settings(str(tmp_path))["tray_click_action"] == "listen"
+
+    @pytest.mark.parametrize("value", ["listen", "show", "hands_free"])
+    def test_each_supported_action_round_trips(self, tmp_path, value):
+        assistant_config.update(str(tmp_path), {"tray_click_action": value})
+        assert assistant_config.settings(str(tmp_path))["tray_click_action"] == value
+
+    def test_an_unknown_action_is_refused_and_names_the_valid_ones(self, tmp_path):
+        # Stored, it would leave the icon doing nothing while the setting
+        # looked as if it had been accepted.
+        with pytest.raises(ValueError, match="listen, show, hands_free"):
+            assistant_config.update(str(tmp_path), {"tray_click_action": "sing"})
+        assert assistant_config.settings(str(tmp_path))["tray_click_action"] == "listen"
+
+    def test_the_committed_file_ships_the_same_default(self, tmp_path):
+        import server.tomlio as tomlio
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        shipped = tomlio.load(os.path.join(
+            root, "config", "assistant.toml"))["assistant"]
+        assert shipped["tray_click_action"] == assistant_config.DEFAULTS["tray_click_action"]
+
+
 class TestHandsFreeSettings:
     """T-008. These four decide how an always-on microphone behaves, so the
     thing worth testing is that the shipped answer is the cautious one and

@@ -18,7 +18,7 @@ built shell against a real microphone.
 | 3 | Whole-word wake match at the start, tolerant of punctuation and "hey"/"ok" | PASS | Unit: "Console, what's open?", "hey console …", "OK console …" match; "consolidate the tickets", "consoles are great", "the console is slow today" do not |
 | 4 | The gate holds against real recogniser output | PASS | Four phrases synthesised, spoken, and transcribed by whisper.cpp `ggml-base.en`; the exact transcripts (leading spaces, punctuation and all) are pinned in `real_whisper_transcripts_are_gated_correctly` |
 | 5 | Pauses while speaking; always while an approval is open | PASS | Unit on `should_pause`: paused while speaking by default, open on headphones (`listen_while_speaking`), and paused for an approval card even on headphones |
-| 6 | A session ends at the time cap and says why | PASS | `run()` compares elapsed against the cap and calls `stop("reached the time limit")`; the reason is readable at `GET /listen/state` as `hands_free_stopped`, live-checked as `""` while running and set on stop |
+| 6 | A session ends at the time cap and says why | PASS | Observed, not argued: a session the owner started at 11:35:13Z stopped itself at 12:05:15Z — thirty minutes to the second — with `hands-free: off (reached the time limit)` in the log and `hands_free_stopped: "reached the time limit"` on `GET /listen/state`. The microphone closed with nobody touching it |
 | 7 | Settings validate | PASS | A one-character wake word and a zero-minute cap are refused; a wake word is stored trimmed; booleans coerce from form strings; the shipped `assistant.toml` is asserted equal to `DEFAULTS` |
 | 8 | `features.toml` matches what is built | PASS | `listen_hands_free` flipped to available, pinned by the exact-set test that fails in both directions |
 
@@ -40,6 +40,21 @@ hands-free: sent "Hey console, take a screenshot."
 hands-free: stopping (asked to stop)
 hands-free: off (asked to stop)
 ```
+
+### The cap, watched
+
+Left running on the owner's machine during T-009, hands-free stopped itself at
+the thirty-minute mark and said why:
+
+```
+11:35:13Z  hands-free: on (wake word required: yes, "console")
+   ...     takes opening and being discarded, unaddressed
+12:05:15Z  hands-free: stopping (reached the time limit)
+12:05:15Z  hands-free: off (reached the time limit)
+```
+
+The point of this criterion is a microphone that closes itself when someone
+forgets about it, and that is exactly what happened, unattended.
 
 ## A bug the live run found
 

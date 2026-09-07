@@ -27,13 +27,9 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::image::Image;
 use tauri::AppHandle;
 
 use crate::tray_state::{Assistant, Event};
-
-/// Tray icon id, as built in `tray.rs`.
-const TRAY_ID: &str = "main";
 
 /// Backoff between attempts. Short enough that the tray comes alive promptly
 /// after the console starts, long enough not to spin on a closed port.
@@ -136,7 +132,7 @@ fn follow(
                 .map(|mut a| a.set_backend(&backend))
                 .unwrap_or(false);
             if changed {
-                repaint(app, assistant);
+                crate::tray_paint::repaint(assistant);
             }
         }
     }
@@ -176,43 +172,13 @@ fn backend_of(payload: &str) -> Option<String> {
     field(payload, "backend").or_else(|| field(payload, "agent"))
 }
 
-fn apply(app: &AppHandle, assistant: &Arc<Mutex<Assistant>>, event: Event) {
-    let changed = match assistant.lock() {
-        Ok(mut a) => a.apply(event),
-        Err(e) => {
-            log::warn!("tray-link: state lock poisoned: {e}");
-            return;
-        }
-    };
-    if changed {
-        repaint(app, assistant);
-    }
-}
-
-/// Push the current state onto the actual tray icon.
-fn repaint(app: &AppHandle, assistant: &Arc<Mutex<Assistant>>) {
-    let (bytes, tooltip) = match assistant.lock() {
-        Ok(a) => (a.icon(), a.tooltip()),
-        Err(_) => return,
-    };
-    let Some(tray) = app.tray_by_id(TRAY_ID) else {
-        return;
-    };
-    match Image::from_bytes(bytes) {
-        Ok(image) => {
-            if let Err(e) = tray.set_icon(Some(image)) {
-                log::warn!("tray-link: set_icon failed: {e}");
-            }
-            #[cfg(target_os = "macos")]
-            if let Err(e) = tray.set_icon_as_template(true) {
-                log::warn!("tray-link: set_icon_as_template failed: {e}");
-            }
-        }
-        Err(e) => log::warn!("tray-link: icon bytes rejected: {e}"),
-    }
-    if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
-        log::warn!("tray-link: set_tooltip failed: {e}");
-    }
+/// Fold an event in, painting through the shell's one painter.
+///
+/// Thin on purpose: this module's job is reading the stream, and where the
+/// icon comes from is `tray_paint`'s. When it lived here, everything that was
+/// not the stream — the microphone, above all — had no way to reach it.
+fn apply(_app: &AppHandle, assistant: &Arc<Mutex<Assistant>>, event: Event) {
+    crate::tray_paint::note(assistant, event);
 }
 
 #[cfg(test)]

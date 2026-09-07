@@ -36,8 +36,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::tray_state::Assistant;
-use crate::{listen, tts};
+use crate::tray_state::{Assistant, Event};
+use crate::{listen, tray_paint, tts};
 
 /// Whether the loop should keep going. Also what `stop()` clears.
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -94,6 +94,15 @@ pub fn stop(why: &str) {
     }
 }
 
+/// Tell the tray the microphone is open, or no longer is.
+///
+/// The bool is `require_wake`, because that is the difference the icon is
+/// reporting: a gated mic (armed) or one where everything said is sent
+/// (listening).
+fn show_armed(assistant: &Arc<Mutex<Assistant>>, on: bool, require_wake: bool) {
+    tray_paint::note(assistant, Event::Armed(on && require_wake));
+}
+
 /// Is `transcript` addressed to the assistant?
 ///
 /// Deliberately forgiving about what surrounds the wake word — a recogniser
@@ -139,7 +148,7 @@ fn starts_with_word(text: &str, wake: &str) -> bool {
 /// Falls back to the cautious defaults when the console cannot be reached,
 /// which is the right way to be wrong about an always-on microphone.
 pub fn fetch_policy(console_url: &str) -> Policy {
-    match fetch_settings(console_url) {
+    match crate::console_settings::fetch(console_url) {
         Ok(v) => {
             let get_bool = |k: &str, d: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(d);
             let d = Policy::default();
@@ -167,52 +176,6 @@ pub fn fetch_policy(console_url: &str) -> Policy {
     }
 }
 
-fn fetch_settings(console_url: &str) -> Result<serde_json::Value, String> {
-    use std::io::{BufRead, BufReader, Read, Write};
-    let rest = console_url.strip_prefix("http://").ok_or("not an http url")?;
-    let authority = rest.split('/').next().ok_or("no authority")?;
-    let (host, port) = authority.rsplit_once(':').ok_or("no port")?;
-    let port: u16 = port.parse().map_err(|_| "bad port")?;
-
-    let mut stream = std::net::TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let request = format!(
-        "GET /api/assistant/settings HTTP/1.1\r\n\
-         Host: {host}:{port}\r\n\
-         Accept: application/json\r\n\
-         Connection: close\r\n\r\n"
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| e.to_string())?;
-
-    let mut reader = BufReader::new(stream);
-    let mut status = String::new();
-    reader.read_line(&mut status).map_err(|e| e.to_string())?;
-    if !status.contains(" 200") {
-        return Err(format!("settings said {}", status.trim()));
-    }
-    loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).map_err(|e| e.to_string())?;
-        // Blank line = end of headers. Compared after trimming so this
-        // does not depend on which line ending the server used.
-        if n == 0 || line.trim().is_empty() {
-            break;
-        }
-    }
-    let mut body = String::new();
-    reader.read_to_string(&mut body).map_err(|e| e.to_string())?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(body.trim()).map_err(|e| e.to_string())?;
-    parsed
-        .get("settings")
-        .cloned()
-        .ok_or_else(|| "no settings in the answer".to_string())
-}
-
 /// Start the loop. Returns an error the caller can show if it cannot run.
 pub fn start(
     repo_root: &std::path::Path,
@@ -230,6 +193,7 @@ pub fn start(
 
     // Summarised before the policy moves into the thread.
     let summary = policy_summary(&policy);
+    show_armed(&assistant, true, policy.require_wake);
     let root = repo_root.to_path_buf();
     std::thread::Builder::new()
         .name("hands-free".into())
@@ -299,6 +263,7 @@ fn run(
     }
 
     RUNNING.store(false, Ordering::SeqCst);
+    show_armed(&assistant, false, policy.require_wake);
     log::info!("hands-free: off ({})", last_stop_reason());
 }
 

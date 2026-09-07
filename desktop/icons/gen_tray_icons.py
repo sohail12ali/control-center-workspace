@@ -44,6 +44,7 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 PALETTE = {
     "idle": (0x8A, 0x8F, 0x98),        # neutral grey - nothing happening
     "listening": (0xE5, 0x48, 0x4D),   # red - the mic is open, be obvious
+    "armed": (0xE5, 0x48, 0x4D),       # same red - the mic is open too, but gated
     "thinking": (0xF5, 0xA5, 0x24),    # amber - working
     "speaking": (0x30, 0xA4, 0x6C),    # green - talking back
     "muted": (0x8A, 0x8F, 0x98),       # grey, distinguished by the slash
@@ -200,6 +201,14 @@ def draw(state, approval=False, template=False):
         _rect(buf, cx - 0.9 * SS, cy - 0.5 * SS, cx + 0.9 * SS, cy + 4.0 * SS, INK)
         _rect(buf, cx - 4.0 * SS, cy + 4.0 * SS, cx + 4.0 * SS, cy + 5.6 * SS, INK)
 
+    elif state == "armed":
+        # Hands-free with a wake word: the mic is open, and nothing leaves the
+        # machine unless it is addressed. A hollow ring against listening's
+        # SOLID mic says exactly that much — same red, because the microphone
+        # really is open and that must never be understated, but a different
+        # shape, because what happens to the audio is different.
+        _ring(buf, cx, cy, r - 4.4 * SS, r - 7.4 * SS, INK)
+
     elif state == "thinking":
         # A ring with a gap at 12 o'clock reads as "in progress" even in a
         # still frame. The CENTRE is ink, i.e. a hole in the template
@@ -247,7 +256,7 @@ def main():
     out = os.path.normpath(OUT_DIR)
     os.makedirs(out, exist_ok=True)
     written = []
-    for state in ("idle", "listening", "thinking", "speaking", "muted"):
+    for state in ("idle", "armed", "listening", "thinking", "speaking", "muted"):
         for approval in (False, True):
             for template in (False, True):
                 name = state

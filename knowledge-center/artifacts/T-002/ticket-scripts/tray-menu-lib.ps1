@@ -25,10 +25,17 @@ function Open-TrayMenu {
   $chev = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
     (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,"Show Hidden Icons")))
   if ($chev) { $chev.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 1300 }
-  $icon = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-    (New-Object System.Windows.Automation.AndCondition(
-      (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,"Delivery Console")),
-      (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty,"SystemTray.NormalButton")))))
+  # Matched by PREFIX, not by exact name. The tray icon's accessible name is
+  # its tooltip, and since T-009 the tooltip changes with the assistant's state
+  # ("Delivery Console - listening"), so an exact match found the icon only
+  # while it happened to be idle.
+  $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+    (New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ClassNameProperty,"SystemTray.NormalButton")))
+  $icon = $null
+  foreach ($b in $buttons) {
+    if ($b.Current.Name -like "Delivery Console*") { $icon = $b; break }
+  }
   if (-not $icon) { throw "tray icon not found" }
   $r = $icon.Current.BoundingRectangle
   [T]::Click([int]($r.X+$r.Width/2), [int]($r.Y+$r.Height/2), $true)

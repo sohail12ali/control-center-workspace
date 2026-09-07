@@ -357,7 +357,8 @@ Three listen modes (keep them separate):
 | State | Meaning |
 | --- | --- |
 | idle | Not listening, not speaking, no pending approval |
-| listening | Dictate, short-take armed, or hands-free on |
+| armed | Hands-free is on with a wake word: the mic is open and gated, so the room is heard locally and dropped. Held steady rather than following each take, which would flicker |
+| listening | The mic is open and everything said is on its way out — push-to-talk, or hands-free with the wake word off |
 | speaking | TTS playing (`autoRead`) |
 | needs-approval | Permission needed card open (dot overlay). Pause listening while this is showing |
 

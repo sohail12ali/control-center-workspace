@@ -88,6 +88,12 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let header = MenuItem::with_id(handle, "session_backend", "—", false, None::<&str>)?;
     let show = MenuItem::with_id(handle, "show_window", "Show window", true, None::<&str>)?;
     let new_chat = MenuItem::with_id(handle, "new_chat", "New chat", true, None::<&str>)?;
+    // The same action as a left-click on the icon. Present on every platform
+    // because it is useful everywhere, and REQUIRED on Linux: libappindicator
+    // does not deliver a left-click to the app — any click opens this menu —
+    // so without this row the click-to-talk gesture would simply not exist
+    // there. Per-platform substitute by design, not a Linux afterthought.
+    let talk = MenuItem::with_id(handle, "listen_short_take", "Talk", true, None::<&str>)?;
     // autoRead defaults false → muted checked.
     let mute = CheckMenuItem::with_id(
         handle,
@@ -121,6 +127,7 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&header)
         .separator()
         .item(&show)
+        .item(&talk)
         .item(&new_chat)
         .item(&mute)
         .item(&hands_free_item)
@@ -144,6 +151,7 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             let id = event.id().as_ref();
             match id {
                 "show_window" => show_main(app),
+                "listen_short_take" => crate::click::act(app),
                 "new_chat" => {
                     show_main(app);
                     eval_tray(app, "new_chat");
@@ -188,7 +196,9 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = event
             {
-                show_main(tray.app_handle());
+                // What this does depends on what the assistant is doing —
+                // see `click.rs`. It used to be `show_main` unconditionally.
+                crate::click::act(tray.app_handle());
             }
         });
 

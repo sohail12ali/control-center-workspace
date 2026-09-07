@@ -4,13 +4,14 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
-- [[T-008-summary]] — Hands-free listening: wake word, echo handling, barge-in — Open — Sohail Ali — 2026-09-07
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Verify — Sohail Ali — 2026-09-05
 
 ## Blocked
 
 ## Completed
 
+- [[T-009-summary]] — Tray click-to-talk, armed icon, Assistant settings panel — Complete — Sohail Ali — 2026-09-07
+- [[T-008-summary]] — Hands-free listening: wake word, echo handling, barge-in — Complete — Sohail Ali — 2026-09-07
 - [[T-007-summary]] — Multimodal send: screenshot pixels to vision models, destination chip — Complete — Sohail Ali — 2026-09-07
 - [[T-006-summary]] — Voice: mic capture, STT, hotkey, spoken replies — Complete — Sohail Ali — 2026-09-07
 - [[T-005-summary]] — Native bridge: tray icon states, screenshot, OCR, clipboard — Complete — Sohail Ali — 2026-09-07

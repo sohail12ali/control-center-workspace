@@ -54,6 +54,18 @@ reply_chars = 400
 # Ticket id prefix, used to canonicalise a spoken id ("t dash two" -> T-002).
 ticket_prefix = "T-"
 
+# What one left-click on the tray icon does.
+#
+# "listen" is state-aware, and is the default because the icon is the nearest
+# thing to a microphone button this app has: click to talk, click again to send
+# the take without waiting for silence, click while a reply is being read to
+# stop it. When only a human can help — a permission card, or a turn already
+# running — it shows the window instead.
+#
+# "show" restores the plain open-the-window behaviour. "hands_free" makes the
+# icon an arm/disarm switch for always-on listening.
+tray_click_action = "listen"
+
 # -- hands-free listening ----------------------------------------------------
 # Off unless you turn it on from the tray. An always-on microphone is a
 # different proposition from push-to-talk, so these default to the cautious

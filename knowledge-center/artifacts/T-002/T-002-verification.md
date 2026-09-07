@@ -108,12 +108,18 @@ Live read of the release build's menu:
 ```
 
 Eight rows, exactly the five skeleton actions plus a disabled header and two
-separators — AC2 and AC3 re-confirmed against the live menu rather than the
+separators (**ten as of 2026-09-07**: T-008 added `Hands-free listening` and
+T-009 added `Talk`, the menu form of the click-to-talk gesture — Linux gets no
+left-click, so there it is the only form) — AC2 and AC3 re-confirmed against the live menu rather than the
 source. Drives performed: Mute (check flipped True→False), New chat (hidden
 window shown, no chat created), Show window (hidden→visible), Quit (host and
 owned serve both exited, port closed).
 
-Reusable helper: `ticket-scripts/tray-menu-lib.ps1` (see its README).
+Reusable helper: `ticket-scripts/tray-menu-lib.ps1` (see its README). Amended
+2026-09-07: it matched the tray icon's accessible name exactly, and that name
+is the tooltip, which since T-009 changes with the assistant's state — so it
+found the icon only while the app happened to be idle. It now matches by
+prefix.
 
 **Still on a human — one step:** row 8. Start a turn in the Agents tab, then
 right-click the tray icon and choose "Interrupt current turn"; expect the turn

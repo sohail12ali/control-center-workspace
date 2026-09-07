@@ -884,7 +884,14 @@ card: it stops a *hallucinated* call, not an unwanted one.
 ### Talking to it
 
 Click the tray icon (or press Ctrl+Alt+Space; Cmd+Option+Space on macOS) and
-speak. Recording stops when **you** stop — a voice-activity detector ends the
+speak. One click does whatever the icon is currently showing you: talk when
+idle, **send the take you are in the middle of** when it is listening (rather
+than waiting for the silence detector), stop a reply that is being read aloud,
+and open the window when only a human can help — a permission card, or a turn
+already running. Change that to plain "show the window", or to arming
+hands-free, with **Tray icon click** in Settings → Assistant. On Linux a click
+opens the menu instead (libappindicator gives the app no left-click), so the
+menu's **Talk** row is the same action there. Recording stops when **you** stop — a voice-activity detector ends the
 take after about 700 ms of silence, so there is no timer to race and no need to
 finish a sentence early. A 20-second cap applies in case the detector wedges.
 
@@ -895,7 +902,8 @@ back aloud unless muted, and the tray icon shows which state it is in:
 | Icon | Meaning |
 |---|---|
 | grey disc | idle |
-| red disc, mic glyph | listening — the microphone is open |
+| red disc, hollow ring | hands-free is armed — the microphone is open, and nothing is sent unless you say the wake word |
+| red disc, mic glyph | listening — the microphone is open and what you say is on its way out |
 | amber ring | working |
 | green disc, speaker waves | reading a reply aloud |
 | orange dot overlay | a permission card is waiting for you |

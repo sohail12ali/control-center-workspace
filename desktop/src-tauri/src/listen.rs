@@ -260,10 +260,13 @@ fn split_host_port(url: &str) -> Option<(String, u16)> {
     Some((host.to_string(), port.parse().ok()?))
 }
 
+/// Tell the tray what just happened.
+///
+/// Through `tray_paint` rather than straight into the state machine: this used
+/// to apply the event and stop, so the mic could open with the icon still
+/// showing idle until something else repainted it.
 fn note(assistant: &Arc<Mutex<Assistant>>, event: Event) {
-    if let Ok(mut a) = assistant.lock() {
-        a.apply(event);
-    }
+    crate::tray_paint::note(assistant, event);
 }
 
 #[cfg(test)]

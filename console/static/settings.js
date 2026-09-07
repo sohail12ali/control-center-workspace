@@ -643,6 +643,182 @@
     return C.panel("Telegram", [body], null, { icon: "send" });
   }
 
+  /* The Assistant — the only panel here that writes SERVER state.
+
+     Everything above is either a browser preference or read-only. These go to
+     `POST /api/assistant/settings`, which stores them in the gitignored
+     per-machine override rather than in the committed assistant.toml, so
+     picking a backend on this laptop never lands in anyone else's diff.
+
+     The server validates every one of them and its refusals are written for a
+     human ("hands_free_wake_word needs at least two characters"), so a failed
+     save shows the server's own sentence and reloads rather than guessing.
+     Nothing is validated twice here — a second copy of the rules would drift
+     from the ones that actually decide. */
+  function assistant() {
+    var body = C.el("div", {}, [C.skeleton(4)]);
+    var CLICK_ACTIONS = [
+      ["listen", "Talk (state-aware)"],
+      ["show", "Show the window"],
+      ["hands_free", "Toggle hands-free"],
+    ];
+    var CLICK_HINT = {
+      listen: "click to talk · again to send · while it speaks, to stop it",
+      show: "the plain tray behaviour, whatever the assistant is doing",
+      hands_free: "arm and disarm the microphone from the icon",
+    };
+
+    function row(label, hint, control, iconName) {
+      return C.el("div", { class: "setrow" }, [
+        iconName ? C.icon(iconName) : null,
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: label }), C.el("span", { text: hint }),
+        ]),
+        control,
+      ]);
+    }
+
+    function toggle(s, key, label, hint, iconName) {
+      var input = C.el("input", { type: "checkbox", "aria-label": label });
+      input.checked = !!s[key];
+      input.addEventListener("change", function () {
+        var patch = {}; patch[key] = input.checked; save(patch);
+      });
+      return row(label, hint, C.el("label", { class: "switch" }, [
+        input, C.el("span", { class: "track" }), C.el("span", { class: "knob" }),
+      ]), iconName);
+    }
+
+    function field(s, key, label, hint, type, iconName) {
+      var input = C.el("input", { type: type || "text", "aria-label": label });
+      input.value = s[key] === null || s[key] === undefined ? "" : String(s[key]);
+      if (type === "number") input.style.width = "5.5em";
+      // On change, not on every keystroke: each save is a POST and an audit
+      // record, and a half-typed wake word is not a setting anyone meant.
+      input.addEventListener("change", function () {
+        var patch = {}; patch[key] = input.value; save(patch);
+      });
+      return row(label, hint, C.el("div", { class: "setctl" }, [input]), iconName);
+    }
+
+    function choice(s, key, label, hint, options, iconName) {
+      var sel = C.el("select", { "aria-label": label });
+      options.forEach(function (o) {
+        var opt = C.el("option", { value: o[0], text: o[1] });
+        if (String(s[key] || "") === o[0]) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener("change", function () {
+        var patch = {}; patch[key] = sel.value; save(patch);
+      });
+      return row(label, hint, C.el("div", { class: "setctl" }, [sel]), iconName);
+    }
+
+    function paint(d) {
+      var s = d.settings || {};
+      C.clear(body);
+
+      var backends = [["", "Auto — first installed, local first"]].concat(
+        (d.installed || []).map(function (id) { return [id, id]; }));
+      body.appendChild(choice(s, "backend", "Backend",
+        (d.installed || []).length
+          ? "where a spoken command or a screenshot would go"
+          : "nothing installed — see Agent CLIs above", backends, "cpu"));
+      body.appendChild(field(s, "model", "Model",
+        "blank means the backend's own default", "text", "brain"));
+      body.appendChild(choice(s, "mode", "Tool mode",
+        "plan refuses every write, so the Assistant could not create a ticket "
+        + "or remember anything",
+        [["default", "default — gated tools ask"], ["plan", "plan — read-only"]],
+        "sliders"));
+      body.appendChild(toggle(s, "speak", "Speak replies",
+        "read finished replies aloud", "speaker"));
+      body.appendChild(field(s, "reply_chars", "Spoken length",
+        "characters read aloud; the full text always stays in the chat",
+        "number", "speaker"));
+      body.appendChild(field(s, "session_idle_minutes", "New chat after",
+        "minutes of silence before the next message starts a fresh chat",
+        "number", "clock"));
+      body.appendChild(field(s, "ticket_prefix", "Ticket prefix",
+        "how a spoken id is canonicalised — \"t dash two\" becomes T-002",
+        "text", "list"));
+      body.appendChild(choice(s, "tray_click_action", "Tray icon click",
+        CLICK_HINT[s.tray_click_action] || CLICK_HINT.listen,
+        CLICK_ACTIONS, "mic"));
+
+      body.appendChild(C.el("b", { style: "display:block;margin-top:12px",
+                                   text: "Hands-free" }));
+      body.appendChild(C.el("p", { class: "muted", style: "margin:2px 0 4px;font-size:11px" }, [
+        "An always-on microphone. Audio is transcribed on this machine and "
+        + "thrown away unless it is addressed, so leaving it on means the room "
+        + "is heard locally and forgotten — not sent anywhere.",
+      ]));
+      body.appendChild(toggle(s, "hands_free_require_wake", "Require the wake word",
+        s.hands_free_require_wake
+          ? "only what starts with the wake word is sent"
+          : "OFF — every utterance is sent, which is for headphones and an "
+            + "empty room", "mic"));
+      body.appendChild(field(s, "hands_free_wake_word", "Wake word",
+        "matched at the start of a sentence, as a whole word", "text", "mic"));
+      body.appendChild(toggle(s, "hands_free_listen_while_speaking",
+        "Keep listening while speaking",
+        s.hands_free_listen_while_speaking
+          ? "for headphones — on speakers it hears itself and answers"
+          : "off: it would otherwise answer its own voice", "speaker"));
+      body.appendChild(field(s, "hands_free_max_minutes", "Stops after",
+        "minutes, so a microphone left on by accident does not stay on",
+        "number", "clock"));
+
+      // Read-only: a capability statement about models, reviewed in the
+      // committed file rather than set per machine.
+      body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-top:10px" },
+        [C.el("span", { class: "muted", style: "font-size:11px", text: "Vision models:" })].concat(
+          (s.vision_models || []).length
+            ? s.vision_models.map(function (m) { return C.chip(m); })
+            : [C.chip("none — captures are read with OCR", "warn")])));
+      body.appendChild(C.el("p", { class: "muted", style: "margin:4px 0 0;font-size:11px" }, [
+        "Which model ids can actually look at a screenshot. Committed in ",
+        C.el("code", {}, ["console/config/assistant.toml"]),
+        " rather than set here, because it describes the models, not this machine.",
+      ]));
+    }
+
+    function save(patch) {
+      C.post("/api/assistant/settings", patch)
+        .then(function (d) { paint({ settings: d.settings, installed: installed }); C.toast("Saved", "ok"); })
+        .catch(function (err) { C.toast(err.message, "err"); load(); });
+    }
+
+    var installed = [];
+    function load() {
+      C.get("/api/assistant/settings")
+        .then(function (d) { installed = d.installed || []; paint(d); })
+        .catch(function (err) {
+          C.clear(body);
+          // A 404 is not a fault: the assistant plugin can be switched off.
+          if (String(err.message || "").indexOf("404") !== -1) {
+            body.appendChild(C.empty("Assistant not loaded",
+              "Set the assistant row to enabled = true in console/config/plugins.toml.",
+              "brain"));
+          } else {
+            body.appendChild(C.errbox(err));
+          }
+        });
+    }
+    load();
+
+    return C.panel("Assistant", [
+      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
+        "Stored for THIS machine in ",
+        C.el("code", {}, ["console/.cache/assistant/settings.json"]),
+        " — not in the committed defaults, so your choice of backend never "
+        + "shows up in anyone else's diff. The native shell reads the same "
+        + "merged view.",
+      ]),
+      body,
+    ], null, { icon: "brain" });
+  }
+
   function storage(repaint) {
     var keys = [];
     try {
@@ -717,6 +893,7 @@
         kids.push(composer(paint));
       }
       if (!C.IS_STATIC) {
+        kids.push(assistant());
         kids.push(telegram(paint));
         kids.push(machine());
       }

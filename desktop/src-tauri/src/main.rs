@@ -3,7 +3,9 @@
 mod audio;
 mod bridge;
 mod capture;
+mod click;
 mod clipboard;
+mod console_settings;
 mod hands_free;
 mod icons;
 mod listen;
@@ -13,6 +15,7 @@ mod sidecar;
 mod stt;
 mod tray;
 mod tray_link;
+mod tray_paint;
 mod tray_state;
 mod tts;
 
@@ -361,6 +364,11 @@ fn main() {
                 fatal("tray", &e.to_string());
             }
             log::info!("tray: attached");
+
+            // From here on, anything that changes the assistant's state can
+            // repaint the icon — the microphone included, which before this
+            // was the one thing that could not.
+            tray_paint::attach(app.handle().clone());
 
             register_hotkey(app.handle());
 
