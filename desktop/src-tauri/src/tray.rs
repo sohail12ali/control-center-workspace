@@ -37,6 +37,21 @@ fn warn_on_err<T, E: std::fmt::Display>(context: &str, result: Result<T, E>) {
     }
 }
 
+/// Fold the mute state into the tray's own state machine.
+///
+/// The webview owns the `autoRead` preference and is told separately; this is
+/// what lets the ICON reflect it. Silently does nothing when the state has not
+/// been managed yet, which is only true before setup finishes.
+fn note_mute(app: &tauri::AppHandle, muted: bool) {
+    use std::sync::{Arc, Mutex};
+    let Some(state) = app.try_state::<Arc<Mutex<crate::tray_state::Assistant>>>() else {
+        return;
+    };
+    if let Ok(mut assistant) = state.inner().lock() {
+        assistant.apply(crate::tray_state::Event::Mute(muted));
+    }
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         warn_on_err("show_main show()", w.show());
@@ -129,6 +144,11 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                             "mute_off"
                         },
                     );
+                    // Tell the shell's own state too, not just the webview.
+                    // Without this the muted glyph could never appear — the
+                    // compiler noticed before anyone did, by reporting
+                    // `Event::Mute` as never constructed outside tests.
+                    note_mute(app, muted);
                 }
                 "interrupt" => {
                     show_main(app);
@@ -157,6 +177,8 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let header_cb = ui.header.clone();
     let mute_cb = ui.mute.clone();
+    // Cloned for the listener, which outlives this function.
+    let app_for_events = handle.clone();
     let _ = handle.listen("desktop-session", move |event| {
         let Ok(payload) = serde_json::from_str::<SessionPayload>(event.payload()) else {
             return;
@@ -171,6 +193,7 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         };
         warn_on_err("header set_text", header_cb.set_text(label));
         warn_on_err("mute set_checked", mute_cb.set_checked(payload.muted));
+        note_mute(&app_for_events, payload.muted);
     });
 
     Ok(())

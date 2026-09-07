@@ -46,7 +46,9 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest -o addopts="" 2>&1 | tee pytest.log || {
-            echo "::error title=console pytest failed on py${{ matrix.python }}::$(tail -c 1500 pytest.log | tr '\n' ' ')"
+            summary=$(grep -aE "^(FAILED|ERROR)|^E  " pytest.log | tail -25 | tr '\n' ' ')
+            [ -z "$summary" ] && summary=$(tail -c 1500 pytest.log | tr '\n' ' ')
+            echo "::error title=console pytest failed on py${{ matrix.python }}::$summary"
             exit 1
           }
 
@@ -115,12 +117,13 @@ jobs:
             build-essential pkg-config patchelf \
             libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev \
             libayatana-appindicator3-dev \
-            libasound2-dev libpipewire-0.3-dev \
+            libasound2-dev libpipewire-0.3-dev libgbm-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxdo-dev
         # webkit2gtk/rsvg/ssl: the Tauri shell itself
         # appindicator:       the tray icon on Linux
-        # asound + pipewire:  cpal's Linux backends, for the microphone
+        # asound + pipewire: cpal's Linux backends, for the microphone
+        # gbm:               Mesa buffer manager, linked in via that same stack
         # xcb*:               arboard's clipboard and xcap's X11 capture
         # xdo:                pulled in by the tray/indicator stack
 
@@ -155,7 +158,12 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m pytest desktop/tests -o addopts="" 2>&1 | tee pytest.log || {
-            echo "::error title=desktop pytest failed on ${{ matrix.os }}::$(tail -c 1200 pytest.log | tr '\n' ' ')"
+          python -m pytest desktop/tests -o addopts="" -rA 2>&1 | tee pytest.log || {
+            # pytest's own FAILED/ERROR lines say which test and why. A raw
+            # tail of the log lands in the middle of the first traceback,
+            # which is how the previous attempt reported `lose_fds=True,`.
+            summary=$(grep -aE "^(FAILED|ERROR)|^E  " pytest.log | tail -25 | tr '\n' ' ')
+            [ -z "$summary" ] && summary=$(tail -c 1200 pytest.log | tr '\n' ' ')
+            echo "::error title=desktop pytest failed on ${{ matrix.os }}::$summary"
             exit 1
           }
