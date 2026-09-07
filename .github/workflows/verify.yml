@@ -115,12 +115,12 @@ jobs:
             build-essential pkg-config patchelf \
             libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev \
             libayatana-appindicator3-dev \
-            libasound2-dev \
+            libasound2-dev libpipewire-0.3-dev \
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libxdo-dev
         # webkit2gtk/rsvg/ssl: the Tauri shell itself
         # appindicator:       the tray icon on Linux
-        # asound (ALSA):      cpal, for the microphone
+        # asound + pipewire:  cpal's Linux backends, for the microphone
         # xcb*:               arboard's clipboard and xcap's X11 capture
         # xdo:                pulled in by the tray/indicator stack
 

@@ -72,13 +72,20 @@ def _render_templates(repo_root, ticket_id, title, *, runner=None):
     matching the fake-opener idiom used elsewhere in this ticket, rather than
     mocking `subprocess` globally.
     """
-    exe = _powershell_exe()
-    if not exe:
-        raise PowerShellUnavailable(
-            "PowerShell is not on PATH — cannot render templates for %s. "
-            "Run the `kickoff` skill by hand, or install PowerShell 5.1+ "
-            "(Windows PowerShell; this workspace does not use pwsh)."
-            % ticket_id)
+    # Only when we are the ones about to invoke PowerShell. An injected
+    # `runner` IS the stand-in for it, so demanding the real executable first
+    # made the seam useless anywhere PowerShell does not exist — which is
+    # every Linux and macOS CI runner, and how this was found.
+    if runner is None:
+        exe = _powershell_exe()
+        if not exe:
+            raise PowerShellUnavailable(
+                "PowerShell is not on PATH — cannot render templates for %s. "
+                "Run the `kickoff` skill by hand, or install PowerShell 5.1+ "
+                "(Windows PowerShell; this workspace does not use pwsh)."
+                % ticket_id)
+    else:
+        exe = _powershell_exe() or "powershell"
     template_dir = os.path.join(repo_root, TEMPLATE_DIR_REL)
     script = os.path.join(repo_root, RENDER_SCRIPT_REL)
     target_dir = tickets_mod.dir_for(repo_root, ticket_id)

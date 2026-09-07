@@ -72,10 +72,30 @@ def _read(repo_root, path):
 
 
 def _rel(repo_root, path):
+    """A workspace-relative path for display.
+
+    `os.path.relpath` resolves a RELATIVE input against the process working
+    directory, not against `repo_root` — so a tool argument that was already
+    relative came back as `../../../..` walking out of wherever the server
+    happened to be started. That went unnoticed on Windows only because the
+    workspace and the cwd were often on different drives, which raises and hit
+    the fallback below; on Linux there is no drive to differ and the wrong
+    answer was returned instead.
+
+    A tool path is relative to the workspace by contract, so an already
+    relative one is simply normalised.
+    """
+    if not os.path.isabs(path):
+        return path.replace(os.sep, "/")
     try:
-        return os.path.relpath(path, repo_root).replace(os.sep, "/")
+        rel = os.path.relpath(path, repo_root)
     except ValueError:
+        # Different drives on Windows: not inside the workspace at all.
         return path
+    # Outside the workspace: show it as given rather than as a walk upwards.
+    if rel.startswith(os.pardir + os.sep) or rel == os.pardir:
+        return path.replace(os.sep, "/")
+    return rel.replace(os.sep, "/")
 
 
 def _diff(before, after, path):
