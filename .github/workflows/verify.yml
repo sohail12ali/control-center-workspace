@@ -38,8 +38,17 @@ jobs:
       - name: Install dev dependencies
         run: python -m pip install -r console/requirements-dev.txt
 
+      # Same annotation trick as the desktop job: this job was already red
+      # before the desktop work landed, and its cause was unreadable without a
+      # signed-in session.
       - name: Run tests
-        run: python -m pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -o addopts="" 2>&1 | tee pytest.log || {
+            echo "::error title=console pytest failed on py${{ matrix.python }}::$(tail -c 1500 pytest.log | tr '\n' ' ')"
+            exit 1
+          }
 
   harness:
     name: harness lint
@@ -93,23 +102,60 @@ jobs:
       - name: Install dev dependencies
         run: python -m pip install -r console/requirements-dev.txt
 
-      # Scoped to today's Cargo.toml diff only (log, tauri-plugin-single-instance)
-      # — not the fuller audio/tray-indicator/xcb prerequisite list a later
-      # ticket's own crates will need (see T-003-decision-log.md).
+      # One package per reason, because a missing system library shows up as a
+      # linker error a long way from its cause. When T-003 wrote this list it
+      # covered only that ticket's crates and said so; T-005 and T-006 then
+      # added capture, clipboard and audio without extending it, which is
+      # exactly the failure the comment predicted.
       - name: Install Linux build prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev patchelf pkg-config
+          sudo apt-get install -y \
+            build-essential pkg-config patchelf \
+            libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev \
+            libayatana-appindicator3-dev \
+            libasound2-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxdo-dev
+        # webkit2gtk/rsvg/ssl: the Tauri shell itself
+        # appindicator:       the tray icon on Linux
+        # asound (ALSA):      cpal, for the microphone
+        # xcb*:               arboard's clipboard and xcap's X11 capture
+        # xdo:                pulled in by the tray/indicator stack
 
       # No Rust toolchain setup/pin step: every GitHub-hosted runner image
       # preinstalls a Rust/Cargo well above this crate's rust-version floor
       # (see T-003-decision-log.md § "CI Rust toolchain").
+      #
+      # Each step below echoes its own tail as a `::error::` annotation on
+      # failure. Actions logs need a signed-in session to read, but annotations
+      # come back from the public API, so this is what makes a red build
+      # diagnosable by whoever is looking — including from a machine that
+      # cannot sign in.
       - name: cargo build --release
-        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | tee build.log || {
+            echo "::error title=cargo build failed on ${{ matrix.os }}::$(tail -c 1200 build.log | tr '\n' ' ')"
+            exit 1
+          }
 
       - name: cargo test
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | tee test.log || {
+            echo "::error title=cargo test failed on ${{ matrix.os }}::$(tail -c 1200 test.log | tr '\n' ' ')"
+            exit 1
+          }
 
       - name: python -m pytest desktop/tests
-        run: python -m pytest desktop/tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest desktop/tests -o addopts="" 2>&1 | tee pytest.log || {
+            echo "::error title=desktop pytest failed on ${{ matrix.os }}::$(tail -c 1200 pytest.log | tr '\n' ' ')"
+            exit 1
+          }
