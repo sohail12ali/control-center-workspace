@@ -30,6 +30,11 @@ PROBE_TIMEOUT_SEC = 0.5
 # "sidecar.py stays standalone-importable").
 CREATE_NO_WINDOW = 0x08000000
 
+#: Lets the server outlive a job object the shell happens to be inside, so
+#: closing the shell does not take a server someone else is using with it.
+#: Not always permitted — see `_spawn_with_breakaway_fallback`.
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
 SERVE_LOG_REL = os.path.join("console", ".cache", "desktop", "serve.log")
 
 
@@ -132,6 +137,40 @@ def _serve_log_handle(repo_root):
         return subprocess.DEVNULL
 
 
+def _spawn_with_breakaway_fallback(cmd, popen_kw, base_flags):
+    """Spawn, retrying without `CREATE_BREAKAWAY_FROM_JOB` if it is refused.
+
+    Breakaway is a nicety: it lets the server outlive a job object the shell
+    is inside. But a job object can *forbid* breakaway, and asking for it
+    anyway fails the whole spawn with `ERROR_ACCESS_DENIED` — the server never
+    starts at all.
+
+    That is not hypothetical. GitHub's Windows runners put every process in
+    such a job, so this failed there while working on an ordinary desktop, and
+    the same applies to some managed corporate environments. Losing breakaway
+    costs a server that stops when its job does; refusing to start costs
+    everything.
+    """
+    if os.name != "nt":
+        return subprocess.Popen(cmd, **popen_kw)
+    try:
+        return subprocess.Popen(cmd, **popen_kw)
+    except OSError as first:
+        if getattr(first, "winerror", None) != 5:  # ERROR_ACCESS_DENIED
+            raise
+        retry = dict(popen_kw, creationflags=base_flags)
+        try:
+            proc = subprocess.Popen(cmd, **retry)
+        except OSError:
+            # The retry failed too, so breakaway was not the problem. Report
+            # the original error, which is the one that describes the cause.
+            raise first
+        sys.stderr.write(
+            "sidecar: this environment forbids breakaway from its job object; "
+            "the server will stop when that job does\n")
+        return proc
+
+
 def spawn_serve(repo_root, bind_host, port):
     kanban = os.path.join(repo_root, "console", "kanban.py")
     if not os.path.isfile(kanban):
@@ -151,17 +190,12 @@ def spawn_serve(repo_root, bind_host, port):
         close_fds=True,
     )
     if os.name == "nt":
-        CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-        flags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP
-            | CREATE_NO_WINDOW
-            | CREATE_BREAKAWAY_FROM_JOB
-        )
-        popen_kw["creationflags"] = flags
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        popen_kw["creationflags"] = flags | CREATE_BREAKAWAY_FROM_JOB
     else:
         popen_kw["start_new_session"] = True
     try:
-        return subprocess.Popen(cmd, **popen_kw)
+        return _spawn_with_breakaway_fallback(cmd, popen_kw, flags)
     except OSError as e:
         raise SidecarError("could not start serve: %s" % e) from e
     finally:

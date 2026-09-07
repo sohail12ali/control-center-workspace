@@ -162,3 +162,67 @@ class TestEnsureLive:
         finally:
             first.stop()
         assert sidecar.is_up("127.0.0.1", port) is False
+
+
+class TestBreakawayFallback:
+    """A job object can forbid breakaway, and asking for it anyway fails the
+    whole spawn with ERROR_ACCESS_DENIED — the server never starts.
+
+    Found on GitHub's Windows runners, which put every process in such a job;
+    the same applies to some managed corporate environments. It cannot be
+    reproduced on an ordinary desktop, so these drive the fallback directly.
+    """
+
+    def _denied_once(self):
+        """A Popen that refuses breakaway exactly as Windows does."""
+        calls = []
+
+        def popen(cmd, **kw):
+            calls.append(kw.get("creationflags", 0))
+            if kw.get("creationflags", 0) & sidecar.CREATE_BREAKAWAY_FROM_JOB:
+                err = OSError("Access is denied")
+                err.winerror = 5
+                raise err
+            return "spawned"
+
+        return popen, calls
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows creation flags")
+    def test_a_refused_breakaway_retries_without_it(self, monkeypatch):
+        popen, calls = self._denied_once()
+        monkeypatch.setattr(sidecar.subprocess, "Popen", popen)
+        base = sidecar.subprocess.CREATE_NEW_PROCESS_GROUP | sidecar.CREATE_NO_WINDOW
+        out = sidecar._spawn_with_breakaway_fallback(
+            ["x"], {"creationflags": base | sidecar.CREATE_BREAKAWAY_FROM_JOB}, base)
+        assert out == "spawned", "the server must still start"
+        assert len(calls) == 2, "it should have retried"
+        assert not calls[1] & sidecar.CREATE_BREAKAWAY_FROM_JOB
+        # The flags that matter for hygiene survive the retry.
+        assert calls[1] & sidecar.CREATE_NO_WINDOW
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows creation flags")
+    def test_an_unrelated_error_is_not_retried(self, monkeypatch):
+        def popen(cmd, **kw):
+            err = OSError("no such file")
+            err.winerror = 2
+            raise err
+
+        monkeypatch.setattr(sidecar.subprocess, "Popen", popen)
+        base = sidecar.CREATE_NO_WINDOW
+        with pytest.raises(OSError):
+            sidecar._spawn_with_breakaway_fallback(
+                ["x"], {"creationflags": base | sidecar.CREATE_BREAKAWAY_FROM_JOB}, base)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows creation flags")
+    def test_a_retry_that_also_fails_reports_the_original_cause(self, monkeypatch):
+        def popen(cmd, **kw):
+            err = OSError("Access is denied")
+            err.winerror = 5
+            raise err
+
+        monkeypatch.setattr(sidecar.subprocess, "Popen", popen)
+        base = sidecar.CREATE_NO_WINDOW
+        with pytest.raises(OSError) as caught:
+            sidecar._spawn_with_breakaway_fallback(
+                ["x"], {"creationflags": base | sidecar.CREATE_BREAKAWAY_FROM_JOB}, base)
+        assert caught.value.winerror == 5
