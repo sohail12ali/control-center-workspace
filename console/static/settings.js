@@ -243,7 +243,7 @@
       { icon: "cpu" });
   }
 
-  /* Model providers — the API backends, and what each one still needs.
+  /* Model providers — which model answers, and where it runs.
 
      Separate from "Agent CLIs" above because they are a different kind of
      thing with different failure modes: a CLI needs a binary on PATH, a hosted
@@ -251,71 +251,170 @@
      "not installed" for all three was the console's old answer and it sent
      people to fix the wrong thing.
 
-     Everything here is a read except Refresh, which fetches the provider's
-     catalogue into a gitignored cache. No console config is written from this
-     page — agents.toml is hand-maintained and mostly comments, which
-     tomlio.dumps() would silently delete. */
+     This panel writes SERVER state, and one thing it deliberately does not
+     write is agents.toml. That file is a document — two hundred lines of
+     comments explaining why the ollama row needs a tool-capable model, what LM
+     Studio means by "loaded" — and a TOML round-trip would delete every word.
+     Your choices go to console/.cache/agents/providers.json instead, which is
+     gitignored, so whether you run Ollama never lands in anyone else's diff. */
   function providers(repaint) {
-    var body = C.el("div", {}, [C.skeleton(2)]);
+    var body = C.el("div", {}, [C.skeleton(3)]);
+    var adding = false;
+
+    function save(patch, done) {
+      C.post("/api/agents/providers", patch)
+        .then(function (d) {
+          C.toast("Saved", "ok");
+          paintRows(d.providers || []);
+          if (done) done();
+        })
+        .catch(function (err) { C.toast(err.message, "err"); load(); });
+    }
+
+    function row(p) {
+      var toggle = C.el("input", {
+        type: "checkbox", "aria-label": "Use " + p.label,
+        onchange: function (e) {
+          var patch = { enabled: {} };
+          patch.enabled[p.id] = e.target.checked;
+          save(patch);
+        },
+      });
+      toggle.checked = !!p.enabled;
+
+      var refresh = C.el("button", {
+        class: "btn sm",
+        title: p.available
+          ? "Ask " + p.label + " for its current model list"
+          : "Reachable providers only — see the reason on the left",
+        onclick: function (e) {
+          var btn = e.currentTarget;
+          btn.disabled = true;
+          btn.textContent = "Fetching…";
+          C.post("/api/agents/models/refresh", { backend: p.id })
+            .then(function (d) {
+              if (d.error) C.toast(d.error, "err");
+              else C.toast(p.label + ": " + d.count + " models cached", "ok");
+              load();
+            })
+            .catch(function (err) { C.toast(err.message, "err"); load(); });
+        },
+      }, ["Refresh models"]);
+      refresh.disabled = !p.available;
+
+      /* Why the state line is worth its space: "unusable" alone sends someone
+         reading source. "nothing is listening on 127.0.0.1:11434 — is the
+         server running?" does not. */
+      var state = !p.enabled
+        ? (p.base_url + (p.notes ? " · " + p.notes : ""))
+        : (p.available
+            ? p.base_url + (p.key_env
+                ? " · " + p.key_env + (p.has_key ? " is set" : " is NOT set")
+                : " · no key needed")
+            : (p.reason || "unavailable"));
+
+      return C.el("div", { class: "setrow" }, [
+        C.icon(p.is_local ? "cpu" : "external"),
+        C.el("div", { class: "settext" }, [
+          C.el("b", {}, [
+            p.label,
+            p.is_local ? C.el("span", { class: "chip ok", style: "margin-left:6px" },
+              ["local"]) : null,
+            p.custom ? C.el("span", { class: "chip", style: "margin-left:6px" },
+              ["yours"]) : null,
+          ]),
+          C.el("span", { text: state }),
+        ]),
+        p.enabled
+          ? C.chip(p.available ? "ready" : "unusable", p.available ? "ok" : "warn")
+          : null,
+        p.enabled ? refresh : null,
+        p.custom ? C.el("button", {
+          class: "btn sm", title: "Remove this provider",
+          onclick: function () { save({ remove: p.id }); },
+        }, [C.icon("trash")]) : null,
+        C.el("label", { class: "switch" }, [
+          toggle, C.el("span", { class: "track" }), C.el("span", { class: "knob" }),
+        ]),
+      ]);
+    }
+
+    /* Add your own: anything that speaks the OpenAI chat API. A key, if it
+       needs one, is named — never pasted: the value belongs in the workspace
+       .env, and nothing here should be the first file in this project to hold
+       a secret. */
+    function addForm() {
+      var id = C.el("input", { type: "text", placeholder: "id (e.g. work-vllm)",
+                               "aria-label": "Provider id" });
+      var label = C.el("input", { type: "text", placeholder: "Label",
+                                  "aria-label": "Provider label" });
+      var url = C.el("input", { type: "text", style: "min-width:16em",
+                                placeholder: "http://host:port/v1",
+                                "aria-label": "Base URL" });
+      var keyEnv = C.el("input", { type: "text", placeholder: "KEY_ENV_VAR (optional)",
+                                   "aria-label": "Key environment variable name" });
+      var result = C.el("div", { class: "muted", style: "font-size:11.5px" });
+
+      var test = C.el("button", {
+        class: "btn sm",
+        // Before saving, deliberately: adding it and finding out on the first
+        // turn is how a typo in a port number costs an afternoon.
+        onclick: function () {
+          result.textContent = "Testing…";
+          C.post("/api/agents/providers/probe",
+                 { base_url: url.value, api_key_env: keyEnv.value })
+            .then(function (d) {
+              result.textContent = d.ok
+                ? "answering — " + (d.count || 0) + " models"
+                  + (d.models && d.models.length ? ": " + d.models.slice(0, 3).join(", ") : "")
+                : d.reason || "no answer";
+            })
+            .catch(function (err) { result.textContent = err.message; });
+        },
+      }, ["Test"]);
+
+      var add = C.el("button", {
+        class: "btn sm primary",
+        onclick: function () {
+          var custom = { id: id.value, base_url: url.value };
+          if (label.value.trim()) custom.label = label.value;
+          if (keyEnv.value.trim()) custom.api_key_env = keyEnv.value;
+          save({ custom: custom }, function () {
+            var on = { enabled: {} };
+            on[String(id.value || "").trim().toLowerCase()] = true;
+            save(on, function () { adding = false; load(); });
+          });
+        },
+      }, ["Add"]);
+
+      return C.el("div", { class: "setrow", style: "flex-wrap:wrap" }, [
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: "Add a provider" }),
+          C.el("span", { text: "any endpoint that speaks the OpenAI chat API — "
+                               + "vLLM, llama.cpp, a hosted gateway" }),
+        ]),
+        C.el("div", { class: "setctl" }, [id, label, url, keyEnv, test, add]),
+        result,
+      ]);
+    }
 
     function paintRows(rows) {
       C.clear(body);
-      if (!rows.length) {
-        body.appendChild(C.empty("No model providers enabled",
-          "Enable the ollama, lm-studio or openrouter row in console/config/agents.toml.",
-          "cpu"));
-        return;
-      }
-      rows.forEach(function (p) {
-        var busy = false;
-
-        var refresh = C.el("button", {
-          class: "btn sm",
-          title: p.available
-            ? "Ask " + p.label + " for its current model list"
-            : "Unavailable — fix the reason below first",
-          onclick: function (e) {
-            if (busy) return;
-            busy = true;
-            var btn = e.currentTarget;
-            btn.disabled = true;
-            btn.textContent = "Fetching…";
-            C.post("/api/agents/models/refresh", { backend: p.id })
-              .then(function (d) {
-                if (d.error) C.toast(d.error, "err");
-                else C.toast(p.label + ": " + d.count + " models cached", "ok");
-                load();
-              })
-              .catch(function (err) { C.toast(err.message, "err"); load(); });
-          },
-        }, ["Refresh models"]);
-        if (!p.available) refresh.disabled = true;
-
-        body.appendChild(C.el("div", { class: "setrow" }, [
-          C.icon(p.is_local ? "cpu" : "external"),
-          C.el("div", { class: "settext" }, [
-            C.el("b", {}, [
-              p.label,
-              p.is_local ? C.el("span", { class: "chip ok", style: "margin-left:6px" },
-                ["local"]) : null,
-            ]),
-            /* The reason is the whole value of this row. "Unusable" alone
-               sends someone reading source; "nothing is listening on
-               127.0.0.1:11434 — is the server running?" does not. */
-            C.el("span", { text: p.available
-              ? (p.cached
-                  ? p.count + " models cached · " + p.age_days + " days old"
-                  : "ready — no catalogue fetched yet")
-              : (p.reason || "unavailable") }),
-          ]),
-          C.chip(p.available ? "ready" : "unusable", p.available ? "ok" : "warn"),
-          refresh,
+      rows.forEach(function (p) { body.appendChild(row(p)); });
+      if (adding) {
+        body.appendChild(addForm());
+      } else {
+        body.appendChild(C.el("div", { class: "row", style: "margin-top:9px" }, [
+          C.el("button", {
+            class: "btn sm",
+            onclick: function () { adding = true; paintRows(rows); },
+          }, [C.icon("cpu"), "Add a provider"]),
         ]));
-      });
+      }
     }
 
     function load() {
-      C.get("/api/agents/models")
+      C.get("/api/agents/providers")
         .then(function (d) { paintRows(d.providers || []); })
         .catch(function (err) { C.clear(body).appendChild(C.errbox(err)); });
     }
@@ -323,11 +422,13 @@
 
     return C.panel("Model providers", [
       C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Fetched catalogues are cached under ",
-        C.el("code", {}, ["console/.cache/models/"]),
-        " — gitignored, because a model list is a fact about your account at ",
-        "one moment, not about this template. The hand-picked shortlist in ",
-        C.el("code", {}, ["agents.toml"]), " is offered alongside it.",
+        "Switch one on to use it in the composer and as the Assistant's "
+        + "backend. Stored for THIS machine in ",
+        C.el("code", {}, ["console/.cache/agents/providers.json"]),
+        " — the committed ", C.el("code", {}, ["agents.toml"]),
+        " keeps stating the defaults, comments and all. A key is named, never "
+        + "pasted: put its value in the workspace ",
+        C.el("code", {}, [".env"]), ".",
       ]),
       body,
     ], null, { icon: "cpu" });

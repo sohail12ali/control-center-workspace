@@ -43,6 +43,7 @@ import urllib.parse
 import urllib.request
 
 from . import boards as boards_mod
+from . import provider_overrides
 from . import prompt_tokens
 from . import tomlio
 
@@ -168,6 +169,16 @@ def _url_error_reason(exc, url):
     return "could not reach %s (%s)" % (host, inner)
 
 
+def probe(url, timeout=PROBE_TIMEOUT, opener=None):
+    """Is something answering at `url`? -> (ok, reason).
+
+    The public face of the cached reachability check, so a caller testing a URL
+    that is not yet a configured backend uses the same code — and gets the same
+    sentence — as one that is.
+    """
+    return _probe(url, timeout=timeout, opener=opener)
+
+
 def forget_probes():
     """Drop every cached probe. For tests, and for a config reload."""
     with _probe_lock:
@@ -176,7 +187,13 @@ def forget_probes():
 
 def load_config(repo_root, force=False):
     """Backend definitions. Falls back to console.toml's `[agents.backends]`
-    so an older config keeps working, but agents.toml is the real home."""
+    so an older config keeps working, but agents.toml is the real home.
+
+    This machine's provider choices are merged in last (T-012): which rows are
+    switched on, and any OpenAI-compatible endpoint added locally. They live in
+    a gitignored file rather than in agents.toml, which is a document with two
+    hundred lines of comments that a TOML round-trip would silently delete.
+    """
     if not force and repo_root in _cache:
         return _cache[repo_root]
     path = os.path.join(repo_root, CONFIG_REL)
@@ -185,8 +202,35 @@ def load_config(repo_root, force=False):
     else:
         legacy = boards_mod.load_console_config(repo_root).get("agents", {})
         data = {"backend": _from_legacy(legacy.get("backends", {}))}
+    data = dict(data)
+    data["backend"] = provider_overrides.rows_for(repo_root,
+                                                  data.get("backend", []))
     _cache[repo_root] = data
     return data
+
+
+def committed_rows(repo_root):
+    """The rows as agents.toml states them, before any local override.
+
+    Used where the question is "what does this workspace ship" rather than
+    "what is switched on here" — the provider list, and refusing a custom id
+    that would shadow a committed one.
+    """
+    path = os.path.join(repo_root, CONFIG_REL)
+    if not os.path.isfile(path):
+        return []
+    try:
+        return tomlio.load(path).get("backend", []) or []
+    except (OSError, ValueError):
+        return []
+
+
+def forget_config():
+    """Drop the parsed config. Called after a provider change, so a newly
+    enabled backend is usable on the next request rather than the next
+    restart."""
+    _cache.clear()
+    forget_probes()
 
 
 def _from_legacy(mapping):
@@ -600,6 +644,54 @@ def registry(repo_root, force=False):
     return out
 
 
+def provider_list(repo_root):
+    """Every API-capable provider, switched on or not.
+
+    `registry()` yields only what is enabled, which is the right answer for
+    "what can I run" and the wrong one for the panel where you turn a provider
+    ON. This is that second question, and it is the only place that answers it.
+
+    `has_key` is a boolean. The key itself is never read into a response.
+    """
+    rows = load_config(repo_root).get("backend", [])
+    out = []
+    for row in rows:
+        if row.get("transport") not in API_TRANSPORTS:
+            continue
+        try:
+            backend = Backend(row)
+        except ValueError as exc:
+            # A row that cannot even be constructed still has to appear, or the
+            # panel silently hides the provider you are trying to fix.
+            out.append({"id": row.get("id", "?"), "label": row.get("id", "?"),
+                        "enabled": bool(row.get("enabled", True)),
+                        "custom": bool(row.get("custom")),
+                        "available": False, "reason": str(exc),
+                        "base_url": row.get("base_url", ""), "is_local": False,
+                        "key_env": row.get("api_key_env", ""), "has_key": False})
+            continue
+        enabled = bool(row.get("enabled", True))
+        out.append({
+            "id": backend.id,
+            "label": backend.label,
+            "enabled": enabled,
+            "custom": bool(row.get("custom")),
+            "base_url": backend.base_url,
+            "is_local": backend.is_local,
+            "key_env": backend.api_key_env,
+            "has_key": backend.has_key,
+            # Only meaningful for a provider that is on: probing a switched-off
+            # endpoint every time the panel paints would be a scan of every
+            # port in the config for no one's benefit.
+            "available": backend.installed if enabled else False,
+            "reason": backend.unavailable_reason if enabled else "",
+            "notes": backend.raw.get("notes", "") or "",
+            "start_hint": backend.raw.get("start_hint", "") or "",
+        })
+    out.sort(key=lambda p: (not p["enabled"], not p["is_local"], p["label"].lower()))
+    return out
+
+
 def get(repo_root, backend_id):
     reg = registry(repo_root)
     if backend_id in reg:
@@ -610,7 +702,8 @@ def get(repo_root, backend_id):
     known = {row.get("id") for row in load_config(repo_root).get("backend", [])}
     if backend_id in known:
         raise ValueError(
-            "backend %r is configured but disabled. Set enabled = true on its "
-            "[[backend]] row in %s." % (backend_id, CONFIG_REL))
+            "backend %r is configured but disabled. Turn it on in "
+            "Settings > Model providers, or run: kanban agents provider "
+            "enable %s" % (backend_id, backend_id))
     raise ValueError("unknown backend %r; enabled: %s"
                      % (backend_id, ", ".join(sorted(reg)) or "(none)"))

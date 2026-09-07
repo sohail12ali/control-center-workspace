@@ -7,6 +7,7 @@ hiding a button.
 """
 
 from .. import agent_approvals, agent_backends, agent_manager, audit
+from .. import provider_overrides
 from .. import agents as agents_mod
 from .. import model_catalog, prompt_tokens
 from ..httpd import EventSource
@@ -57,6 +58,57 @@ def apply(ctx):
             limit = 25
         return {"query": query,
                 "files": prompt_tokens.search_files(repo_root, query, limit)}
+
+    # -- providers (T-012) ---------------------------------------------------
+    def providers(req):
+        """Every API-capable provider, INCLUDING the switched-off ones.
+
+        Deliberately not `registry()`, which only yields what is enabled: a
+        panel that lists only the providers you already turned on cannot be
+        the place you turn one on.
+        """
+        return {"providers": agent_backends.provider_list(repo_root)}
+
+    def providers_post(req):
+        """Switch providers on and off, and add or remove your own.
+
+        Audited for the reason `models.refresh` is: this decides which model
+        can be handed this workspace's tools.
+        """
+        committed = [r.get("id") for r in agent_backends.committed_rows(repo_root)]
+        stored = provider_overrides.update(repo_root, req.body or {},
+                                           committed_ids=committed)
+        # A newly enabled provider has to be usable on the NEXT request, not
+        # after a restart — `load_config` memoises, and the reachability probe
+        # caches its answer for a provider that was not running a moment ago.
+        agent_backends.forget_config()
+        audit.record(repo_root, "providers.change", actor=audit.actor_of(req),
+                     target=",".join(sorted((req.body or {}).get("enabled", {})))
+                            or str((req.body or {}).get("remove")
+                                   or ((req.body or {}).get("custom") or {}).get("id", "")),
+                     detail={"keys": sorted(req.body or {})})
+        return {"stored": stored,
+                "providers": agent_backends.provider_list(repo_root)}
+
+    def providers_probe(req):
+        """Does this endpoint answer, and what does it serve?
+
+        Exists so **Test** works before saving. Adding a provider and finding
+        out on the first turn is the version of this that wastes an afternoon
+        on a typo in a port number.
+        """
+        base_url = str((req.body or {}).get("base_url") or "").strip().rstrip("/")
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        models_url = base_url + "/models"
+        ok, reason = agent_backends.probe(models_url)
+        out = {"ok": bool(ok), "reason": reason, "url": models_url}
+        if ok:
+            names = model_catalog.peek(models_url,
+                                       (req.body or {}).get("api_key_env", ""))
+            out["models"] = names[:20]
+            out["count"] = len(names)
+        return out
 
     def models(req):
         """The CACHED catalogue. Deliberately offline: this is a GET, and a GET
@@ -215,6 +267,9 @@ def apply(ctx):
     ctx.get(r"^/api/agents/backends/?$", backends, "agents.backends")
     ctx.get(r"^/api/agents/catalog/?$", catalog, "agents.catalog")
     ctx.get(r"^/api/agents/files/?$", files, "agents.files")
+    ctx.get(r"^/api/agents/providers/?$", providers, "agents.providers")
+    ctx.post(r"^/api/agents/providers/?$", providers_post, "agents.providers_post")
+    ctx.post(r"^/api/agents/providers/probe/?$", providers_probe, "agents.providers_probe")
     ctx.get(r"^/api/agents/models/?$", models, "agents.models")
     ctx.post(r"^/api/agents/models/refresh/?$", models_refresh, "agents.models_refresh")
     ctx.get(r"^/api/agents/chats/?$", chats, "agents.chats")

@@ -331,6 +331,10 @@ auto-edit = "auto-approves edit tools; everything else still asks"
 # ignores the tools it was offered.
 #
 # `enabled = false` because the template cannot know whether you run Ollama.
+# You do not edit this line to switch it on: Settings > Model providers, or
+# `kanban agents provider enable ollama`, records that choice per machine in
+# console/.cache/agents/providers.json and leaves this file (and its comments)
+# exactly as they are.
 [[backend]]
 id = "ollama"
 label = "Ollama"

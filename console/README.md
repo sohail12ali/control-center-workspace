@@ -1030,6 +1030,31 @@ Still to come: a Settings-tab control for the backend picker (the service side
 exists and round-trips through `GET`/`POST /api/assistant/settings`), OS
 actuation, and watch mode.
 
+### Choosing where the model runs
+
+Every OpenAI-compatible endpoint is a provider: OpenRouter, **Ollama**, **LM
+Studio**, or anything else that speaks that API — a vLLM box, llama.cpp, a
+hosted gateway. Settings → **Model providers** switches them on and off and
+adds your own; `kanban agents provider list|enable|disable|add|remove` does the
+same from a terminal.
+
+Two things worth knowing:
+
+- **Your choices are per-machine.** They go to
+  `console/.cache/agents/providers.json` (gitignored). The committed
+  `agents.toml` keeps stating what this workspace ships with, comments and all
+  — nothing here ever rewrites it.
+- **A key is named, never pasted.** Give the NAME of an environment variable
+  (`TOGETHER_API_KEY`); put the value in the workspace `.env`. The console
+  reports whether it is set and never reads it into a page or a log. Ollama
+  and LM Studio need no key at all.
+
+**Test** probes an endpoint before you save it, so a wrong port is a sentence
+rather than a failed turn later. For a local server, the caveat that decides
+whether it is useful to you is tool calling: the console runs the agent loop
+and that loop needs tools. Ollama answers `does not support tools` for a model
+that lacks them, and the console shows you that verbatim.
+
 ### Resuming a chat
 
 A chat used to die with the console. Now a past chat carries a **Resume**

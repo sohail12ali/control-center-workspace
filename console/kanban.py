@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime  # noqa: E402
 
-from server import agent_backends, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
+from server import agent_backends, provider_overrides, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
 from server.features import assistant_feature  # noqa: E402
@@ -439,6 +439,75 @@ def cmd_agents_models(args, repo_root):
         print(model_catalog.format_list(rows))
 
 
+def cmd_agents_provider(args, repo_root):
+    """Switch a model provider on or off, or add one of your own.
+
+    The same functions the Settings panel calls. A provider you could only
+    turn on from a browser would be the first thing in this console that a
+    terminal could not do.
+    """
+    committed = [r.get("id") for r in agent_backends.committed_rows(repo_root)]
+
+    if args.action == "list":
+        rows = agent_backends.provider_list(repo_root)
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            print("No API providers are configured.")
+            return
+        print("%-14s %-4s %-9s %-7s %s" % ("PROVIDER", "ON", "STATE", "WHERE", "URL"))
+        for row in rows:
+            print("%-14s %-4s %-9s %-7s %s" % (
+                row["id"],
+                "yes" if row["enabled"] else "no",
+                ("ready" if row["available"] else "unusable")
+                if row["enabled"] else "-",
+                "local" if row["is_local"] else "remote",
+                row["base_url"]))
+            if row["enabled"] and not row["available"] and row["reason"]:
+                print("               %s" % row["reason"])
+        return
+
+    if args.action in ("enable", "disable"):
+        if not args.id:
+            raise SystemExit("which provider? e.g. kanban agents provider "
+                             "enable ollama")
+        provider_overrides.update(repo_root,
+                                  {"enabled": {args.id: args.action == "enable"}},
+                                  committed_ids=committed)
+        agent_backends.forget_config()
+        print("%s is now %sd" % (args.id, args.action))
+        return
+
+    if args.action == "add":
+        if not (args.id and args.url):
+            raise SystemExit("an id and --url are required")
+        row = {"id": args.id, "base_url": args.url}
+        if args.label:
+            row["label"] = args.label
+        if args.key_env:
+            row["api_key_env"] = args.key_env
+        provider_overrides.update(repo_root, {"custom": row},
+                                  committed_ids=committed)
+        provider_overrides.update(repo_root, {"enabled": {args.id: True}},
+                                  committed_ids=committed)
+        agent_backends.forget_config()
+        ok, reason = agent_backends.probe(args.url.rstrip("/") + "/models")
+        print("added %s -> %s" % (args.id, args.url))
+        print("  %s" % ("answering" if ok else reason))
+        return
+
+    if args.action == "remove":
+        if not args.id:
+            raise SystemExit("which provider?")
+        provider_overrides.update(repo_root, {"remove": args.id},
+                                  committed_ids=committed)
+        agent_backends.forget_config()
+        print("removed %s" % args.id)
+        return
+
+
 def cmd_agents_doctor(args, repo_root):
     """Whether each configured backend can actually run, and why not.
 
@@ -456,7 +525,8 @@ def cmd_agents_doctor(args, repo_root):
         if not raw.get("enabled", True):
             rows.append({"id": bid, "label": raw.get("label", bid),
                          "kind": raw.get("transport", "?"), "state": "disabled",
-                         "detail": "enabled = false in %s" % agent_backends.CONFIG_REL})
+                         "detail": "switched off — turn it on with: "
+                                   "kanban agents provider enable %s" % bid})
             continue
         backend = enabled.get(bid)
         if backend is None:
@@ -694,6 +764,17 @@ def build_parser():
                    help="re-fetch from the provider (the only networked path)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_agents_models)
+
+    p = agents_sub.add_parser(
+        "provider", help="switch a model provider on/off, or add your own")
+    p.add_argument("action", choices=["list", "enable", "disable", "add", "remove"])
+    p.add_argument("id", nargs="?", help="provider id")
+    p.add_argument("--url", help="base URL of an OpenAI-compatible endpoint")
+    p.add_argument("--label", help="what to call it in the UI")
+    p.add_argument("--key-env", dest="key_env",
+                   help="NAME of the env var holding its key (never the key)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_agents_provider)
 
     p = agents_sub.add_parser(
         "doctor", help="what each configured backend needs, and whether it has it")

@@ -207,6 +207,29 @@ def fetch(repo_root, backend_id, opener=None):
     return rows, error
 
 
+def peek(models_url, api_key_env="", opener=None):
+    """Model ids served at `models_url`, for a URL that is not a backend yet.
+
+    Used by the provider **Test** button, so what you see before saving is what
+    the console would see after. Never raises and never caches: nothing has an
+    id to cache under until it has been added.
+    """
+    headers = {"Accept": "application/json"}
+    key_env = (api_key_env or "").strip()
+    if key_env:
+        key = os.environ.get(key_env, "").strip()
+        if key:
+            headers["Authorization"] = "Bearer " + key
+    try:
+        request = urllib.request.Request(models_url, headers=headers, method="GET")
+        with (opener or urllib.request.urlopen)(request, timeout=FETCH_TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+    except Exception:  # noqa: BLE001
+        # The caller already has the probe's reason, which is the useful one.
+        return []
+    return [row["id"] for row in parse(payload) if row.get("id")]
+
+
 def _write_cache(repo_root, backend_id, rows):
     """Persist the catalogue. A failure to cache is reported, not raised — the
     rows were fetched successfully and are still usable this session."""
