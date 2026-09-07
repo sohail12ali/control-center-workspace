@@ -233,6 +233,9 @@ fn capabilities(repo_root: &Path) -> Value {
         // Probed, like `ocr`: whether a synthesiser answers on THIS machine.
         "speak": tts::available(),
         "speak_backend": tts::backend_name(),
+        // Which neural voices are installed, so Settings can offer them
+        // instead of asking someone to type a filename.
+        "speak_voices": crate::piper::voices(repo_root),
         // Probed like the rest: a microphone AND an installed engine.
         "stt": listen::available(repo_root),
         "stt_model": crate::stt::model_name(repo_root),
@@ -391,6 +394,16 @@ fn route(
                 Err(e) => return err(400, "bad_request", e),
             };
             let text = body.get("text").and_then(Value::as_str).unwrap_or("");
+            // Voice and speed come from the console's settings, read fresh:
+            // changing them on the Settings tab should take effect on the next
+            // thing spoken, not the next launch.
+            let settings = crate::console_settings::all(console_url);
+            tts::configure(
+                repo_root,
+                &crate::console_settings::str_at(&settings, "speak_voice", ""),
+                crate::console_settings::u64_at(&settings, "speak_rate_percent", 100) as f32
+                    / 100.0,
+            );
             match tts::speak(text) {
                 Ok(chars) => {
                     // The tray shows speaking as soon as the utterance

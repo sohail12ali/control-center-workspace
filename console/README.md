@@ -920,6 +920,34 @@ ends. Two short tones go with it: rising when the microphone is actually open
 (which is about a second after you click, so the tone is worth waiting for),
 and again when the take is sent. Muting replies silences the tones too.
 
+### How it sounds
+
+Two things decide that, and the voice is only one of them.
+
+**What gets spoken.** A model writes for a screen: `**bold**`, bullet lists,
+fenced code, links with URLs in them, `T-002`. Read literally, that is most of
+why a spoken reply sounds like a machine. The shell now shapes the text first —
+markdown out, links reduced to their text, code blocks skipped with a note that
+they were, ticket ids said the way a person says them ("T two", not "T dash
+zero zero two").
+
+**Which voice.** By default the operating system's own synthesiser, which on
+Windows means `System.Speech` and its "Desktop" voices — the robotic ones.
+Fetch a neural voice once and it uses that instead:
+
+```bash
+pwsh -File desktop/get-piper.ps1
+```
+
+That is Piper: ~65 MB, offline, runs on the CPU at about eight times real
+time. Pick the voice and the speed in Settings → Assistant (`speak_voice`,
+`speak_rate_percent`). With no Piper installed nothing breaks — the OS voice
+speaks, and `/health` says which one is doing the talking.
+
+The Assistant is also *told* when a reply will be read aloud, so it writes two
+or three sentences of prose instead of a bulleted answer for a synthesiser to
+read out.
+
 ### How long a turn takes
 
 Roughly five seconds from click to answer, on this machine, for a short

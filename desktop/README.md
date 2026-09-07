@@ -122,6 +122,7 @@ covers the file logger (rotation, UTC timestamps).
 | `install-shortcut.ps1` | Windows Start-menu `.lnk` installer |
 | `launch.ps1` | Windows terminal launcher (`--console` by default) |
 | `install-launcher.sh` | macOS `.app` skeleton / Linux `.desktop` file |
+| `get-piper.ps1` | fetches the neural voice into `tts/` (gitignored) |
 | `features.toml` | tray / hotkey / Settings feature registry (`knowledge-center/wiki/desktop-assistant.md`) |
 | `msvc-env.ps1` | Windows INCLUDE/LIB for incomplete VS installs |
 | `tests/` | pytest for the sidecar, PE subsystem, and the launcher script |
@@ -154,7 +155,9 @@ Module layout, all under `src-tauri/src/`:
 |------|------|
 | `audio.rs` | microphone capture, downmix, resample to 16 kHz, VAD end-pointing |
 | `stt.rs` | spawns and talks to `whisper-server`; keeps the model warm |
-| `tts.rs` | reads a reply aloud through the OS synthesiser; `stop()` is barge-in |
+| `tts.rs` | reads a reply aloud: piper when installed, the OS synthesiser otherwise; `stop()` is barge-in |
+| `piper.rs` | the local neural voice — streams its PCM straight to the output device |
+| `speech_text.rs` | what a written reply sounds like: markdown out, ids said aloud |
 | `listen.rs` | one spoken command: record, transcribe, hand to the console |
 | `tray_state.rs` | the icon's state machine (pure, unit-tested) |
 | `tray_link.rs` | follows the console's event stream so the tray is right when hidden |

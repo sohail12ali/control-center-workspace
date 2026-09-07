@@ -161,6 +161,7 @@ def apply(ctx):
             persona=b.get("persona", "") or "",
             title=b.get("title", "") or "",
             ticket=b.get("ticket", "") or "",
+            system_append=agents_mod.house_style(repo_root),
             server_port=server_port,
         )
         # Starting an agent is the single most consequential thing this API

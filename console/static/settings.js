@@ -835,6 +835,14 @@
       body.appendChild(toggle(s, "speak", "Speak replies",
         "read finished replies aloud — the same switch as Mute replies in the "
         + "tray menu, which writes this one", "speaker"));
+      body.appendChild(field(s, "speak_voice", "Voice",
+        "a neural voice from desktop/tts (fetch one with "
+        + "desktop/get-piper.ps1). Blank uses whichever is installed; with "
+        + "none, the OS voice speaks — that is the robotic one",
+        "text", "speaker"));
+      body.appendChild(field(s, "speak_rate_percent", "Speaking speed",
+        "percent of the voice's natural pace, 50 to 200",
+        "number", "speaker"));
       body.appendChild(field(s, "reply_chars", "Spoken length",
         "characters read aloud; the full text always stays in the chat",
         "number", "speaker"));

@@ -10,6 +10,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[T-013-summary]] — Voice quality: neural TTS, speech-shaped text, and a less robotic house style — Complete — Sohail Ali — 2026-09-07
 - [[T-012-summary]] — Provider switching: Ollama, LM Studio, custom OpenAI-compatible URLs — Complete — Sohail Ali — 2026-09-07
 - [[T-011-summary]] — Session resume: pick a chat back up after a restart — Complete — Sohail Ali — 2026-09-07
 - [[T-010-summary]] — Voice responsiveness: HUD, cues, adaptive VAD, faster STT — Complete — Sohail Ali — 2026-09-07

@@ -88,3 +88,6 @@ htmlcov/
 
 # T-006 speech engine and model, fetched by desktop/get-whisper.ps1
 desktop/stt/
+# The neural voice: a 63 MB model and a prebuilt binary, fetched by
+# desktop/get-piper.ps1. Same reasoning as the speech engine above.
+desktop/tts/

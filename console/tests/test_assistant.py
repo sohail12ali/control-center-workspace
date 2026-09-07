@@ -364,6 +364,32 @@ class TestInjectedContext:
         assert assistant_feature._vision_capable(repo, backend) is True
 
 
+class TestSpokenModeInstruction:
+    """T-013. When a reply is going to be SPOKEN, the model should be told —
+    otherwise it writes a bulleted answer for a synthesiser to read out
+    literally, which is most of why a spoken reply sounds like a machine."""
+
+    def test_the_instruction_is_present_when_speaking_is_on(self, repo):
+        from server.features import assistant_feature
+        from server import agent_backends
+        backend = agent_backends.Backend(
+            {"id": "claude", "command": "python", "transport": "stream_json"})
+        extra = assistant_feature._compose_extra(repo, backend)
+        assert "read aloud" in extra
+        assert "no bullet lists" in extra
+
+    def test_and_absent_when_it_is_off(self, repo):
+        from server.features import assistant_feature
+        from server import agent_backends, assistant_config
+        assistant_config.update(repo, {"speak": False})
+        backend = agent_backends.Backend(
+            {"id": "claude", "command": "python", "transport": "stream_json"})
+        extra = assistant_feature._compose_extra(repo, backend)
+        # Told it will be heard while nothing speaks, the model would shorten
+        # an answer for an audience that does not exist.
+        assert "read aloud" not in extra
+
+
 class TestPersonaRouting:
     """C3: the Assistant's persona reaches an `openai_api` backend via
     `persona=`, and every other backend via `system_append` (its own

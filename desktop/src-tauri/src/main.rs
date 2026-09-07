@@ -13,7 +13,9 @@ mod icons;
 mod listen;
 mod logger;
 mod ocr;
+mod piper;
 mod sidecar;
+mod speech_text;
 mod stt;
 mod tray;
 mod tray_link;
@@ -371,6 +373,11 @@ fn main() {
             // repaint the icon — the microphone included, which before this
             // was the one thing that could not.
             tray_paint::attach(app.handle().clone(), handle.url.clone());
+
+            // So `/health` can say which voice would speak BEFORE anything has
+            // spoken. Without this the shell reports the OS synthesiser until
+            // the first reply, then quietly switches to the neural one.
+            tts::configure(&root, "", 1.0);
 
             register_hotkey(app.handle());
 

@@ -125,6 +125,18 @@ def _compose_extra(repo_root, backend):
         sections.append("## Remembered\n" +
                         _cap_section(memory, CONTEXT_MEMORY_CAP, "memory"))
     sections.append("## Capabilities\n" + _capabilities_line(repo_root, backend))
+    if assistant_config.settings(repo_root).get("speak"):
+        # Only when it is actually true. A model told "this will be read aloud"
+        # while nothing speaks would write for an audience that does not exist,
+        # and the person reading on screen would get the abbreviated version.
+        sections.append(
+            "## This reply will be read aloud\n"
+            "A synthesiser will speak your answer, so write it to be HEARD: no "
+            "markdown, no bullet lists, no code fences, no URLs. Two or three "
+            "sentences. Say ticket ids the way a person says them (\"T two\", "
+            "not \"T dash zero zero two\"). If the full answer needs a list or "
+            "code, say the short version out loud and add that the detail is "
+            "on screen.")
     return "\n\n".join(sections)
 
 

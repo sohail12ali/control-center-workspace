@@ -66,6 +66,15 @@ ticket_prefix = "T-"
 # icon an arm/disarm switch for always-on listening.
 tray_click_action = "listen"
 
+# Which voice reads replies aloud, by name, matching a file in desktop/tts
+# (fetch one with ./desktop/get-piper.ps1). Blank means whichever is installed.
+# With no piper at all, the OS synthesiser speaks instead — on Windows that is
+# System.Speech, whose "Desktop" voices are the robotic ones.
+speak_voice = ""
+
+# Speaking speed, as a percentage of the voice's natural pace.
+speak_rate_percent = 100
+
 # -- listening and transcription ---------------------------------------------
 
 # A take ends when you stop talking. This is the backstop for a detector that

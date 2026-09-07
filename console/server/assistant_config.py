@@ -55,6 +55,16 @@ DEFAULTS = {
     "reply_chars": 400,         # spoken-form cap
     "ticket_prefix": "T-",
 
+    # -- how a reply sounds (T-013) -------------------------------------------
+    # Which neural voice reads replies, by name, matching a file in
+    # desktop/tts (`en_US-amy-medium`). Blank means "whichever is installed";
+    # with no piper at all the OS synthesiser speaks instead and says so.
+    "speak_voice": "",
+    # Speaking speed as a percentage of the voice's natural pace. A percentage
+    # rather than piper's own `length_scale`, which runs the other way and
+    # would put "0.8 is faster" in a settings panel.
+    "speak_rate_percent": 100,
+
     # -- the tray (T-009) ----------------------------------------------------
     # What ONE left-click on the tray icon does. "listen" is state-aware: talk
     # when idle, send the take you are in the middle of, stop a reply being
@@ -110,6 +120,7 @@ WRITABLE = frozenset({
     "backend", "model", "mode", "session_idle_minutes", "speak",
     "reply_chars", "ticket_prefix", "tray_click_action",
     "listen_max_seconds", "listen_silence_ms", "stt_model",
+    "speak_voice", "speak_rate_percent",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
@@ -224,6 +235,16 @@ def update(repo_root, patch, installed_backends=()):
         # Below 200ms a normal pause between words ends the take; above five
         # seconds you are waiting for the backstop instead of the detector.
         raise ValueError("listen_silence_ms must be between 200 and 5000")
+    if "speak_rate_percent" in clean and not 50 <= clean["speak_rate_percent"] <= 200:
+        # Outside this the voice is either unintelligible or comic, and both
+        # read as "broken" rather than "you set it that way".
+        raise ValueError("speak_rate_percent must be between 50 and 200")
+    if "speak_voice" in clean:
+        name = clean["speak_voice"].strip()
+        if name and ("/" in name or "\\" in name or ".." in name):
+            # It becomes a filename in desktop/tts.
+            raise ValueError("speak_voice must be a voice name like en_US-amy-medium")
+        clean["speak_voice"] = name
     if "stt_model" in clean:
         name = clean["stt_model"].strip().lstrip("-")
         if not name or "/" in name or "\\" in name or ".." in name:

@@ -57,6 +57,39 @@ _JOBS_LOCK = threading.Lock()
 MAX_BUFFERED_CHARS = 200_000
 
 
+#: A tone note appended to every chat this console starts (T-013).
+HOUSE_STYLE_REL = os.path.join("console", "config", "house-style.md")
+
+#: A cap, because this text is prepended to someone else's system prompt. A
+#: page of tone instructions would crowd out the actual task, and the fix for
+#: wanting more than this is usually a persona, not a longer style note.
+HOUSE_STYLE_CAP = 1200
+
+
+def house_style(repo_root):
+    """The workspace's tone note, or "" when there is none.
+
+    Exists because an agent chat gets no persona at all: the CLI's own system
+    prompt decides how it writes, and "it talks like a robot" is a fair
+    complaint about a default. This is the one channel the console has into
+    that — `system_append` — used sparingly.
+
+    Everything above the `---` in the file is documentation for whoever opens
+    it; only what follows is sent.
+    """
+    path = os.path.join(repo_root, HOUSE_STYLE_REL)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    _, sep, body = text.partition(chr(10) + "---" + chr(10))
+    body = (body if sep else text).strip()
+    if len(body) > HOUSE_STYLE_CAP:
+        body = body[:HOUSE_STYLE_CAP].rstrip() + " [house style truncated]"
+    return body
+
+
 def _jobs_cache_dir(repo_root):
     d = os.path.join(repo_root, "console", ".cache", "agent-runs")
     os.makedirs(d, exist_ok=True)

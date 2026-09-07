@@ -5,13 +5,18 @@
 //! Every one of these three platforms ships a speech synthesiser that is
 //! already installed, already has voices, and already knows how to reach the
 //! audio device: `System.Speech` on Windows, `say` on macOS, `spd-say` or
-//! `espeak-ng` on Linux. Going through WinRT's `SpeechSynthesis` instead would
-//! mean owning WAV decoding and an output stream to gain better voices — and
-//! after T-005, adding more WinRT to this binary is a cost worth avoiding
-//! unless something demands it.
+//! `espeak-ng` on Linux. This module spawns one of those and lets the OS do
+//! the work.
 //!
-//! So this module spawns a process and lets the OS do the work. The whole
-//! backend is swappable behind `speak()` if the voices ever justify it.
+//! ## And why there is now a second backend
+//!
+//! Because the voices did justify it. `System.Speech` reaches only the old
+//! "Desktop" voices — Microsoft David and Zira on a typical Windows install —
+//! and "it talks like a robot" turned out to be a fair description rather than
+//! a figure of speech. So `piper` is preferred when it is installed: a local
+//! neural voice, fetched deliberately by `desktop/get-piper.ps1`, with the OS
+//! synthesiser as the fallback that always works. This module is the choice
+//! between them; `piper.rs` owns the harder half.
 //!
 //! ## Why the text is passed by stdin on Windows
 //!
@@ -35,11 +40,6 @@ pub type TtsResult<T> = Result<T, String>;
 /// The utterance in flight, so a later `stop()` can end it.
 static SPEAKING: Mutex<Option<Child>> = Mutex::new(None);
 
-/// Cap on what will be spoken in one go. A model can produce pages; reading
-/// pages aloud is not a feature, it is a hostage situation. The console
-/// already trims to its own `reply_chars`, and this is the backstop.
-const MAX_CHARS: usize = 2000;
-
 fn guard() -> std::sync::MutexGuard<'static, Option<Child>> {
     SPEAKING.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -49,10 +49,30 @@ pub fn available() -> bool {
     backend().is_some()
 }
 
+/// Where the neural voice would be, if it is installed. Set once at startup
+/// so `speak()` keeps a signature the bridge can call without carrying a path
+/// through every layer that does not care.
+static ROOT: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+
+/// Voice and speed, read from the console's settings by the caller.
+static VOICE: Mutex<String> = Mutex::new(String::new());
+static RATE: Mutex<f32> = Mutex::new(1.0);
+
+pub fn configure(repo_root: &std::path::Path, voice: &str, rate: f32) {
+    *ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(repo_root.to_path_buf());
+    *VOICE.lock().unwrap_or_else(|e| e.into_inner()) = voice.to_string();
+    *RATE.lock().unwrap_or_else(|e| e.into_inner()) = rate;
+}
+
+fn root() -> Option<std::path::PathBuf> {
+    ROOT.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// The name of the backend that would be used, for `/health` and for saying
 /// why speech is unavailable.
 pub fn backend_name() -> String {
     match backend() {
+        Some(Backend::Piper) => "piper".into(),
         Some(Backend::Windows) => "system.speech".into(),
         Some(Backend::Say) => "say".into(),
         Some(Backend::SpdSay) => "spd-say".into(),
@@ -62,6 +82,9 @@ pub fn backend_name() -> String {
 }
 
 enum Backend {
+    /// A local neural voice. Preferred when installed — it is the reason this
+    /// module has a choice to make at all.
+    Piper,
     /// PowerShell + `System.Speech`. Present on every Windows install.
     Windows,
     /// macOS `say`.
@@ -84,6 +107,11 @@ fn on_path(exe: &str) -> bool {
 }
 
 fn backend() -> Option<Backend> {
+    if let Some(root) = root() {
+        if crate::piper::available(&root) {
+            return Some(Backend::Piper);
+        }
+    }
     if cfg!(windows) {
         // Preferred over any of the below on Windows: it needs no install and
         // uses the voice the user already hears from the OS.
@@ -116,17 +144,7 @@ fn hint() -> String {
 /// Trim to something worth hearing. Public so the same rule can be tested
 /// without a sound card.
 pub fn spoken_form(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= MAX_CHARS {
-        return trimmed.to_string();
-    }
-    let cut: String = trimmed.chars().take(MAX_CHARS).collect();
-    // Break at a sentence end if there is one nearby, so it does not stop
-    // mid-word.
-    match cut.rfind(['.', '!', '?']) {
-        Some(idx) if idx > MAX_CHARS / 2 => cut[..=idx].to_string(),
-        _ => cut,
-    }
+    crate::speech_text::spoken_form(text)
 }
 
 /// Speak `text`, interrupting anything already speaking.
@@ -143,7 +161,17 @@ pub fn speak(text: &str) -> TtsResult<usize> {
     let backend = backend().ok_or_else(hint)?;
     stop();
 
+    if matches!(backend, Backend::Piper) {
+        let root = root().ok_or("piper has no repo root")?;
+        let voice = VOICE.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let rate = *RATE.lock().unwrap_or_else(|e| e.into_inner());
+        crate::piper::speak_voice(&root, &voice, &body, rate)?;
+        return Ok(body.chars().count());
+    }
+
     let mut command = match backend {
+        // Handled above, before any process is built.
+        Backend::Piper => unreachable!("piper speaks through its own path"),
         Backend::Windows => {
             let mut c = Command::new("powershell");
             // The text arrives on stdin, never on the command line - see the
@@ -197,7 +225,13 @@ fn cmd_no_window(command: &mut Command) {
 
 /// Stop whatever is speaking. Safe to call when nothing is.
 pub fn stop() -> bool {
+    // Both, unconditionally: which backend spoke last is not worth tracking
+    // when stopping the one that is silent costs nothing.
+    let piper_stopped = crate::piper::stop();
     let mut slot = guard();
+    if piper_stopped && slot.is_none() {
+        return true;
+    }
     match slot.take() {
         Some(mut child) => {
             let _ = child.kill();
@@ -211,6 +245,9 @@ pub fn stop() -> bool {
 /// Has the current utterance finished? Used to drive the tray back out of the
 /// speaking state without the caller having to poll a process handle.
 pub fn finished() -> bool {
+    if !crate::piper::finished() {
+        return false;
+    }
     let mut slot = guard();
     match slot.as_mut() {
         Some(child) => match child.try_wait() {
@@ -248,22 +285,11 @@ mod tests {
     }
 
     #[test]
-    fn a_long_reply_is_trimmed_at_a_sentence_end() {
-        let long = format!("{}. and then more text that runs past the cap", "x".repeat(1990));
-        let out = spoken_form(&long);
-        assert!(out.chars().count() <= MAX_CHARS);
-        assert!(out.ends_with('.'), "trimmed mid-word: {:?}", &out[out.len().saturating_sub(30)..]);
-    }
-
-    #[test]
-    fn a_long_reply_with_no_sentence_end_is_still_capped() {
-        let out = spoken_form(&"y".repeat(5000));
-        assert_eq!(out.chars().count(), MAX_CHARS);
-    }
-
-    #[test]
-    fn short_text_is_passed_through_trimmed() {
-        assert_eq!(spoken_form("  pong  "), "pong");
+    fn what_gets_spoken_is_shaped_for_speech() {
+        // The rules (and their tests) live in `speech_text`; this asserts the
+        // wiring, so a future `speak()` that stopped calling it is caught.
+        assert_eq!(spoken_form("**Two** tickets, see T-002"),
+                   "Two tickets, see T 2.");
     }
 
     #[test]
