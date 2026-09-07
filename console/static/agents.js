@@ -192,7 +192,14 @@
           text: [chat.agent, chat.mode, chat.num_turns ? chat.num_turns + " turns" : null]
             .filter(Boolean).join(" · ") }),
       ]),
-      chat.orphaned ? C.el("span", { class: "chip", title: "From a previous server run — replay only" }, ["past"]) : null,
+      chat.orphaned
+        ? C.el("span", {
+            class: "chip" + (chat.resumable ? " accent" : ""),
+            title: chat.resumable
+              ? "From a previous server run — can be resumed"
+              : "From a previous server run — replay only" },
+            [chat.resumable ? "resumable" : "past"])
+        : null,
     ]);
   }
 
@@ -756,6 +763,20 @@
     paintMain();
   }
 
+  /* Pick a past chat back up. The transcript keeps its history and the CLI
+     keeps its context — the whole point is that this is the same conversation,
+     not a new one with the old text scrolled above it. */
+  function resumeChat(id) {
+    C.post("/api/agents/chats/" + encodeURIComponent(id) + "/resume", {})
+      .then(function () {
+        C.toast("Resumed", "ok");
+        refreshChats();
+        detachStore();
+        openChat(id);
+      })
+      .catch(function (err) { C.toast(err.message, "err"); });
+  }
+
   function newChat() {
     detachStore();
     st.mode = "new";
@@ -1110,9 +1131,22 @@
     C.clear(composer);
 
     if (!s.alive) {
+      // Resume is offered only when the chat can actually be resumed: the CLI
+      // gave us a session id for it and its backend row says how to hand that
+      // id back. A button that quietly started a NEW chat would be the worst
+      // possible version of this feature — it looks identical until the model
+      // turns out to have forgotten everything.
+      var past = (st.chats || []).filter(function (c) { return c.id === s.id; })[0] || {};
       composer.appendChild(C.el("div", { class: "ct-dead" }, [
         C.icon("info"),
-        C.el("span", { text: "This session has ended. Its transcript is read-only — start a new chat to continue." }),
+        C.el("span", { text: past.resumable
+          ? "This session has ended. Resume it to carry on where you left off, or start a new chat."
+          : "This session has ended. Its transcript is read-only — start a new chat to continue." }),
+        past.resumable
+          ? C.el("button", { class: "btn sm primary",
+                             onclick: function () { resumeChat(s.id); } },
+                 [C.icon("refresh"), "Resume"])
+          : null,
         C.el("button", { class: "btn sm", onclick: newChat }, [C.icon("play"), "New chat"]),
       ]));
       return;

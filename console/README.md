@@ -1030,6 +1030,21 @@ Still to come: a Settings-tab control for the backend picker (the service side
 exists and round-trips through `GET`/`POST /api/assistant/settings`), OS
 actuation, and watch mode.
 
+### Resuming a chat
+
+A chat used to die with the console. Now a past chat carries a **Resume**
+button when two things are true: its transcript recorded the CLI's own session
+id, and its backend row in `console/config/agents.toml` says how to hand that
+id back (`resume_session_args`). Resuming keeps the same chat id and the same
+transcript — it is the same conversation, and the model still has its context.
+
+`POST /api/agents/chats/{id}/resume` does it without the UI, and is audited as
+`chat.resume`. The Assistant does the same for its own chat, so a restart
+continues where you left off instead of quietly starting over.
+
+A chat that cannot be resumed says so rather than starting a fresh one under
+the same name.
+
 ## Security notes
 
 - Binds `127.0.0.1` only — not reachable from the network.

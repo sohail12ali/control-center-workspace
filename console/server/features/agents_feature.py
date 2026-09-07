@@ -122,6 +122,19 @@ def apply(ctx):
                              "persona": snap.get("persona", "")})
         return snap
 
+    def chat_resume(req, sid):
+        """Pick a past chat back up, in place.
+
+        Audited like a start, because that is what it is from the machine's
+        point of view: a CLI process spawned with this repo's files in reach.
+        """
+        snap = agent_manager.resume(repo_root, sid, server_port=server_port)
+        audit.record(repo_root, "chat.resume", actor=audit.actor_of(req),
+                     target=sid,
+                     detail={"backend": snap.get("agent", ""),
+                             "model": snap.get("model", "")})
+        return snap
+
     def chat_get(req, sid):
         return agent_manager.transcript(repo_root, sid)
 
@@ -210,6 +223,7 @@ def apply(ctx):
 
     ctx.post(r"^/api/agents/chats/?$", chat_new, "agents.new")
     ctx.post(r"^/api/agents/chats/([^/]+)/send/?$", chat_send, "agents.send")
+    ctx.post(r"^/api/agents/chats/([^/]+)/resume/?$", chat_resume, "agents.resume")
     ctx.post(r"^/api/agents/chats/([^/]+)/interrupt/?$", chat_interrupt, "agents.interrupt")
     ctx.post(r"^/api/agents/chats/([^/]+)/stop/?$", chat_stop, "agents.stop")
     ctx.post(r"^/api/agents/chats/([^/]+)/delete/?$", chat_delete, "agents.delete")

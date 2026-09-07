@@ -352,6 +352,13 @@ Three listen modes (keep them separate):
 | **Voice turn / short take** | Push-to-talk one phrase → STT → `/send` on the live chat. Hands-free “commits a phrase,” kept short on purpose. |
 | **Hands-free listen** | VAD, barge-in, interrupt (`/interrupt` already exists). Phase 3 after whisper.cpp. Off by default; tray icon must show listening. |
 
+### Session lifetime
+
+A chat outlives the console as of T-011: the CLI's session id is kept in the
+transcript, and `--resume` hands it back. The Assistant resumes its own chat
+across a restart rather than starting a new one, which is what makes its
+memory and its ticket context survive a reboot.
+
 ### Icon states
 
 | State | Meaning |

@@ -64,6 +64,30 @@ session_args = [
 ]
 add_dir_args = ["--add-dir", "{dir}"]
 
+# How to pick a PAST chat back up (T-011). Identical to session_args plus
+# `--resume {resume_id}`, where the id is the one Claude Code reported on its
+# own events and the console kept in the transcript. Written out rather than
+# derived from session_args, because "the same flags plus one" is a claim
+# about a CLI, and this file's job is to state such claims where they can be
+# read and corrected.
+#
+# A backend with no resume template is reported as not resumable and its past
+# chats stay replay-only, which is the honest outcome — see `Backend.can_resume`.
+resume_session_args = [
+  "-p",
+  "--resume", "{resume_id}",
+  "--input-format", "stream-json",
+  "--output-format", "stream-json",
+  "--include-partial-messages",
+  "--replay-user-messages",
+  "--verbose",
+  "--permission-mode", "{mode}",
+  "--model", "{model}",
+  "--agent", "{persona}",
+  "--settings", "{settings}",
+  "--append-system-prompt", "{system_append}",
+]
+
 # The one-shot form, used by `kanban agents launch` (and nothing else — the tab
 # always opens a session). Kept separate from session_args because the two are
 # genuinely different invocations, not the same one with a flag removed: no

@@ -376,7 +376,8 @@ class LiveSession(BaseSession):
         self._open_log()
         argv = self.backend.session_argv(
             mode=self.mode, model=self.model, persona=self.persona,
-            settings_path=self.settings_path, system_append=self.system_append)
+            settings_path=self.settings_path, system_append=self.system_append,
+            resume_id=self.native_session_id)
         self.proc = subprocess.Popen(
             argv, cwd=self.cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -598,7 +599,7 @@ class TurnSession(BaseSession):
 
 def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
           skill="", persona="", on_exit=None, settings_path="", ticket="",
-          system_append="", extra=""):
+          system_append="", extra="", start_seq=0, resume_id=""):
     """Pick the transport the backend declared. The only place that decision
     is made, so a new transport is one branch here plus a class."""
     if backend.transport == "openai_api":
@@ -610,8 +611,16 @@ def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
         cls = LiveSession
     else:
         cls = TurnSession
-    stream = Stream(sid, path=log_path.replace(".log", ".events.jsonl") if log_path else None)
-    return cls(sid, backend, cwd, stream, log_path=log_path, title=title,
+    stream = Stream(sid,
+                    path=log_path.replace(".log", ".events.jsonl") if log_path else None,
+                    start_seq=start_seq)
+    sess = cls(sid, backend, cwd, stream, log_path=log_path, title=title,
                model=model, mode=mode, skill=skill, persona=persona,
                on_exit=on_exit, settings_path=settings_path, ticket=ticket,
                system_append=system_append, extra=extra)
+    # A resumed session already has an identity on the CLI's side. Carrying it
+    # in before `start()` is what makes the process continue that conversation
+    # instead of opening a new one.
+    if resume_id:
+        sess.native_session_id = resume_id
+    return sess

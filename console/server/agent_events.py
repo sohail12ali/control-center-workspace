@@ -42,6 +42,21 @@ RING_MAX = 4000
 HEARTBEAT_SECS = 20.0
 
 
+def last_seq(path):
+    """The highest seq already written to a transcript, or 0.
+
+    Read rather than assumed: a resumed session has to keep numbering where
+    the dead one stopped.
+    """
+    top = 0
+    for event in replay_file(path):
+        try:
+            top = max(top, int(event.get("seq") or 0))
+        except (TypeError, ValueError):
+            continue
+    return top
+
+
 def replay_file(path):
     """Parse a transcript off disk, tolerating a torn final line.
 
@@ -73,16 +88,20 @@ def sse_pack(event):
 class Stream:
     """The event log of one session: append-only, sequenced, resumable."""
 
-    def __init__(self, session_id, path=None):
+    def __init__(self, session_id, path=None, start_seq=0):
         self.session_id = session_id
         self.path = path
         self._cv = threading.Condition()
         self._ring = deque(maxlen=RING_MAX)
-        self._seq = 0
+        # `start_seq` continues an existing transcript rather than restarting
+        # its numbering. A resumed chat appends to the same file, and two
+        # events both numbered 1 in one file would make `since()` — and so the
+        # UI's catch-up after a reconnect — silently wrong.
+        self._seq = start_seq
         self._closed = False
         # The seq of the oldest event still in the ring. Cheaper than
         # inspecting the deque, and correct while empty.
-        self._first_in_ring = 1
+        self._first_in_ring = start_seq + 1
         self._fh = None
         if path is not None:
             import os

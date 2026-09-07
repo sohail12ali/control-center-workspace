@@ -18,8 +18,14 @@ import os
 import threading
 import uuid
 
+import time
+
 from . import agent_approvals, agent_backends, agent_session
 from .agent_events import replay_file
+
+
+def _now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 CHATS_REL = os.path.join("console", ".cache", "agent-chats")
 
@@ -129,7 +135,8 @@ def list_chats(repo_root):
             continue
         meta = _meta_from_transcript(path)
         meta.update({"id": sid, "alive": False, "busy": False, "queued": [],
-                     "replayable": True, "orphaned": True})
+                     "replayable": True, "orphaned": True,
+                     "resumable": _can_resume(repo_root, meta)})
         out.append(meta)
 
     out.sort(key=lambda s: s.get("started") or "", reverse=True)
@@ -141,15 +148,29 @@ def _meta_from_transcript(path):
     only the events that carry it — cheaper than replaying the whole log."""
     meta = {"title": "(recovered chat)", "agent": "", "model": "", "mode": "",
             "started": "", "ended": "", "cost_usd": 0.0, "num_turns": 0,
-            "transport": "", "steerable": False}
+            "transport": "", "steerable": False,
+            # What it takes to start the same conversation again: where it ran
+            # and what the CLI calls it. Both were already in the transcript;
+            # nothing read them back out.
+            "cwd": "", "native_session_id": "", "seq": 0}
     for ev in replay_file(path):
         t = ev.get("type")
+        try:
+            meta["seq"] = max(meta["seq"], int(ev.get("seq") or 0))
+        except (TypeError, ValueError):
+            pass
+        # The CLI's own id for this conversation, as seen on any event that
+        # carried it. The LAST one wins: a resumed chat is issued a new id by
+        # some CLIs, and it is the current one that can be resumed again.
+        if ev.get("session_id"):
+            meta["native_session_id"] = ev["session_id"]
         if t == "session.started":
             meta["title"] = ev.get("title") or meta["title"]
             meta["agent"] = ev.get("agent") or ""
             meta["model"] = ev.get("model") or ""
             meta["mode"] = ev.get("mode") or ""
             meta["started"] = ev.get("at") or ""
+            meta["cwd"] = ev.get("cwd") or meta["cwd"]
         elif t == "turn.end":
             meta["cost_usd"] = round(meta["cost_usd"] + float(ev.get("cost_usd") or 0.0), 4)
             meta["num_turns"] += int(ev.get("num_turns") or 0)
@@ -158,22 +179,101 @@ def _meta_from_transcript(path):
     return meta
 
 
+def _can_resume(repo_root, meta):
+    """Both halves have to be true: the CLI gave us an id for this
+    conversation, and its backend row says how to hand that id back."""
+    if not meta.get("native_session_id"):
+        return False
+    try:
+        return agent_backends.get(repo_root, meta.get("agent") or "").can_resume
+    except (ValueError, KeyError):
+        return False
+
+
+def resume(repo_root, sid, *, server_port=0):
+    """Pick a dead chat back up, in place.
+
+    The same session id, the same transcript file, the same working directory
+    — and the CLI's own session id handed back to it, which is what makes the
+    model remember the conversation rather than being told about it. Sessions
+    have always died with the console; everything needed to undo that was
+    already on disk.
+
+    Raises rather than silently starting a fresh chat: "it resumed" and "it
+    began again with no memory" look identical in a chat window, and only one
+    of them is what was asked for.
+    """
+    live = get(sid)
+    if live is not None and live.alive:
+        return live.snapshot()
+
+    _log, events_path = _paths(repo_root, sid)
+    if not os.path.isfile(events_path):
+        raise FileNotFoundError("no transcript for %r" % sid)
+    meta = _meta_from_transcript(events_path)
+    if not meta.get("native_session_id"):
+        raise ValueError(
+            "this chat has no CLI session id in its transcript, so there is "
+            "nothing to resume — start a new chat instead")
+    backend = agent_backends.get(repo_root, meta.get("agent") or "")
+    if not backend.can_resume:
+        raise ValueError(
+            "%s cannot resume a past chat: no resume flags in its "
+            "console/config/agents.toml row" % backend.label)
+    if not backend.installed:
+        raise ValueError(backend.unavailable_reason)
+
+    settings_path = ""
+    if backend.transport == "stream_json" and backend.gated_tools and server_port:
+        settings_path = agent_approvals.write_settings(
+            chats_dir(repo_root), sid, backend.gated_tools, server_port,
+            timeout=backend.approval_timeout)
+
+    def _on_exit(sess):
+        agent_approvals.REGISTRY.forget(sess.id)
+
+    sess = agent_session.build(
+        sid, backend, meta.get("cwd") or repo_root, log_path=_log,
+        title=meta.get("title") or "(resumed chat)",
+        model=meta.get("model", ""), mode=meta.get("mode", ""),
+        on_exit=_on_exit, settings_path=settings_path,
+        # Numbering continues where the dead session stopped, so the client's
+        # catch-up still works against one file.
+        start_seq=meta.get("seq", 0),
+        resume_id=meta["native_session_id"])
+    with _lock:
+        _sessions[sid] = sess
+    sess.start()
+    # Recorded in the transcript itself: a reader should be able to see where
+    # one process ended and the next took over the same conversation.
+    sess.stream.publish({
+        "type": "session.resumed", "id": sid, "at": _now(),
+        "resumed": meta["native_session_id"], "agent": backend.id,
+    })
+    return sess.snapshot()
+
+
 def transcript(repo_root, sid):
     """Every event for a chat, live or dead. The client calls this on first
     open and after a `stream.reset`."""
     sess = get(sid)
-    if sess is not None:
-        events, _gap = sess.stream.since(0)
-        if events:
-            return {"id": sid, "events": events, "head": sess.stream.head,
-                    "snapshot": sess.snapshot()}
     _log, events_path = _paths(repo_root, sid)
-    if not os.path.isfile(events_path):
-        raise FileNotFoundError("no transcript for %r" % sid)
-    events = replay_file(events_path)
-    return {"id": sid, "events": events,
-            "head": events[-1].get("seq", 0) if events else 0,
-            "snapshot": None}
+    # The FILE first, whenever there is one, because it holds the whole
+    # conversation while the ring holds only what this process has published.
+    # For a resumed chat those differ by everything that happened before the
+    # resume — opening it would have shown two events and an empty history.
+    if os.path.isfile(events_path):
+        events = replay_file(events_path)
+        return {"id": sid, "events": events,
+                "head": events[-1].get("seq", 0) if events else 0,
+                "snapshot": sess.snapshot() if sess is not None else None}
+    if sess is not None:
+        # A session with no transcript on disk (nothing outside tests builds
+        # one, but the ring is still the truth for it).
+        events, _gap = sess.stream.since(0)
+        return {"id": sid, "events": events, "head": sess.stream.head,
+                "snapshot": sess.snapshot()}
+    raise FileNotFoundError("no transcript for %r" % sid)
 
 
 def subscribe(repo_root, sid, from_seq=0, types=None):

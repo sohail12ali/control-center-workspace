@@ -164,6 +164,14 @@ def _minutes_since(iso_ts):
 
 def apply(ctx):
     repo_root = ctx.repo_root
+    # Needed to reinstall the approval hook when a chat is resumed: the gate
+    # is a settings file pointing at this port, and a resumed session without
+    # it would run ungated.
+    # `getattr`, because a context without config is a real case (the tests
+    # build a minimal one) and it means the same thing as no port: skip the
+    # gate installation rather than half-install it, exactly as `create` does.
+    _general = (getattr(ctx, "config", None) or {}).get("general") or {}
+    server_port = int(_general.get("port", 0) or 0)
 
     def _current():
         """(live session or None, the pointer or None)."""
@@ -185,6 +193,27 @@ def apply(ctx):
                 # or every reply would be spoken twice.
                 assistant_reply.watch(repo_root, sess.id)
                 return sess
+        # A dead pointer is not necessarily a dead conversation. The CLI
+        # still remembers this chat by its own session id, so try to pick it
+        # up before starting over — a restart of the console (or the shell)
+        # otherwise silently costs the Assistant everything it knew.
+        if pointer and sess is None:
+            try:
+                snap = agent_manager.resume(repo_root, pointer["sid"],
+                                            server_port=server_port)
+                assistant.write_session(repo_root, sid=snap["id"],
+                                        backend=snap.get("agent", ""),
+                                        model=snap.get("model", ""))
+                assistant_reply.watch(repo_root, snap["id"])
+                print("assistant: resumed chat %s" % snap["id"])
+                return agent_manager.require(snap["id"])
+            except (FileNotFoundError, ValueError, OSError) as e:
+                # Every one of these is ordinary: no transcript, a backend
+                # that cannot resume, a CLI that has forgotten the id. Say
+                # which, then start fresh — the one thing not to do is imply
+                # continuity that is not there.
+                print("assistant: starting a new chat (%s)" % e)
+
         backend_id = _pick_backend(repo_root, backend_hint)
         backend = agent_backends.get(repo_root, backend_id)
         snap = agent_manager.create(

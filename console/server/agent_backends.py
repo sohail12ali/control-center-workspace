@@ -468,6 +468,7 @@ class Backend:
             # called with never travel with them.
             "gated_tools": list(self.gated_tools),
             "prompt_prefix_style": self.raw.get("prompt_prefix_style", "slash"),
+            "can_resume": self.can_resume,
             "is_api": self.is_api,
             "unavailable_reason": self.unavailable_reason,
             # Setup facts, for the composer's grouping and the Settings panel.
@@ -489,17 +490,27 @@ class Backend:
 
     # -- argv builders -------------------------------------------------------
     def session_argv(self, *, mode="", model="", persona="", settings_path="",
-                      add_dirs=(), system_append=""):
-        """The argv for a long-lived streaming session (`stream_json`)."""
-        tmpl = self.raw.get("session_args")
+                      add_dirs=(), system_append="", resume_id=""):
+        """The argv for a long-lived streaming session (`stream_json`).
+
+        With a `resume_id` and a `resume_session_args` template, this is the
+        argv that CONTINUES a conversation the CLI still remembers — the same
+        shape `turn_argv` has always used for per-turn backends, applied to
+        the long-lived ones.
+        """
+        key = "session_args"
+        if resume_id and self.raw.get("resume_session_args"):
+            key = "resume_session_args"
+        tmpl = self.raw.get(key)
         if not tmpl:
-            raise ValueError("backend %r has no session_args" % self.id)
+            raise ValueError("backend %r has no %s" % (self.id, key))
         argv = [self._exe()] + _expand(tmpl, {
             "mode": mode or self.default_mode,
             "model": model,
             "persona": persona,
             "settings": settings_path,
             "system_append": system_append,
+            "resume_id": resume_id,
         })
         for d in add_dirs or ():
             for part in _expand(self.raw.get("add_dir_args", []), {"dir": d}):
@@ -520,6 +531,21 @@ class Backend:
             "model": model,
             "resume_id": resume_id,
         })
+
+    @property
+    def can_resume(self):
+        """Can a DEAD chat on this backend be picked up again?
+
+        Read off the templates rather than hardcoded per id: a backend row
+        that declares how to resume can, and one that does not is honestly
+        reported as not resumable rather than failing at spawn time with a
+        flag its CLI has never heard of.
+        """
+        for key in ("resume_session_args", "resume_args"):
+            tmpl = self.raw.get(key)
+            if tmpl and any("{resume_id}" in str(item) for item in tmpl):
+                return True
+        return False
 
     @property
     def supports_system_append_flag(self):
