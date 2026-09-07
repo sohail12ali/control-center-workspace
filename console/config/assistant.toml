@@ -66,6 +66,23 @@ ticket_prefix = "T-"
 # icon an arm/disarm switch for always-on listening.
 tray_click_action = "listen"
 
+# -- listening and transcription ---------------------------------------------
+
+# A take ends when you stop talking. This is the backstop for a detector that
+# never sees silence; it was 20 seconds, and on a microphone with a high noise
+# floor it cost that on every single take before the detector learned to
+# measure the room first.
+listen_max_seconds = 12
+
+# How long a pause has to be before it counts as "finished". Long enough to
+# think mid-sentence, short enough not to feel like waiting.
+listen_silence_ms = 700
+
+# Which whisper.cpp model transcribes your voice, by name. base.en is accurate
+# enough for ticket ids; tiny.en is several times faster and noticeably worse
+# at exactly those. Fetch one with: ./desktop/get-whisper.ps1 -Model tiny.en
+stt_model = "base.en"
+
 # -- hands-free listening ----------------------------------------------------
 # Off unless you turn it on from the tray. An always-on microphone is a
 # different proposition from push-to-talk, so these default to the cautious

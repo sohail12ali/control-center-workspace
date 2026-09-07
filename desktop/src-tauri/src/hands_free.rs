@@ -222,6 +222,11 @@ fn run(
 ) {
     let started = Instant::now();
     let cap = Duration::from_secs(policy.max_minutes.max(1) * 60);
+    // Opened once for the whole session and reused. The microphone is on
+    // either way while hands-free is on — reopening it between takes would
+    // only make it deaf for a second after every utterance. It closes when
+    // this loop ends, which is what turns the OS indicator off.
+    let mut mic: Option<crate::audio::Mic> = None;
 
     while RUNNING.load(Ordering::SeqCst) {
         if started.elapsed() >= cap {
@@ -240,7 +245,7 @@ fn run(
         }
 
         let policy_for_gate = policy.clone();
-        match listen::take_gated(&repo_root, &assistant, &console_url, move |text| {
+        match listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
             should_send(text, &policy_for_gate)
         }) {
             Ok(sent) => log::info!("hands-free: sent {sent:?}"),

@@ -1,9 +1,15 @@
 {
   "identifier": "loopback-chrome",
   "description": "Window chrome plus event emit for the tray session header, for the Console page on loopback HTTP",
-  "windows": ["main"],
+  "windows": [
+    "main",
+    "hud"
+  ],
   "remote": {
-    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*"
+    ]
   },
   "permissions": [
     "core:window:default",

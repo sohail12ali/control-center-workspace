@@ -732,7 +732,8 @@
         [["default", "default — gated tools ask"], ["plan", "plan — read-only"]],
         "sliders"));
       body.appendChild(toggle(s, "speak", "Speak replies",
-        "read finished replies aloud", "speaker"));
+        "read finished replies aloud — the same switch as Mute replies in the "
+        + "tray menu, which writes this one", "speaker"));
       body.appendChild(field(s, "reply_chars", "Spoken length",
         "characters read aloud; the full text always stays in the chat",
         "number", "speaker"));
@@ -742,6 +743,16 @@
       body.appendChild(field(s, "ticket_prefix", "Ticket prefix",
         "how a spoken id is canonicalised — \"t dash two\" becomes T-002",
         "text", "list"));
+      body.appendChild(field(s, "listen_max_seconds", "Take cap",
+        "seconds — the backstop if the detector never hears you stop",
+        "number", "clock"));
+      body.appendChild(field(s, "listen_silence_ms", "Ends after",
+        "milliseconds of quiet, so a pause to think does not cut you off",
+        "number", "mic"));
+      body.appendChild(field(s, "stt_model", "Speech model",
+        "base.en is accurate on ticket ids; tiny.en is faster and worse at "
+        + "exactly those. Fetch one with desktop/get-whisper.ps1 -Model",
+        "text", "brain"));
       body.appendChild(choice(s, "tray_click_action", "Tray icon click",
         CLICK_HINT[s.tray_click_action] || CLICK_HINT.listen,
         CLICK_ACTIONS, "mic"));

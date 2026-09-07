@@ -80,9 +80,46 @@ fn server_binary(repo_root: &std::path::Path) -> Option<PathBuf> {
     })
 }
 
-/// Any ggml model in the stt directory. Smallest first, so a machine with
-/// several installed uses the fast one rather than the biggest by accident.
+/// Which model to load, by name (`base.en`, `tiny.en`, ...).
+///
+/// Set from the settings, because "smallest first" alone made the choice
+/// implicit and reversible by a download: dropping `tiny.en` beside
+/// `base.en` silently switched every future transcript to the faster, less
+/// accurate model. A named preference makes the trade a decision.
+static PREFERRED: Mutex<String> = Mutex::new(String::new());
+
+pub fn prefer_model(name: &str) {
+    let mut slot = PREFERRED.lock().unwrap_or_else(|e| e.into_inner());
+    if *slot != name {
+        *slot = name.to_string();
+    }
+}
+
+/// The named model if it is installed; otherwise any ggml in the directory,
+/// smallest first, so a machine with only one still works and a machine
+/// missing the named one says which it fell back to.
 fn model_file(repo_root: &std::path::Path) -> Option<PathBuf> {
+    let wanted = PREFERRED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let wanted = wanted.trim().to_string();
+    if !wanted.is_empty() {
+        let named = repo_root.join(STT_DIR).join(format!("ggml-{wanted}.bin"));
+        if named.is_file() {
+            return Some(named);
+        }
+    }
+    let fallback = smallest_model(repo_root);
+    if !wanted.is_empty() {
+        if let Some(path) = fallback.as_ref() {
+            log::warn!(
+                "stt: ggml-{wanted}.bin is not in {STT_DIR}; using {} instead",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+        }
+    }
+    fallback
+}
+
+fn smallest_model(repo_root: &std::path::Path) -> Option<PathBuf> {
     let dir = repo_root.join(STT_DIR);
     let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(&dir)
         .ok()?
@@ -99,6 +136,13 @@ fn model_file(repo_root: &std::path::Path) -> Option<PathBuf> {
         .collect();
     found.sort_by_key(|(len, _)| *len);
     found.into_iter().next().map(|(_, p)| p)
+}
+
+/// How many threads to give the decoder: every core, not whisper's default
+/// four. Nothing else is running while a take is transcribed, and the user is
+/// waiting for it.
+fn threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
 }
 
 /// Can speech be transcribed on this machine right now?
@@ -190,6 +234,26 @@ fn ensure(repo_root: &std::path::Path) -> SttResult<u16> {
         .arg("-l")
         .arg("en")
         .arg("-nt")
+        // Speed, measured rather than assumed: on a fixed WAV these took a
+        // 2854ms transcription to 2209ms with a byte-identical transcript.
+        // Every one of them trades something this workload does not want:
+        //   -t      all the cores, not the default four
+        //   -bo 1   one candidate; `best-of 2` decodes twice to pick a
+        //           winner, which is for prose, not "open T-002"
+        //   -nf     no temperature fallback re-runs on a low-confidence
+        //           segment — a command is better re-said than re-decoded
+        //   -mc 0   carry no text context between segments. Also stops the
+        //           doubled-phrase hallucination seen in T-008's live run
+        //   -sns    suppress non-speech tokens, so room noise does not
+        //           become "(clears throat)" in the transcript
+        .arg("-t")
+        .arg(threads().to_string())
+        .arg("-bo")
+        .arg("1")
+        .arg("-nf")
+        .arg("-mc")
+        .arg("0")
+        .arg("-sns")
         // The DLLs sit beside the binary.
         .current_dir(binary.parent().unwrap_or(repo_root))
         .stdin(Stdio::null())
@@ -258,7 +322,13 @@ pub fn loaded_model() -> String {
 
 /// Transcribe a WAV. Blocking; the caller is already on a worker thread.
 pub fn transcribe(repo_root: &std::path::Path, wav: &[u8]) -> SttResult<String> {
+    // `ensure` may have to START the engine and wait for a 150 MB model to
+    // load; inference is a different cost with a different fix, so they are
+    // timed apart rather than reported as one number.
+    let step = Instant::now();
     let port = ensure(repo_root)?;
+    let ensured_ms = step.elapsed().as_millis();
+    let inferring = Instant::now();
     let body = multipart(wav);
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .map_err(|e| format!("cannot reach the speech engine: {e}"))?;
@@ -298,6 +368,10 @@ pub fn transcribe(repo_root: &std::path::Path, wav: &[u8]) -> SttResult<String> 
         .read_to_string(&mut payload)
         .map_err(|e| format!("cannot read the transcript: {e}"))?;
 
+    log::info!(
+        "stt: engine ready in {ensured_ms}ms, inference {}ms",
+        inferring.elapsed().as_millis()
+    );
     Ok(extract_text(&payload))
 }
 

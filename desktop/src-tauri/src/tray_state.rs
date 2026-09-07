@@ -93,10 +93,6 @@ impl Assistant {
         self.visual_state()
     }
 
-    pub fn armed(&self) -> bool {
-        self.armed
-    }
-
     pub fn listen_paused(&self) -> bool {
         self.listen_paused
     }

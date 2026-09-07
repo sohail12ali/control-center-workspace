@@ -10,6 +10,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[T-010-summary]] — Voice responsiveness: HUD, cues, adaptive VAD, faster STT — Complete — Sohail Ali — 2026-09-07
 - [[T-009-summary]] — Tray click-to-talk, armed icon, Assistant settings panel — Complete — Sohail Ali — 2026-09-07
 - [[T-008-summary]] — Hands-free listening: wake word, echo handling, barge-in — Complete — Sohail Ali — 2026-09-07
 - [[T-007-summary]] — Multimodal send: screenshot pixels to vision models, destination chip — Complete — Sohail Ali — 2026-09-07

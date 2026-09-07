@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<!-- The voice overlay: the small panel that appears near the tray while you
+     are talking to the Assistant.
+
+     Deliberately dumb. It has no API calls, no token, no polling and no state
+     of its own — the native shell pushes everything in with
+     `window.HUD.set({...})`, the same way the tray header is fed. That is
+     what keeps it safe to leave always-on-top over whatever you are working
+     in: there is nothing here that can reach the console, and nothing to go
+     stale if the shell stops talking to it.
+
+     It is a separate file rather than a route in the app because it is a
+     different surface with a different lifetime: 360x120, no chrome, no
+     router, and it must paint in the time between a click and a word. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Assistant</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --ink: #f2f4f7;
+    --ink-dim: #98a1ad;
+    --line: #2a2e35;
+    --idle: #8a8f98;
+    --listening: #e5484d;
+    --thinking: #f5a524;
+    --speaking: #30a46c;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #ffffff;
+      --ink: #16181d;
+      --ink-dim: #666d78;
+      --line: #e3e6ea;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: transparent;
+    font: 13px/1.35 "Segoe UI", -apple-system, system-ui, sans-serif;
+    color: var(--ink);
+    overflow: hidden;
+    /* The whole panel is a drag handle — there is no title bar to grab. */
+    -webkit-user-select: none; user-select: none;
+    cursor: default;
+  }
+  #panel {
+    height: 100%;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+  }
+  #top { display: flex; align-items: center; gap: 8px; }
+  #dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--idle); flex: none;
+    transition: background .12s ease;
+  }
+  #state { font-weight: 600; letter-spacing: .01em; }
+  #hint { color: var(--ink-dim); font-size: 11.5px; margin-left: auto; }
+
+  /* The level meter. Twelve bars is enough to read as movement at a glance
+     and few enough to stay legible at 360px. */
+  #meter { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+  #meter i {
+    flex: 1; background: var(--line); border-radius: 1px;
+    height: 3px; transition: height .07s linear, background .07s linear;
+  }
+  #meter i.on { background: var(--listening); }
+
+  #text {
+    color: var(--ink); font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #text.empty { color: var(--ink-dim); font-style: italic; }
+  body.state-listening #dot { background: var(--listening); }
+  body.state-armed    #dot { background: var(--listening); }
+  body.state-thinking #dot { background: var(--thinking); }
+  body.state-speaking #dot { background: var(--speaking); }
+  /* Only listening needs a meter; the others would show a dead row of bars. */
+  body:not(.state-listening):not(.state-armed) #meter { visibility: hidden; }
+</style>
+</head>
+<body class="state-idle">
+<div id="panel">
+  <div id="top">
+    <span id="dot"></span>
+    <span id="state">Idle</span>
+    <span id="hint"></span>
+  </div>
+  <div id="meter"></div>
+  <div id="text" class="empty">…</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  var BARS = 12;
+  var meter = document.getElementById("meter");
+  var bars = [];
+  for (var i = 0; i < BARS; i++) {
+    var b = document.createElement("i");
+    meter.appendChild(b);
+    bars.push(b);
+  }
+
+  var LABEL = {
+    idle: "Idle",
+    listening: "Listening",
+    armed: "Hands-free",
+    thinking: "Working",
+    speaking: "Speaking",
+    muted: "Idle",
+  };
+
+  function paintLevel(level) {
+    // Square-rooted, because speech at a normal distance sits in the bottom
+    // fifth of a linear scale and a meter that never moves is worse than no
+    // meter at all.
+    var scaled = Math.sqrt(Math.max(0, Math.min(1, level || 0)));
+    var lit = Math.round(scaled * BARS);
+    for (var i = 0; i < BARS; i++) {
+      var on = i < lit;
+      bars[i].className = on ? "on" : "";
+      bars[i].style.height = (on ? 4 + (i + 1) / BARS * 14 : 3) + "px";
+    }
+  }
+
+  /* The only entry point. Every field is optional: the shell sends what
+     changed, and anything absent is left alone rather than blanked — a
+     transcript should not vanish because the next push was about the level. */
+  window.HUD = {
+    set: function (next) {
+      next = next || {};
+      if (typeof next.state === "string") {
+        document.body.className = "state-" + next.state;
+        document.getElementById("state").textContent =
+          LABEL[next.state] || next.state;
+      }
+      if (typeof next.level === "number") paintLevel(next.level);
+      if (typeof next.hint === "string") {
+        document.getElementById("hint").textContent = next.hint;
+      }
+      if (typeof next.text === "string") {
+        var el = document.getElementById("text");
+        el.textContent = next.text || "…";
+        el.className = next.text ? "" : "empty";
+      }
+    },
+  };
+
+  paintLevel(0);
+})();
+</script>
+</body>
+</html>

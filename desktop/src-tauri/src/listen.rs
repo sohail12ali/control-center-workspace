@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::tray_state::{Assistant, Event};
+use crate::console_settings;
 use crate::{audio, stt, tts};
 
 /// Guards against two takes at once. An `AtomicBool` rather than the state
@@ -88,11 +89,33 @@ pub fn take_gated<F>(
 where
     F: Fn(&str) -> bool,
 {
+    // No cached microphone: a push-to-talk take opens one and closes it, so
+    // the OS indicator is lit exactly while it is recording.
+    take_gated_on(&mut None, repo_root, assistant, console_url, gate)
+}
+
+/// A gated take that may REUSE an already-open microphone.
+///
+/// For hands-free, where the mic is openly on for the whole session: closing
+/// and reopening it between takes buys no privacy — it just makes the
+/// assistant deaf for the second it takes to reopen, which is exactly where
+/// the next wake word lands. `cpal::Stream` is not `Send`, so the cache
+/// belongs to the caller's thread, which is where the loop lives anyway.
+pub fn take_gated_on<F>(
+    mic: &mut Option<audio::Mic>,
+    repo_root: &std::path::Path,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+    gate: F,
+) -> ListenResult<String>
+where
+    F: Fn(&str) -> bool,
+{
     if LISTENING.swap(true, Ordering::SeqCst) {
         return Err("already listening".into());
     }
     // Whatever happens below, the flag and the tray must come back.
-    let outcome = take_inner(repo_root, assistant, console_url, &gate);
+    let outcome = take_inner(mic, repo_root, assistant, console_url, &gate);
     LISTENING.store(false, Ordering::SeqCst);
     if outcome.is_err() {
         note(assistant, Event::Cancel);
@@ -101,6 +124,7 @@ where
 }
 
 fn take_inner<F>(
+    mic: &mut Option<audio::Mic>,
     repo_root: &std::path::Path,
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
@@ -109,19 +133,26 @@ fn take_inner<F>(
 where
     F: Fn(&str) -> bool,
 {
+    // Timed end to end. A voice loop is judged on how long it makes you wait,
+    // and "it feels slow" is not something anyone can fix — so every take says
+    // where its seconds went.
+    let began = std::time::Instant::now();
     if !audio::available() {
         return Err(hint(repo_root));
     }
     if !stt::available(repo_root) {
         return Err(stt::hint(repo_root));
     }
+    let checked_ms = began.elapsed().as_millis();
 
     // A reply being read aloud would otherwise be recorded back into the
     // microphone. Stopping it IS barge-in: talking over the assistant
     // interrupts it, which is what a person expects.
+    let step = std::time::Instant::now();
     if tts::stop() {
         note(assistant, Event::SpeakStop);
     }
+    log::debug!("listen: step tts_stop {}ms", step.elapsed().as_millis());
 
     *STOP.lock().unwrap_or_else(|e| e.into_inner()) = false;
     let stop = Arc::new(Mutex::new(false));
@@ -142,8 +173,40 @@ where
         })
         .ok();
 
+    // Both limits, and the model, come from the console's merged settings —
+    // one reader for the whole shell. Asked for once per take rather than
+    // cached, so changing them on the Settings tab takes effect on the next
+    // thing you say instead of the next time you launch.
+    let settings = console_settings::all(console_url);
+    let limits = audio::Limits {
+        max_take: std::time::Duration::from_secs(console_settings::u64_at(
+            &settings, "listen_max_seconds", audio::DEFAULT_MAX_TAKE.as_secs(),
+        )),
+        trailing_silence: std::time::Duration::from_millis(console_settings::u64_at(
+            &settings, "listen_silence_ms",
+            audio::DEFAULT_TRAILING_SILENCE.as_millis() as u64,
+        )),
+    };
+    stt::prefer_model(&console_settings::str_at(&settings, "stt_model", "base.en"));
+
+    let step = std::time::Instant::now();
     note(assistant, Event::ListenStart);
-    let recorded = audio::record(stop);
+    log::debug!("listen: step paint_listening {}ms", step.elapsed().as_millis());
+    let opening = std::time::Instant::now();
+    if mic.is_none() {
+        *mic = Some(audio::Mic::open()?);
+    }
+    let recorded = mic
+        .as_mut()
+        .expect("just opened")
+        .take(stop, limits);
+    if recorded.is_err() {
+        // A microphone that failed mid-take may have been unplugged. Drop it
+        // so the next take opens a fresh one rather than retrying a handle to
+        // a device that is gone.
+        *mic = None;
+    }
+    let recorded_ms = opening.elapsed().as_millis();
     // The watcher exits on its own once LISTENING clears or STOP is seen; it
     // is joined so a take never leaves a thread behind.
     LISTENING.store(false, Ordering::SeqCst);
@@ -153,6 +216,7 @@ where
     LISTENING.store(true, Ordering::SeqCst);
 
     let take = recorded?;
+    log::debug!("listen: step after_record {}ms", opening.elapsed().as_millis().saturating_sub(recorded_ms));
     if take.ending == audio::Ending::NothingHeard {
         note(assistant, Event::Cancel);
         return Err("nothing heard".into());
@@ -163,8 +227,15 @@ where
         take.ending
     );
 
+    let step = std::time::Instant::now();
     note(assistant, Event::Transcribing);
-    let text = stt::transcribe(repo_root, &take.wav())?;
+    log::debug!("listen: step paint_thinking {}ms", step.elapsed().as_millis());
+    let step = std::time::Instant::now();
+    let wav = take.wav();
+    log::debug!("listen: step wav {}ms", step.elapsed().as_millis());
+    let transcribing = std::time::Instant::now();
+    let text = stt::transcribe(repo_root, &wav)?;
+    let stt_ms = transcribing.elapsed().as_millis();
     let text = text.trim().to_string();
     if text.is_empty() {
         note(assistant, Event::Cancel);
@@ -180,10 +251,28 @@ where
         return Err("not addressed".into());
     }
     log::info!("listen: heard {text:?}");
+    // Shown before it is sent, so the first thing you see is what it thought
+    // you said — the answer to "did it get that right" arrives before the
+    // answer to the question itself.
+    crate::tray_paint::said(&text);
 
     // Handing it to the console is what makes a spoken command and a typed
     // one the same thing.
+    let sending = std::time::Instant::now();
     say(console_url, &text)?;
+    crate::cue::play(crate::cue::Cue::Sent);
+    // One line, whole take, in the order the user experiences it. `checks` is
+    // the part before the microphone is even asked to open — the part nobody
+    // suspects until it is printed.
+    log::info!(
+        "listen: took {}ms (checks {}ms, record {}ms for {:.1}s of audio,          stt {}ms, post {}ms)",
+        began.elapsed().as_millis(),
+        checked_ms,
+        recorded_ms,
+        take.seconds(),
+        stt_ms,
+        sending.elapsed().as_millis()
+    );
     Ok(text)
 }
 

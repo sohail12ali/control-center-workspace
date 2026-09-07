@@ -35,22 +35,61 @@ pub const TARGET_HZ: u32 = 16_000;
 /// audio, i.e. 16 ms.
 const FRAME: usize = 256;
 
-/// A take never runs longer than this, however the detector behaves. Long
-/// enough for a sentence with a pause in it; short enough that a stuck
-/// detector is an annoyance rather than a recording of your afternoon.
-const MAX_TAKE: Duration = Duration::from_secs(20);
-
-/// Silence after speech that ends the take.
-const TRAILING_SILENCE: Duration = Duration::from_millis(700);
+/// Defaults for the two limits a caller can override from settings. The cap
+/// is long enough for a sentence with a pause in it and short enough that a
+/// stuck detector is an annoyance rather than a recording of your afternoon —
+/// and it came down from 20s once takes reliably ended on their own.
+pub const DEFAULT_MAX_TAKE: Duration = Duration::from_secs(12);
+pub const DEFAULT_TRAILING_SILENCE: Duration = Duration::from_millis(700);
 
 /// Ignore a take shorter than this: a stray click or a knocked desk.
 const MIN_SPEECH: Duration = Duration::from_millis(300);
 
-/// Scores above this count as speech. `earshot` documents 0.5 as the general
-/// threshold; starting is held higher and stopping lower so a wavering score
-/// mid-word does not chop the take in half.
+/// Baseline thresholds, used as FLOORS under the adaptive ones below.
+/// `earshot` documents 0.5 as the general threshold; starting is held higher
+/// and stopping lower so a wavering score mid-word does not chop the take in
+/// half.
 const SPEECH_ON: f32 = 0.6;
 const SPEECH_OFF: f32 = 0.35;
+
+/// How long to listen to the room before trusting the thresholds.
+///
+/// This is the fix for the defect that made every take run to the cap: on a
+/// microphone with a high noise floor — an array mic in a room with a fan —
+/// the detector scores background noise above `SPEECH_OFF` forever, so the
+/// silence that ends a take never arrives. Measuring the room first and
+/// moving the thresholds above whatever it is doing costs 300ms once per
+/// take, which is cheaper than the 20 seconds it used to cost every time.
+///
+/// Strictly shorter than `MIN_SPEECH`, so calibration can never be the reason
+/// a take was rejected as too short — 200ms is twelve frames, plenty for a
+/// mean, and it keeps that inequality true rather than merely equal.
+const CALIBRATE: Duration = Duration::from_millis(200);
+
+/// How far above the measured floor a frame has to be to count as speech, in
+/// score and in loudness. Both are required: a neural VAD scores steady hum
+/// surprisingly high, and a loud room is not speech.
+const SCORE_MARGIN: f32 = 0.22;
+const RMS_MARGIN: f32 = 2.2;
+
+/// How many frames in a row have to look like speech before the silence
+/// counter is reset.
+///
+/// This is the one that made the difference in practice. Thresholds alone
+/// still let a SINGLE spurious frame — a keyboard tap, a chair, a fan
+/// harmonic the detector likes — restart the count, and a take that needs
+/// 700ms of quiet will never get it if something scores high once a second.
+/// Three frames is 48ms: shorter than any real syllable, longer than any
+/// click.
+const SPEECH_RUN: usize = 3;
+
+/// The noise floor keeps moving during the take, at this rate per frame.
+///
+/// A floor measured once at the start describes the room as it was 200ms ago.
+/// Rooms change — a fan cycles, someone starts typing — and a stale floor is
+/// how a take ends up waiting for a silence that, by its own definition,
+/// already happened.
+const FLOOR_DRIFT: f32 = 0.02;
 
 pub type AudioResult<T> = Result<T, String>;
 
@@ -138,45 +177,124 @@ fn to_i16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
 }
 
-/// Decides when a take is over, from VAD scores. Pure, so the interesting
-/// behaviour is testable without a microphone.
+/// The frame duration the detector works in, in milliseconds.
+fn frame_ms() -> f32 {
+    (FRAME as f32 / TARGET_HZ as f32) * 1000.0
+}
+
+/// One frame's loudness, 0.0..1.0.
+pub fn rms(frame: &[i16]) -> f32 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = frame.iter().map(|s| {
+        let v = *s as f64 / i16::MAX as f64;
+        v * v
+    }).sum();
+    ((sum / frame.len() as f64).sqrt() as f32).clamp(0.0, 1.0)
+}
+
+/// Decides when a take is over, from VAD scores and loudness. Pure, so the
+/// interesting behaviour is testable without a microphone — which matters,
+/// because the interesting behaviour is "does this end at all in a noisy
+/// room", and that is not a question you can answer by listening once.
 pub struct Endpointer {
     speaking: bool,
     speech_frames: usize,
     silence_frames: usize,
+    /// Frames still being used to measure the room.
+    calibrating: usize,
+    floor_score: f32,
+    floor_rms: f32,
+    samples: usize,
+    /// Consecutive speech-looking frames, for `SPEECH_RUN`.
+    run: usize,
+    trailing_silence: Duration,
 }
 
 impl Default for Endpointer {
     fn default() -> Self {
-        Self { speaking: false, speech_frames: 0, silence_frames: 0 }
+        Self::new(DEFAULT_TRAILING_SILENCE)
     }
 }
 
 impl Endpointer {
-    /// Feed one frame's score. Returns true when the take should end.
-    pub fn push(&mut self, score: f32) -> bool {
-        let frame_ms = (FRAME as f32 / TARGET_HZ as f32) * 1000.0;
-        if score >= SPEECH_ON {
-            self.speaking = true;
-            self.speech_frames += 1;
-            self.silence_frames = 0;
-        } else if score < SPEECH_OFF {
-            self.silence_frames += 1;
+    pub fn new(trailing_silence: Duration) -> Self {
+        let frames = (CALIBRATE.as_millis() as f32 / frame_ms()).round() as usize;
+        Self {
+            speaking: false,
+            speech_frames: 0,
+            silence_frames: 0,
+            calibrating: frames.max(1),
+            floor_score: 0.0,
+            floor_rms: 0.0,
+            samples: 0,
+            run: 0,
+            trailing_silence,
+        }
+    }
+
+    /// The thresholds in force, after the room has been measured. Public so a
+    /// log line can say what it decided to listen for.
+    pub fn thresholds(&self) -> (f32, f32, f32) {
+        (
+            (self.floor_score + SCORE_MARGIN).max(SPEECH_ON),
+            (self.floor_score + SCORE_MARGIN * 0.45).max(SPEECH_OFF),
+            self.floor_rms * RMS_MARGIN,
+        )
+    }
+
+    /// Feed one frame. Returns true when the take should end.
+    pub fn push(&mut self, score: f32, loudness: f32) -> bool {
+        // Measure the room first. Nothing counts as speech and nothing counts
+        // as silence while this runs, so a noisy start cannot end a take
+        // before it has begun.
+        if self.calibrating > 0 {
+            self.calibrating -= 1;
+            self.samples += 1;
+            let n = self.samples as f32;
+            self.floor_score += (score - self.floor_score) / n;
+            self.floor_rms += (loudness - self.floor_rms) / n;
+            return false;
+        }
+
+        let (on, off, min_rms) = self.thresholds();
+        // Both signals have to agree. The score alone was the old rule, and a
+        // steady hum kept it permanently above the silence threshold.
+        let looks_like_speech = score >= on && loudness >= min_rms;
+        if looks_like_speech {
+            self.run += 1;
+            // A run, not a frame. One high-scoring frame per second is enough
+            // to hold a take open forever if it resets the silence counter,
+            // and a room reliably produces one.
+            if self.run >= SPEECH_RUN {
+                self.speaking = true;
+                self.speech_frames += 1;
+                self.silence_frames = 0;
+            }
+        } else {
+            self.run = 0;
+            if score < off || loudness < min_rms {
+                self.silence_frames += 1;
+            }
+            // Let the floor follow the room while nobody is talking, so a
+            // fan that starts mid-take does not become "speech".
+            self.floor_score += (score - self.floor_score) * FLOOR_DRIFT;
+            self.floor_rms += (loudness - self.floor_rms) * FLOOR_DRIFT;
         }
         // Only after real speech: leading silence must not end a take before
         // the user has said anything.
         if !self.speaking {
             return false;
         }
-        let spoken_ms = self.speech_frames as f32 * frame_ms;
-        let silent_ms = self.silence_frames as f32 * frame_ms;
+        let spoken_ms = self.speech_frames as f32 * frame_ms();
+        let silent_ms = self.silence_frames as f32 * frame_ms();
         spoken_ms >= MIN_SPEECH.as_millis() as f32
-            && silent_ms >= TRAILING_SILENCE.as_millis() as f32
+            && silent_ms >= self.trailing_silence.as_millis() as f32
     }
 
     pub fn heard_speech(&self) -> bool {
-        let frame_ms = (FRAME as f32 / TARGET_HZ as f32) * 1000.0;
-        self.speech_frames as f32 * frame_ms >= MIN_SPEECH.as_millis() as f32
+        self.speech_frames as f32 * frame_ms() >= MIN_SPEECH.as_millis() as f32
     }
 }
 
@@ -196,14 +314,65 @@ pub fn device_name() -> String {
 ///
 /// Blocking, and meant to be: the caller runs it on its own thread and the
 /// tray shows the listening state meanwhile.
-pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
+/// How long a take may run, and how much silence ends it. Passed in rather
+/// than read here so the shell has ONE settings reader (`console_settings`)
+/// instead of one per module.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub max_take: Duration,
+    pub trailing_silence: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { max_take: DEFAULT_MAX_TAKE, trailing_silence: DEFAULT_TRAILING_SILENCE }
+    }
+}
+
+/// The current input level, 0..1000, for the HUD's meter. An integer because
+/// atomics come in integers; scaled rather than bit-cast so the value is
+/// readable in a debugger.
+static LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn set_level(value: f32) {
+    LEVEL.store((value.clamp(0.0, 1.0) * 1000.0) as u32, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The last frame's level, 0.0..1.0. Zero when nothing is recording.
+pub fn level() -> f32 {
+    LEVEL.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
+}
+
+/// An open microphone.
+///
+/// Exists because opening one costs the better part of a second on Windows —
+/// measured, not assumed: `build_input_stream` plus `play` is 0.9-2.0s while
+/// finding the device and reading its format are under 10ms between them.
+/// For push-to-talk that is a price per take, and paying it keeps the OS
+/// microphone indicator honest: the light is on exactly while a take is open.
+///
+/// For HANDS-FREE it is different. The mic is openly on for the whole
+/// session, so reopening it between takes buys no privacy at all — it just
+/// makes the assistant deaf for a second after every utterance, which is
+/// where a wake word tends to land.
+pub struct Mic {
+    stream: cpal::Stream,
+    collected: Arc<Mutex<Vec<i16>>>,
+}
+
+impl Mic {
+    pub fn open() -> AudioResult<Mic> {
+    let opening = Instant::now();
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or_else(|| "no microphone: nothing is set as the default input device".to_string())?;
+    let found_ms = opening.elapsed().as_millis();
+    let step = Instant::now();
     let config = device
         .default_input_config()
         .map_err(|e| format!("cannot read the microphone's format: {e}"))?;
+    let config_ms = step.elapsed().as_millis();
     let channels = config.channels();
     let source_hz = config.sample_rate().0;
 
@@ -213,6 +382,7 @@ pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
     let stream_config: cpal::StreamConfig = config.into();
 
     let err_fn = |e| log::warn!("audio: stream error: {e}");
+    let built = Instant::now();
 
     // Every sample format a default input config can report, converted at the
     // edge so nothing downstream has to care which one this device uses.
@@ -264,9 +434,24 @@ pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
     stream
         .play()
         .map_err(|e| format!("cannot start the microphone: {e}"))?;
+    // Timed separately from the take: this is dead air where the user has
+    // already clicked and the microphone is not open yet.
+    log::info!(
+        "audio: microphone open in {}ms (find {found_ms}ms, format {config_ms}ms, build {}ms)",
+        opening.elapsed().as_millis(),
+        built.elapsed().as_millis()
+    );
+        Ok(Mic { stream, collected })
+    }
+
+    /// Record one take from this already-open microphone.
+    pub fn take(&mut self, stop: Arc<Mutex<bool>>, limits: Limits) -> AudioResult<Take> {
+        // Whatever arrived between takes is not part of this one.
+        self.collected.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        let collected = self.collected.clone();
 
     let mut detector = earshot::Detector::default_boxed();
-    let mut endpointer = Endpointer::default();
+    let mut endpointer = Endpointer::new(limits.trailing_silence);
     let started = Instant::now();
     let mut scored = 0usize;
     // Every exit below assigns this. Declared without a value so the
@@ -279,7 +464,7 @@ pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
             ending = Ending::Released;
             break;
         }
-        if started.elapsed() >= MAX_TAKE {
+        if started.elapsed() >= limits.max_take {
             ending = Ending::Capped;
             break;
         }
@@ -295,7 +480,12 @@ pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
                 buf[scored * FRAME..(scored + 1) * FRAME].to_vec()
             };
             scored += 1;
-            if endpointer.push(detector.predict_i16(&frame)) {
+            let loudness = rms(&frame);
+            // Published for the HUD's level meter, from the frame the VAD is
+            // scoring anyway — a second audio path just to draw a bar would
+            // be a second place for the audio to be wrong.
+            set_level(loudness);
+            if endpointer.push(detector.predict_i16(&frame), loudness) {
                 ended = true;
                 break;
             }
@@ -307,12 +497,26 @@ pub fn record(stop: Arc<Mutex<bool>>) -> AudioResult<Take> {
         std::thread::sleep(Duration::from_millis(16));
     }
 
-    drop(stream);
+    set_level(0.0);
+    let (on, off, min_rms) = endpointer.thresholds();
+    log::debug!(
+        "audio: room floor gave thresholds on {on:.2} off {off:.2} rms {min_rms:.4}"
+    );
     let samples = collected.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if !endpointer.heard_speech() {
         return Ok(Take { samples, ending: Ending::NothingHeard });
     }
-    Ok(Take { samples, ending })
+        Ok(Take { samples, ending })
+    }
+}
+
+impl Drop for Mic {
+    fn drop(&mut self) {
+        // Explicit, so the reason survives: dropping the stream is what turns
+        // the OS microphone indicator off. Nothing else does.
+        use cpal::traits::StreamTrait;
+        let _ = self.stream.pause();
+    }
 }
 
 #[cfg(test)]
@@ -385,13 +589,29 @@ mod tests {
     }
 
     /// One "frame" of scores at 16 ms each.
-    fn feed(ep: &mut Endpointer, score: f32, frames: usize) -> bool {
+    /// A frame at a given score and loudness, repeated. Loudness defaults to
+    /// something comfortably above a quiet room so the existing cases read as
+    /// they did before the energy gate existed.
+    fn feed_loud(ep: &mut Endpointer, score: f32, loudness: f32, frames: usize) -> bool {
         for _ in 0..frames {
-            if ep.push(score) {
+            if ep.push(score, loudness) {
                 return true;
             }
         }
         false
+    }
+
+    /// Let the endpointer measure a quiet room, so a test that means to feed
+    /// speech is not spending its first frames on calibration.
+    fn quiet_room(ep: &mut Endpointer) {
+        feed_loud(ep, 0.02, 0.001, 32);
+    }
+
+    fn feed(ep: &mut Endpointer, score: f32, frames: usize) -> bool {
+        // A score-shaped loudness: loud when the score says speech, near
+        // silent when it does not, which is what a real frame looks like.
+        let loudness = if score >= 0.5 { 0.08 } else { 0.001 };
+        feed_loud(ep, score, loudness, frames)
     }
 
     #[test]
@@ -405,6 +625,7 @@ mod tests {
     #[test]
     fn speech_then_silence_ends_the_take() {
         let mut ep = Endpointer::default();
+        quiet_room(&mut ep);
         assert!(!feed(&mut ep, 0.9, 30), "still talking at 480 ms");
         assert!(feed(&mut ep, 0.0, 60), "700 ms of silence should end it");
         assert!(ep.heard_speech());
@@ -413,6 +634,7 @@ mod tests {
     #[test]
     fn a_brief_click_is_not_speech() {
         let mut ep = Endpointer::default();
+        quiet_room(&mut ep);
         feed(&mut ep, 0.9, 3); // ~48 ms
         feed(&mut ep, 0.0, 60);
         assert!(!ep.heard_speech(), "48 ms is below the minimum");
@@ -423,10 +645,97 @@ mod tests {
         // The hysteresis between SPEECH_ON and SPEECH_OFF is what makes this
         // work: a wavering score mid-word must not chop the take.
         let mut ep = Endpointer::default();
+        quiet_room(&mut ep);
         feed(&mut ep, 0.9, 30);
         assert!(!feed(&mut ep, 0.0, 20), "320 ms pause is not the end");
         assert!(!feed(&mut ep, 0.9, 20), "they carried on");
         assert!(feed(&mut ep, 0.0, 60), "now they have stopped");
+    }
+
+    #[test]
+    fn a_noisy_room_still_ends_the_take() {
+        // THE regression. On an array microphone with a fan in the room the
+        // detector scored background noise around 0.5 forever, so the silence
+        // that ends a take never came and every take ran to the cap — twenty
+        // seconds of waiting after every sentence. Calibrating to the room
+        // and requiring loudness above it is what fixes it.
+        let mut ep = Endpointer::new(DEFAULT_TRAILING_SILENCE);
+        // The room, measured first: scores high-ish, but quiet.
+        feed_loud(&mut ep, 0.5, 0.004, 32);
+        // Someone speaks: louder, and higher again.
+        assert!(!feed_loud(&mut ep, 0.95, 0.09, 40));
+        // They stop. The room carries on exactly as before, and this is the
+        // frame sequence that used to hold the take open forever.
+        assert!(feed_loud(&mut ep, 0.5, 0.004, 60),
+                "a take must end when the speaker stops, not when the room does");
+        assert!(ep.heard_speech());
+    }
+
+    #[test]
+    fn one_noisy_frame_a_second_cannot_hold_a_take_open() {
+        // Observed live, not imagined: after the speaker stopped, a take ran
+        // 9.4 seconds for a 3-second phrase because something in the room
+        // scored high every so often and reset the silence counter each time.
+        // Thresholds alone did not fix it; requiring a RUN of speech frames
+        // did.
+        let mut ep = Endpointer::default();
+        feed_loud(&mut ep, 0.1, 0.002, 32); // the room
+        assert!(!feed_loud(&mut ep, 0.95, 0.09, 40)); // someone talks
+        // Now silence, interrupted by one loud frame every ten.
+        let mut ended = false;
+        for i in 0..120 {
+            let spurious = i % 10 == 0;
+            let (score, loud) = if spurious { (0.98, 0.2) } else { (0.05, 0.001) };
+            if ep.push(score, loud) {
+                ended = true;
+                break;
+            }
+        }
+        assert!(ended, "a take must end between the taps, not wait them out");
+    }
+
+    #[test]
+    fn a_real_pause_of_a_few_frames_still_does_not_end_the_take() {
+        // The other side of the same rule: `SPEECH_RUN` must not be so long
+        // that ordinary speech fails to register at all.
+        let mut ep = Endpointer::default();
+        quiet_room(&mut ep);
+        assert!(!feed(&mut ep, 0.9, 20));
+        assert!(!feed(&mut ep, 0.0, 20)); // a 320ms pause, mid-sentence
+        assert!(!feed(&mut ep, 0.9, 20));
+        assert!(ep.heard_speech(), "speech in runs must still count as speech");
+    }
+
+    #[test]
+    fn the_room_moves_the_thresholds_but_never_below_the_floor() {
+        let mut quiet = Endpointer::default();
+        feed_loud(&mut quiet, 0.01, 0.0005, 32);
+        let (on_q, off_q, _) = quiet.thresholds();
+        assert_eq!((on_q, off_q), (SPEECH_ON, SPEECH_OFF),
+                   "a quiet room must not make the detector MORE eager");
+
+        let mut noisy = Endpointer::default();
+        feed_loud(&mut noisy, 0.55, 0.02, 32);
+        let (on_n, _, rms_n) = noisy.thresholds();
+        assert!(on_n > SPEECH_ON, "a noisy room has to raise the bar");
+        assert!(rms_n > 0.0, "and give the energy gate something to compare to");
+    }
+
+    #[test]
+    fn calibration_cannot_swallow_the_start_of_a_sentence() {
+        // Calibration is shorter than MIN_SPEECH, so a take that begins the
+        // instant the mic opens still registers as speech.
+        assert!(CALIBRATE < MIN_SPEECH);
+    }
+
+    #[test]
+    fn a_configured_silence_window_is_honoured() {
+        let mut fast = Endpointer::new(Duration::from_millis(200));
+        quiet_room(&mut fast);
+        assert!(!feed(&mut fast, 0.9, 30));
+        // ~13 frames is 200ms; 20 is comfortably past it and well short of
+        // the 700ms default.
+        assert!(feed(&mut fast, 0.0, 20));
     }
 
     #[test]

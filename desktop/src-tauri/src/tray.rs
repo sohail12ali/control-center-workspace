@@ -53,6 +53,23 @@ fn note_mute(app: &tauri::AppHandle, muted: bool) {
     }
 }
 
+/// Persist the mute choice as the Assistant's `speak` setting.
+///
+/// On a worker thread: this is an HTTP round trip, and it is happening inside
+/// a menu-event handler on the UI thread.
+fn store_mute(app: &AppHandle, muted: bool) {
+    let url = app
+        .try_state::<Mutex<ShellState>>()
+        .and_then(|s| s.inner().lock().ok().map(|g| g.console_url.clone()))
+        .unwrap_or_default();
+    if url.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("mute-store".into())
+        .spawn(move || crate::console_settings::set_bool(&url, "speak", !muted));
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         warn_on_err("show_main show()", w.show());
@@ -171,6 +188,13 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     // compiler noticed before anyone did, by reporting
                     // `Event::Mute` as never constructed outside tests.
                     note_mute(app, muted);
+                    // And the SERVER's, which is the switch that actually
+                    // decides whether a reply is spoken aloud. Before this,
+                    // the tray's checkbox only ever reached the webview's own
+                    // `autoRead` preference — so the tray could read "muted"
+                    // while `assistant_reply` happily spoke every reply
+                    // through the bridge. One control, one meaning.
+                    store_mute(app, muted);
                 }
                 "listen_hands_free" => {
                     // The tick follows the outcome, not the click: starting
@@ -207,6 +231,39 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tray.build(handle)?;
+
+    // The initial tick is READ, not assumed. It used to default to checked
+    // because it mirrored the webview's `autoRead` (off by default), while
+    // the setting that actually silences replies defaults to on — so the tray
+    // opened life disagreeing with itself.
+    {
+        let app_for_mute = handle.clone();
+        let item = ui.mute.clone();
+        let _ = std::thread::Builder::new()
+            .name("mute-initial".into())
+            .spawn(move || {
+                let url = app_for_mute
+                    .try_state::<Mutex<ShellState>>()
+                    .and_then(|s| s.inner().lock().ok().map(|g| g.console_url.clone()))
+                    .unwrap_or_default();
+                if url.is_empty() {
+                    return;
+                }
+                let settings = crate::console_settings::all(&url);
+                let speak = settings
+                    .get("speak")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let muted = !speak;
+                warn_on_err(
+                    "initial mute sync",
+                    app_for_mute.run_on_main_thread(move || {
+                        let _ = item.set_checked(muted);
+                    }),
+                );
+                note_mute(&app_for_mute, muted);
+            });
+    }
 
     // Hands-free can end without anyone clicking the row — the session time
     // cap expires, or the microphone goes away. This keeps the tick honest in

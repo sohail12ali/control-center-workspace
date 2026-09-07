@@ -58,9 +58,10 @@ impl FileLogger {
     /// a directory that cannot be created must not stop the shell from
     /// starting, so the caller treats a failure as non-fatal.
     pub fn init(path: PathBuf) -> Result<(), String> {
+        let level = wanted_level();
         let logger = Self::new(path).map_err(|e| e.to_string())?;
         log::set_boxed_logger(Box::new(logger)).map_err(|e| e.to_string())?;
-        log::set_max_level(LevelFilter::Info);
+        log::set_max_level(level);
         Ok(())
     }
 
@@ -93,9 +94,28 @@ impl FileLogger {
     }
 }
 
+/// Info, unless `CONSOLE_LOG=debug` says otherwise.
+///
+/// Debug lines exist for the questions a log cannot answer at Info — where the
+/// seconds of a slow take went, step by step. They are off by default because
+/// that detail is noise when nothing is wrong, and reachable without a rebuild
+/// because "reproduce it with a debug build" is not something you can ask of
+/// someone whose microphone is being slow right now.
+fn wanted_level() -> LevelFilter {
+    match std::env::var("CONSOLE_LOG")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "debug" | "trace" => LevelFilter::Debug,
+        "warn" => LevelFilter::Warn,
+        _ => LevelFilter::Info,
+    }
+}
+
 impl Log for FileLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= log::Level::Info
+        metadata.level() <= log::max_level()
     }
 
     fn log(&self, record: &Record) {

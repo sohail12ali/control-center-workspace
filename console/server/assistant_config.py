@@ -64,6 +64,21 @@ DEFAULTS = {
     # and "hands_free" makes the icon an arm/disarm switch.
     "tray_click_action": "listen",
 
+    # -- listening and transcription (T-010) ---------------------------------
+    # A take ends when you stop talking; these bound the two ways that can go
+    # wrong. `listen_max_seconds` is the backstop for a detector that never
+    # sees silence — it was 20s and cost that on every take in a noisy room
+    # before the detector learned to calibrate. `listen_silence_ms` is how
+    # long a pause has to be before it counts as "finished", so someone who
+    # thinks mid-sentence is not cut off.
+    "listen_max_seconds": 12,
+    "listen_silence_ms": 700,
+    # Which whisper.cpp model to load, by name. `base.en` is accurate enough
+    # for ticket ids; `tiny.en` is several times faster and noticeably worse
+    # at exactly those. Named rather than inferred, so dropping a second model
+    # into desktop/stt does not silently change what transcribes your voice.
+    "stt_model": "base.en",
+
     # -- hands-free (T-008) --------------------------------------------------
     # An always-on microphone is a different proposition from push-to-talk, so
     # every one of these defaults to the cautious answer.
@@ -94,6 +109,7 @@ TRAY_CLICK_ACTIONS = ("listen", "show", "hands_free")
 WRITABLE = frozenset({
     "backend", "model", "mode", "session_idle_minutes", "speak",
     "reply_chars", "ticket_prefix", "tray_click_action",
+    "listen_max_seconds", "listen_silence_ms", "stt_model",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
@@ -202,6 +218,19 @@ def update(repo_root, patch, installed_backends=()):
     if "tray_click_action" in clean and clean["tray_click_action"] not in TRAY_CLICK_ACTIONS:
         raise ValueError("tray_click_action must be one of: %s"
                          % ", ".join(TRAY_CLICK_ACTIONS))
+    if "listen_max_seconds" in clean and not 2 <= clean["listen_max_seconds"] <= 120:
+        raise ValueError("listen_max_seconds must be between 2 and 120")
+    if "listen_silence_ms" in clean and not 200 <= clean["listen_silence_ms"] <= 5000:
+        # Below 200ms a normal pause between words ends the take; above five
+        # seconds you are waiting for the backstop instead of the detector.
+        raise ValueError("listen_silence_ms must be between 200 and 5000")
+    if "stt_model" in clean:
+        name = clean["stt_model"].strip().lstrip("-")
+        if not name or "/" in name or "\\" in name or ".." in name:
+            # It becomes a filename (`ggml-{name}.bin`), so it must not be a
+            # path — this is the only place that can stop it being one.
+            raise ValueError("stt_model must be a model name like base.en")
+        clean["stt_model"] = name
     if "hands_free_max_minutes" in clean and clean["hands_free_max_minutes"] < 1:
         raise ValueError("hands_free_max_minutes must be at least 1")
     if "hands_free_wake_word" in clean:

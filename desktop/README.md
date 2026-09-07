@@ -160,6 +160,8 @@ Module layout, all under `src-tauri/src/`:
 | `tray_link.rs` | follows the console's event stream so the tray is right when hidden |
 | `tray_paint.rs` | the one place a state change becomes pixels — every source of events calls it |
 | `click.rs` | what one left-click means, as a table |
+| `hud.rs` | the overlay panel near the tray; the page is `console/static/hud.html` |
+| `cue.rs` | the short tones, synthesised through the output device |
 | `hands_free.rs` | always-on listening: wake word, echo handling, session cap |
 | `console_settings.rs` | the shell's one reader of the Assistant's settings |
 | `bridge.rs` | the loopback API the console calls |

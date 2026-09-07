@@ -913,6 +913,31 @@ Every state is distinguishable by shape as well as colour, because the macOS
 menu bar renders it monochrome and because colour alone is not an accessible
 signal.
 
+A small panel also appears near the tray while you talk: a level meter that
+moves with your voice, then what it heard, then the reply. It is a read-out —
+no buttons, no API access — and it hides itself a few seconds after the turn
+ends. Two short tones go with it: rising when the microphone is actually open
+(which is about a second after you click, so the tone is worth waiting for),
+and again when the take is sent. Muting replies silences the tones too.
+
+### How long a turn takes
+
+Roughly five seconds from click to answer, on this machine, for a short
+command. The shell logs the breakdown of every take, so a slow one can be
+diagnosed rather than described:
+
+```
+listen: took 5317ms (checks 1ms, record 4509ms for 3.7s of audio, stt 753ms, post 12ms)
+```
+
+`record` includes about a second of opening the microphone, which is what the
+tone is for. Hands-free opens it once for the whole session instead.
+
+Two settings bound the take: `listen_silence_ms` (how much quiet ends it) and
+`listen_max_seconds` (the backstop if the detector never hears you stop).
+`stt_model` chooses the whisper model — `base.en` by default, `tiny.en` if you
+want speed more than accuracy on ticket ids.
+
 Talking while it is speaking interrupts it — the reply stops and a new take
 begins. Pressing the hotkey during a take ends that take rather than starting
 a second one.

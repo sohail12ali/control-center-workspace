@@ -63,13 +63,23 @@ fn run(app: AppHandle, assistant: Arc<Mutex<Assistant>>, console_url: String) {
         // state the SHELL owns — the tray showed "idle" while the microphone
         // was open. Listening and speaking are the shell's to report; only
         // the turn is the console's.
-        if let Ok(a) = assistant.lock() {
-            if a.state() != crate::icons::State::Thinking {
-                std::thread::sleep(RETRY);
-                continue;
-            }
+        // Read the state, then RELEASE it, then sleep.
+        //
+        // The scoping matters more than it looks. This used to be
+        // `if let Ok(a) = assistant.lock() { ... sleep(RETRY) ... }`, which
+        // held the lock for the whole three-second backoff — so every few
+        // seconds the shell's own state changes queued behind a sleeping
+        // reconnect loop. Measuring a slow take is what found it: opening the
+        // microphone spent 2.9 seconds waiting for this mutex, and so did
+        // moving on to transcribe, which is most of a five-second delay
+        // nobody could see a cause for.
+        let was_thinking = assistant
+            .lock()
+            .map(|a| a.state() == crate::icons::State::Thinking)
+            .unwrap_or(false);
+        if was_thinking {
+            apply(&app, &assistant, Event::TurnEnd);
         }
-        apply(&app, &assistant, Event::TurnEnd);
         std::thread::sleep(RETRY);
     }
 }

@@ -327,6 +327,45 @@ class TestTrayClickSetting:
         assert shipped["tray_click_action"] == assistant_config.DEFAULTS["tray_click_action"]
 
 
+class TestListeningSettings:
+    """T-010. The two limits on a take, and which model transcribes it."""
+
+    def test_the_cap_came_down_to_something_bearable(self, tmp_path):
+        # It was 20s, and a detector that never saw silence cost that on
+        # every take. The default is part of the fix, not decoration.
+        s = assistant_config.settings(str(tmp_path))
+        assert s["listen_max_seconds"] == 12
+        assert s["listen_silence_ms"] == 700
+        assert s["stt_model"] == "base.en"
+
+    @pytest.mark.parametrize("key,value", [
+        ("listen_max_seconds", 1), ("listen_max_seconds", 121),
+        ("listen_silence_ms", 199), ("listen_silence_ms", 5001),
+    ])
+    def test_a_limit_outside_the_usable_range_is_refused(self, tmp_path, key, value):
+        with pytest.raises(ValueError, match="between"):
+            assistant_config.update(str(tmp_path), {key: value})
+
+    @pytest.mark.parametrize("value", ["../../.env", "a/b", "..", "", "  "])
+    def test_a_model_name_cannot_be_a_path(self, tmp_path, value):
+        # It becomes `ggml-{name}.bin` in the shell, so this is the only place
+        # that can stop it being a traversal.
+        with pytest.raises(ValueError, match="model name"):
+            assistant_config.update(str(tmp_path), {"stt_model": value})
+
+    def test_a_model_name_round_trips(self, tmp_path):
+        assistant_config.update(str(tmp_path), {"stt_model": "tiny.en"})
+        assert assistant_config.settings(str(tmp_path))["stt_model"] == "tiny.en"
+
+    def test_the_committed_file_ships_the_same_three(self, tmp_path):
+        import server.tomlio as tomlio
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        shipped = tomlio.load(os.path.join(
+            root, "config", "assistant.toml"))["assistant"]
+        for key in ("listen_max_seconds", "listen_silence_ms", "stt_model"):
+            assert shipped[key] == assistant_config.DEFAULTS[key], key
+
+
 class TestHandsFreeSettings:
     """T-008. These four decide how an always-on microphone behaves, so the
     thing worth testing is that the shipped answer is the cautious one and

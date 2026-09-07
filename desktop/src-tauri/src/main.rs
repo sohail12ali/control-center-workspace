@@ -4,9 +4,11 @@ mod audio;
 mod bridge;
 mod capture;
 mod click;
+mod cue;
 mod clipboard;
 mod console_settings;
 mod hands_free;
+mod hud;
 mod icons;
 mod listen;
 mod logger;
@@ -368,7 +370,7 @@ fn main() {
             // From here on, anything that changes the assistant's state can
             // repaint the icon — the microphone included, which before this
             // was the one thing that could not.
-            tray_paint::attach(app.handle().clone());
+            tray_paint::attach(app.handle().clone(), handle.url.clone());
 
             register_hotkey(app.handle());
 
