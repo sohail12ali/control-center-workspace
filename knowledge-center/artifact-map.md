@@ -10,6 +10,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[T-007-summary]] — Multimodal send: screenshot pixels to vision models, destination chip — Complete — Sohail Ali — 2026-09-07
 - [[T-006-summary]] — Voice: mic capture, STT, hotkey, spoken replies — Complete — Sohail Ali — 2026-09-07
 - [[T-005-summary]] — Native bridge: tray icon states, screenshot, OCR, clipboard — Complete — Sohail Ali — 2026-09-07
 - [[T-004-summary]] — Assistant brain: persona, /api/assistant, fast commands, Settings backend picker, memory — Complete — Sohail Ali — 2026-09-06

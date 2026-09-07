@@ -574,3 +574,104 @@ class TestEventsAndTelemetry:
         run(session, "hello")
         blob = json.dumps(events(session)) + json.dumps(telemetry.read_records(api))
         assert "sk-test" not in blob
+
+
+class TestCaptureReachesTheModel:
+    """T-007: a screenshot tool returns a PATH, and this transport has no file
+    tools. Unless the picture itself follows, the model is being asked to look
+    at a string. These drive the real loop and read what went on the wire."""
+
+    def _capture_on_disk(self, repo):
+        import struct, zlib
+        from server import multimodal
+        rel = os.path.join(multimodal.CAPTURE_DIR_REL, "e2e.png").replace("\\", "/")
+        path = os.path.join(repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        raw = b"".join(b"\x00" + bytes([0, 128, 255, 255] * 4) for _ in range(4))
+
+        def chunk(tag, data):
+            return (struct.pack(">I", len(data)) + tag + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+        with open(path, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\x0a"[:8].replace(b"\x0a", b"\n")
+                     + chunk(b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 6, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(raw, 9))
+                     + chunk(b"IEND", b""))
+        return rel
+
+    def _screenshot_tool(self, monkeypatch, rel):
+        """Make the screenshot verb return a capture without a desktop shell."""
+        from server import agent_tools
+        real = agent_tools.dispatch
+
+        def fake(repo_root, name, arguments):
+            if "desktop_screenshot" in name:
+                return json.dumps({"ok": True, "capture": {
+                    "capture_id": "e2e", "path": rel, "width": 4, "height": 4}})
+            return real(repo_root, name, arguments)
+
+        monkeypatch.setattr(agent_tools, "dispatch", fake)
+
+    def _user_parts(self, provider):
+        """Every user message on the last request, as sent."""
+        last = provider.requests[-1]
+        return [m for m in last["messages"] if m.get("role") == "user"]
+
+    def test_a_vision_model_receives_the_image_itself(self, api, monkeypatch):
+        rel = self._capture_on_disk(api)
+        self._screenshot_tool(monkeypatch, rel)
+        with open(os.path.join(api, "console", "config", "assistant.toml"),
+                  "w", encoding="utf-8") as fh:
+            fh.write('[assistant]\nvision_models = ["*vl*", "gpt-4o*"]\n')
+
+        provider = Provider(
+            call_tool("console_desktop_screenshot", {"target": "screen"}),
+            say("I can see a small blue square."),
+        )
+        session = build(api, provider)
+        # `build` fixes the model, so it is set here — what matters is the id
+        # the request carries and that `_vision_patterns` matches it.
+        session.model = "qwen2.5vl:7b"
+        run(session, "what is on my screen?")
+
+        parts = [m["content"] for m in self._user_parts(provider)
+                 if isinstance(m["content"], list)]
+        assert parts, "no image part reached the wire"
+        kinds = [p["type"] for p in parts[0]]
+        assert "image_url" in kinds
+        url = [p for p in parts[0] if p["type"] == "image_url"][0]["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+
+    def test_a_text_only_model_is_told_to_use_ocr_instead(self, api, monkeypatch):
+        rel = self._capture_on_disk(api)
+        self._screenshot_tool(monkeypatch, rel)
+        with open(os.path.join(api, "console", "config", "assistant.toml"),
+                  "w", encoding="utf-8") as fh:
+            fh.write('[assistant]\nvision_models = ["*vl*"]\n')
+
+        provider = Provider(
+            call_tool("console_desktop_screenshot", {"target": "screen"}),
+            say("I used OCR."),
+        )
+        session = build(api, provider)
+        session.model = "llama3"
+        run(session, "what is on my screen?")
+
+        texts = [m["content"] for m in self._user_parts(provider)
+                 if isinstance(m["content"], str)]
+        assert any("desktop_ocr" in t for t in texts), texts
+        assert not any(isinstance(m["content"], list)
+                       for m in self._user_parts(provider)), (
+            "a text-only model must not be sent pixels")
+
+    def test_an_ordinary_tool_call_adds_nothing(self, api):
+        provider = Provider(
+            call_tool("console_context", {"ticket": "CC-T001"}),
+            say("done"),
+        )
+        session = build(api, provider)
+        run(session, "what is the status?")
+        # Exactly the one message the user actually sent.
+        assert len(self._user_parts(provider)) == 1
+

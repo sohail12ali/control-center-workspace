@@ -28,11 +28,16 @@ model = ""
 # "Permission needed" card — the mode does not remove the gate.
 mode = "default"
 
-# Model ids/aliases that can actually see a screenshot's pixels. Used to
-# decide image-vs-OCR once multimodal send lands (T-007), and reported in the
-# Assistant's own injected capabilities line today. Empty = assume none can,
-# which is an honest "not configured" rather than a guess.
-vision_models = []
+# Model ids that can actually look at a screenshot. When one of these matches,
+# a capture is sent to the model as pixels; when none does, the model is told
+# to read the image with OCR instead — and to say that is what it did, rather
+# than describing a screen it never saw.
+#
+# Globs, not a fixed list, because model ids move faster than this file does.
+# Shipped populated so the feature works out of the box: every pattern names a
+# family that genuinely has vision. An empty list is the "assume none" setting,
+# which is safe but means captures are never actually looked at.
+vision_models = ["*vl*", "*vision*", "gpt-4o*", "gpt-5*", "claude*", "gemini*", "*llava*"]
 
 # How long an idle Assistant chat is still "the" Assistant chat. Past this,
 # the next message starts a fresh one rather than resuming a stale context.

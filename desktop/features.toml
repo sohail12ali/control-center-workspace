@@ -101,11 +101,11 @@ group = "listen"
 risk = "none"
 requires = ["stt_local"]
 tray = "submenu"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -117,11 +117,11 @@ risk = "none"
 requires = []
 tray = "show"
 parent = "listen_mode"
-available = false
+available = true
 enabled_default = true
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -133,11 +133,11 @@ risk = "none"
 requires = ["stt_local", "live_chat"]
 tray = "show"
 parent = "listen_mode"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 3 local STT (whisper.cpp)"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -153,7 +153,7 @@ available = false
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 3 local STT plus VAD and barge-in"
+reason_unavailable = "Needs always-on VAD and echo handling; push-to-talk and click-to-talk are what exist"
 hotkey = ""
 
 [[features]]
@@ -168,7 +168,7 @@ available = false
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 3 local STT. Web Speech from the tray is off unless explicitly accepted"
+reason_unavailable = "Needs a dictate mode: listening sends the transcript rather than putting it in the composer"
 hotkey = ""
 
 [[features]]
@@ -183,7 +183,7 @@ available = false
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Distinct from listening-off; not in the root menu until listen exists"
+reason_unavailable = "Not built: distinct from listening-off, and nothing sets it"
 hotkey = ""
 
 [[features]]
@@ -194,11 +194,11 @@ group = "listen"
 risk = "none"
 requires = ["stt_local"]
 tray = "hide"
-available = false
+available = true
 enabled_default = true
 skeleton = false
 never_one_click = false
-reason_unavailable = "Behaviour flag, not a menu row. Lands with phase 3"
+reason_unavailable = ""
 hotkey = ""
 
 # ---------------------------------------------------------------------------
@@ -262,11 +262,11 @@ group = "clipboard"
 risk = "none"
 requires = []
 tray = "submenu"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 4"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -278,11 +278,11 @@ risk = "none"
 requires = ["live_chat"]
 tray = "show"
 parent = "clipboard_menu"
-available = false
+available = true
 enabled_default = true
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs phase 4 clipboard write"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -294,11 +294,11 @@ risk = "gated"
 requires = ["clipboard_read", "live_chat"]
 tray = "show"
 parent = "clipboard_menu"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = true
-reason_unavailable = "Needs phase 4. Tray must not approve; in-chat Permission needed gate"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -314,7 +314,7 @@ available = false
 enabled_default = false
 skeleton = false
 never_one_click = true
-reason_unavailable = "Optional. Same gate as clipboard-read"
+reason_unavailable = "Needs a composer attach that does not send; only send-now exists"
 hotkey = ""
 
 # ---------------------------------------------------------------------------
@@ -329,11 +329,11 @@ group = "capture"
 risk = "gated"
 requires = ["capture", "live_chat"]
 tray = "show"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = true
-reason_unavailable = "Needs phase 2 multimodal send. Grey until wired. Destination chip still required"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]
@@ -344,11 +344,11 @@ group = "capture"
 risk = "gated"
 requires = ["capture"]
 tray = "show"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = true
-reason_unavailable = "Needs phase 2 region capture. Grey until wired"
+reason_unavailable = ""
 hotkey = ""
 
 # ---------------------------------------------------------------------------

@@ -941,6 +941,32 @@ A span with no number in it falls through to the model rather than becoming an
 invented id, so "status of the migration" is answered rather than mistaken for
 a ticket.
 
+
+### What a model actually receives from a screenshot
+
+`desktop-screenshot` returns a **path**. What happens next depends on the
+backend, because they can do genuinely different things with one:
+
+| Backend | What it gets |
+|---|---|
+| Claude / Cursor CLI | the path, and it opens the file with its own tools — the method that works on Windows, where pasting an image into a CLI does not |
+| an `openai_api` model matching `vision_models` | the path, then the **picture itself** as an image part, because this transport has no file tools at all |
+| an `openai_api` model that does not match | the path, then a sentence telling it to call `desktop-ocr` and to say it worked from OCR text |
+
+That last row is the one worth caring about. A model with no vision, handed
+only a path, will otherwise describe a screen nobody looked at — confidently.
+Being told is the difference between a useful answer and a fabricated one.
+
+`vision_models` in `console/config/assistant.toml` decides which models count.
+It ships populated with globs (`*vl*`, `gpt-4o*`, `claude*`, …) rather than a
+fixed list, because model ids move faster than that file does. Set it to `[]`
+to stop sending pixels anywhere.
+
+Attachments are capped at 4 MB and confined to the captures directory. The
+path arrives inside a tool result — text a model influenced — so it is
+resolved and refused if it escapes, and an oversized capture is refused with
+its size and a pointer to OCR rather than silently truncated.
+
 ### What still needs the shell, or a later ticket
 
 With no shell running, every desktop verb returns

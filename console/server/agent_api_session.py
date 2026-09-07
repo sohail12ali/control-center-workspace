@@ -61,6 +61,7 @@ import threading
 
 from . import agent_approvals
 from . import agent_tools
+from . import multimodal
 from . import openai_client
 from . import prompt_build
 from . import telemetry
@@ -239,11 +240,23 @@ class ApiSession(BaseSession):
 
                 rounds += 1
                 for call in result.tool_calls:
+                    tool_result = self._execute(call, rounds)
                     self._messages.append({
                         "role": "tool",
                         "tool_call_id": call.id or ("call_%d" % call.index),
-                        "content": self._execute(call, rounds),
+                        "content": tool_result,
                     })
+                    # A screenshot tool hands back a PATH, which an API
+                    # backend has no way to open — it has no file tools. So
+                    # for a vision-capable model the picture itself follows as
+                    # an image part, and for a text-only one a sentence saying
+                    # to use OCR instead. Silence here is what produces a
+                    # confident description of a screen nobody looked at.
+                    follow_up = multimodal.after_capture(
+                        self.cwd, call.name, tool_result, self.model,
+                        self._vision_patterns())
+                    if follow_up is not None:
+                        self._messages.append(follow_up)
 
         except openai_client.ApiError as exc:
             self._notice("error", exc.kind, str(exc))
@@ -319,6 +332,19 @@ class ApiSession(BaseSession):
                 return finish(False, "Denied: %s" % reason)
 
         return finish(True, agent_tools.dispatch(self.cwd, name, arguments))
+
+    def _vision_patterns(self):
+        """Model-id globs that can actually see a picture.
+
+        Read from the Assistant's settings rather than hardcoded, because
+        which models have vision changes far faster than this file does. An
+        empty list means "assume none", which keeps the honest default.
+        """
+        try:
+            from . import assistant_config
+            return assistant_config.settings(self.cwd).get("vision_models") or []
+        except Exception:  # noqa: BLE001
+            return []
 
     def _needs_approval(self, name):
         """Gate by tool name, with read-only console verbs exempt.
