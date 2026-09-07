@@ -78,6 +78,29 @@ One bounded UIA drive attempted against the just-verified release exe (assemblie
 - `validate-artifacts` (links) found one dangling wikilink: `T-003-task-breakdown.md`'s `## Links` block referenced `[[T-003-effort-forecast]]`, a file that was never produced (no scope drift triggered `estimate(mode=forecast)` — the ticket stayed under its estimate). Removed the dangling reference; no other broken links found across T-001/T-002/T-003's full wikilink sets (grep-verified).
 - No TOML file was hand-edited. Nothing was committed or pushed this pass.
 
+## CI, proven — 2026-09-07
+
+The 3-OS `desktop` job added here was recorded as "defined, not yet run",
+because proving it needed a push. It has now run, and the whole workflow is
+green on `b4d41a8`:
+
+```
+harness lint               success
+cli smoke                  success
+console tests (py3.11)     success
+console tests (py3.13)     success
+desktop (windows-latest)   success
+desktop (ubuntu-latest)    success
+desktop (macos-latest)     success
+```
+
+https://github.com/sohail12ali/control-center-workspace/actions/runs/34112818382
+
+Getting there took five red runs and found five real defects, none of which
+reproduce on this machine — they are recorded in [[T-007-verification]] §
+"What CI found that this machine could not". The console jobs were red *before*
+any of this programme's work and are green now too.
+
 ## Links
 - [[T-003-summary]] · [[T-003-analysis]] · [[T-003-requirements]] · [[T-003-critique-report]] · [[T-003-decision-log]] · [[T-003-plan]] · [[T-003-progress]] · [[T-003-verification]]
 

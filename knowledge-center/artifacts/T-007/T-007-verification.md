@@ -79,5 +79,52 @@ fails if a row claims too much OR too little.
   model, and either is the user's call.
 - **macOS and Linux**: unchanged by this ticket, and still unexercised.
 
+## What CI found that this machine could not
+
+The whole workflow is green on `b4d41a8` — all seven jobs, including the
+three-OS desktop matrix that had never run before. Getting there took five red
+runs and found **five real defects**, every one of them invisible on Windows
+with Python 3.14:
+
+1. **macOS could not build at all.** Tauri validates bundle icons at compile
+   time and rejects non-RGBA. The placeholders committed with the original
+   shell spike were RGB — fine on Windows, fatal on macOS, and undiscovered for
+   three tickets because no macOS runner had ever tried.
+2. **Linux could not link.** `cpal` reaches audio through `libspa-sys`, which
+   needs PipeWire's headers, and Mesa's `libgbm` behind that. T-003's apt list
+   covered only its own crates and said so in a comment; T-005 and T-006 then
+   added capture, clipboard and audio without extending it — exactly the
+   failure that comment predicted.
+3. **`kickoff` demanded PowerShell before consulting its own seam.** The tests
+   inject a `runner` to stand in for it, but the availability check ran first,
+   so the seam was useless anywhere PowerShell does not exist.
+4. **`tool_preview` built nonsense paths on Linux.** `os.path.relpath`
+   resolves a relative input against the process working directory, not the
+   workspace. It passed on Windows purely by accident — the workspace and cwd
+   were usually on different drives, which raises, and the exception fallback
+   returned the right answer. Pre-existing, and part of why the console jobs
+   were already red before this programme started.
+5. **The server would not start where breakaway from a job object is
+   forbidden.** `CREATE_BREAKAWAY_FROM_JOB` is a nicety, but asking for it
+   where a job forbids it does not degrade — it fails the whole spawn with
+   `ERROR_ACCESS_DENIED`. GitHub's Windows runners work exactly that way, and
+   so do some managed corporate environments, so this was a real defect
+   waiting for the wrong machine.
+
+### The change that made the rest possible
+
+Actions logs need a signed-in session to read, and this session had none: the
+API returns 403, the web page says "Sign in to view logs", and the browser
+extension was not connected. Four red jobs reported nothing but `exit code 1`.
+
+So each step now echoes its own failure tail as a `::error::` annotation, and
+annotations DO come back from the public API. That one change turned an opaque
+red build into a readable one, and every defect above was diagnosed from
+annotations rather than from logs. The first version of it reported
+`lose_fds=True,` — the middle of a traceback — so it now prefers pytest's own
+`FAILED` lines over a raw tail.
+
+Run: https://github.com/sohail12ali/control-center-workspace/actions/runs/34112818382
+
 ## Links
 - [[T-007-summary]] · [[T-007-analysis]] · [[T-007-requirements]] · [[T-007-decision-log]] · [[T-007-plan]] · [[T-007-progress]] · [[T-007-verification]]
