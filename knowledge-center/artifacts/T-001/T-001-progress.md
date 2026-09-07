@@ -6,7 +6,7 @@ artifact: progress
 # Progress: T-001
 
 ## Status Summary
-Stage: VERIFY — Tauri 2 host with integrated chrome. Sidecar tests green. `cargo build` succeeds. Force-kill of the host stops owned serve.
+Stage: Complete — closed 2026-09-06 by `@verifier` during T-003's VERIFY pass. Tauri 2 host with integrated chrome. Sidecar tests green. `cargo build` succeeds. Force-kill of the host stops owned serve.
 
 ## Dated Log
 
@@ -33,6 +33,12 @@ Stage: VERIFY — Tauri 2 host with integrated chrome. Sidecar tests green. `car
 - Started: —
 - Blocked: —
 - Next: close-work if ACs are accepted. Phases 2–6 stay out of this ticket.
+
+### 2026-09-06 (close)
+- Done: `close-work T-001` — all 8 ACs remained PASS ([[T-001-verification]]); noted the debug-subsystem stray-console defect is tracked/fixed under [[T-003-verification]] FR-1. `python console/kanban.py ticket move T-001 done`; artifact-map row moved to Completed.
+- Started: —
+- Blocked: —
+- Next: none — ticket closed.
 
 ## Links
 - [[T-001-summary]] · [[T-001-analysis]] · [[T-001-requirements]] · [[T-001-decision-log]] · [[T-001-plan]] · [[T-001-progress]] · [[T-001-verification]]

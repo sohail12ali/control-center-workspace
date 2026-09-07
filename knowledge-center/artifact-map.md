@@ -4,13 +4,17 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
-- [[T-001-summary]] — Native desktop shell spike wrapping the Delivery Console — Verify — Sohail Ali — 2026-09-05
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Verify — Sohail Ali — 2026-09-05
 
 ## Blocked
 
 ## Completed
 
+- [[T-006-summary]] — Voice: mic capture, STT, hotkey, spoken replies — Complete — Sohail Ali — 2026-09-07
+- [[T-005-summary]] — Native bridge: tray icon states, screenshot, OCR, clipboard — Complete — Sohail Ali — 2026-09-07
+- [[T-004-summary]] — Assistant brain: persona, /api/assistant, fast commands, Settings backend picker, memory — Complete — Sohail Ali — 2026-09-06
+- [[T-003-summary]] — Shell hygiene: no stray console, per-OS launch path, close T-001/T-002 — Complete — Sohail Ali — 2026-09-06
+- [[T-001-summary]] — Native desktop shell spike wrapping the Delivery Console — Complete — Sohail Ali — 2026-09-06
 - [[CC-T006-summary]] — Phase 3b - remote: Tailscale bind, audit log, Telegram approval notifications — Complete — Sohail Ali — 2026-08-29
 - [[CC-T005-summary]] — Phase 4 - UI and chat: diff cards, command palette, pickers, cost badges — Complete — Sohail Ali — 2026-08-29
 - [[CC-T004-summary]] — Phase 3a - scheduler: cron-driven verbs on the job queue — Complete — Sohail Ali — 2026-08-29

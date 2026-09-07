@@ -1,12 +1,12 @@
 [ticket]
-id = "T-001"
-title = "Native desktop shell spike wrapping the Delivery Console"
+id = "T-003"
+title = "Shell hygiene: no stray console, per-OS launch path, close T-001/T-002"
 kind = "tickets"
 stage = "done"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"
-created = "2026-09-05"
+created = "2026-09-06"
 updated = "2026-09-06"
 tags = []
 links = []

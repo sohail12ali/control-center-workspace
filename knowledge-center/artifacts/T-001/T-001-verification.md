@@ -41,5 +41,7 @@ Ran on Windows 10, Python 3.14.0, .NET SDK 10.0.301. `dotnet build desktop/host/
 ## Notes
 Rustc 1.98.1. `link.exe` exists under VS 18 Community; desktop CRT headers were missing until xwin splat. Do not require admin VS workload if `.xwin` is present.
 
+**2026-09-06 (verifier):** The debug-build stray-console-window defect (subsystem `3` on debug builds, `windows_subsystem` only gated for release) is now tracked and fixed under [[T-003-verification]] FR-1 (unconditional `windows_subsystem = "windows"` + `--console`/`DESKTOP_CONSOLE=1` escape hatch) — no action needed here, all 8 T-001 ACs above remain PASS as recorded.
+
 ## Links
 - [[T-001-summary]] · [[T-001-analysis]] · [[T-001-requirements]] · [[T-001-decision-log]] · [[T-001-plan]] · [[T-001-progress]] · [[T-001-verification]]
