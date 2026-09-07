@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -85,7 +86,10 @@ fn sidecar_py(root: &Path) -> PathBuf {
     root.join("desktop").join("sidecar.py")
 }
 
-pub fn ensure(root: &Path) -> Result<Handle, SidecarError> {
+/// `extra_env` is unused by T-003 itself — plumbing for T-005's native
+/// bridge, which needs to hand the sidecar a token via the environment
+/// rather than an argv anyone with `ps`/Task Manager could read.
+pub fn ensure(root: &Path, extra_env: &HashMap<String, String>) -> Result<Handle, SidecarError> {
     let script = sidecar_py(root);
     if !script.is_file() {
         return Err(SidecarError(format!("missing {}", script.display())));
@@ -96,6 +100,7 @@ pub fn ensure(root: &Path) -> Result<Handle, SidecarError> {
         .arg("--root")
         .arg(root)
         .current_dir(root)
+        .envs(extra_env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

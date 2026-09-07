@@ -27,11 +27,21 @@ fn default_muted() -> bool {
     true
 }
 
+/// Every `let _ = ...` in this module used to swallow a `tauri::Result`
+/// silently; this is the one place that turns a swallowed error into an
+/// auditable line, so every call site is one line instead of an inline
+/// `if let Err` that a future addition could easily forget.
+fn warn_on_err<T, E: std::fmt::Display>(context: &str, result: Result<T, E>) {
+    if let Err(e) = result {
+        log::warn!("tray: {context} failed: {e}");
+    }
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+        warn_on_err("show_main show()", w.show());
+        warn_on_err("show_main unminimize()", w.unminimize());
+        warn_on_err("show_main set_focus()", w.set_focus());
     }
 }
 
@@ -41,7 +51,7 @@ fn eval_tray(app: &AppHandle, id: &str) {
         "try{{window.ConsoleAgents&&window.ConsoleAgents.trayAction({payload})}}catch(e){{}}"
     );
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.eval(&js);
+        warn_on_err(&format!("eval_tray({id})"), w.eval(&js));
     }
 }
 
@@ -52,7 +62,7 @@ pub fn request_quit(app: &AppHandle) {
         }
     }
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.close();
+        warn_on_err("request_quit close()", w.close());
     }
 }
 
@@ -159,8 +169,8 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 t.to_string()
             }
         };
-        let _ = header_cb.set_text(label);
-        let _ = mute_cb.set_checked(payload.muted);
+        warn_on_err("header set_text", header_cb.set_text(label));
+        warn_on_err("mute set_checked", mute_cb.set_checked(payload.muted));
     });
 
     Ok(())

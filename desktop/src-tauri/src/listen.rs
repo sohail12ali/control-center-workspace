@@ -1,0 +1,267 @@
+//! One spoken command, start to finish.
+//!
+//! Record until the speaker stops, transcribe it, and hand the text to the
+//! console's assistant — the same endpoint a typed message goes to, which is
+//! the whole reason T-004 built that endpoint before any microphone existed.
+//! Nothing here knows what a command means; that is the console's dispatch
+//! table, and duplicating any of it would be a second place for it to differ.
+//!
+//! ## Why the tray state is set here and not inferred
+//!
+//! The console can tell the tray about a turn, but only the shell knows the
+//! mic is open or that audio is being transcribed. Those two states are set
+//! from this module, and the rest come off the console's stream in
+//! `tray_link`. Between them the icon reflects the whole cycle.
+//!
+//! ## One take at a time
+//!
+//! A second listen while one is running is refused rather than queued: two
+//! open microphones would interleave into one unusable recording, and the
+//! honest answer to "you are already listening" is to say so.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use crate::tray_state::{Assistant, Event};
+use crate::{audio, stt, tts};
+
+/// Guards against two takes at once. An `AtomicBool` rather than the state
+/// machine's own flag, because this must be correct even if a repaint is
+/// mid-flight.
+static LISTENING: AtomicBool = AtomicBool::new(false);
+
+/// Set when a take should stop early — push-to-talk released, or cancelled.
+static STOP: Mutex<bool> = Mutex::new(false);
+
+pub type ListenResult<T> = Result<T, String>;
+
+pub fn listening() -> bool {
+    LISTENING.load(Ordering::SeqCst)
+}
+
+/// Ask the take in flight to finish now. Harmless when nothing is listening.
+pub fn release() {
+    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = true;
+}
+
+/// Is speech usable at all right now? Drives `caps.stt` and the tray's
+/// listening rows, so it must answer for this machine rather than for the
+/// feature in principle.
+pub fn available(repo_root: &std::path::Path) -> bool {
+    audio::available() && stt::available(repo_root)
+}
+
+pub fn hint(repo_root: &std::path::Path) -> String {
+    if !audio::available() {
+        return "no microphone: nothing is set as the default input device".into();
+    }
+    stt::hint(repo_root)
+}
+
+/// Record, transcribe, and send. Blocking — the caller gives it a thread.
+///
+/// Returns the transcript so a caller (or a test) can see what was heard,
+/// even though the console has already been given it.
+pub fn take(
+    repo_root: &std::path::Path,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+) -> ListenResult<String> {
+    if LISTENING.swap(true, Ordering::SeqCst) {
+        return Err("already listening".into());
+    }
+    // Whatever happens below, the flag and the tray must come back.
+    let outcome = take_inner(repo_root, assistant, console_url);
+    LISTENING.store(false, Ordering::SeqCst);
+    if outcome.is_err() {
+        note(assistant, Event::Cancel);
+    }
+    outcome
+}
+
+fn take_inner(
+    repo_root: &std::path::Path,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+) -> ListenResult<String> {
+    if !audio::available() {
+        return Err(hint(repo_root));
+    }
+    if !stt::available(repo_root) {
+        return Err(stt::hint(repo_root));
+    }
+
+    // A reply being read aloud would otherwise be recorded back into the
+    // microphone. Stopping it IS barge-in: talking over the assistant
+    // interrupts it, which is what a person expects.
+    if tts::stop() {
+        note(assistant, Event::SpeakStop);
+    }
+
+    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    let stop = Arc::new(Mutex::new(false));
+    let stop_watch = stop.clone();
+    // Bridge the module-level flag into the recorder's own, so `release()`
+    // from an HTTP request or a hotkey reaches a take already in progress.
+    let watcher = std::thread::Builder::new()
+        .name("listen-stop".into())
+        .spawn(move || loop {
+            if *STOP.lock().unwrap_or_else(|e| e.into_inner()) {
+                *stop_watch.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                return;
+            }
+            if !LISTENING.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        })
+        .ok();
+
+    note(assistant, Event::ListenStart);
+    let recorded = audio::record(stop);
+    // The watcher exits on its own once LISTENING clears or STOP is seen; it
+    // is joined so a take never leaves a thread behind.
+    LISTENING.store(false, Ordering::SeqCst);
+    if let Some(w) = watcher {
+        let _ = w.join();
+    }
+    LISTENING.store(true, Ordering::SeqCst);
+
+    let take = recorded?;
+    if take.ending == audio::Ending::NothingHeard {
+        note(assistant, Event::Cancel);
+        return Err("nothing heard".into());
+    }
+    log::info!(
+        "listen: {:.1}s of audio, ended by {:?}",
+        take.seconds(),
+        take.ending
+    );
+
+    note(assistant, Event::Transcribing);
+    let text = stt::transcribe(repo_root, &take.wav())?;
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        note(assistant, Event::Cancel);
+        return Err("the speech engine returned nothing".into());
+    }
+    log::info!("listen: heard {text:?}");
+
+    // Handing it to the console is what makes a spoken command and a typed
+    // one the same thing.
+    say(console_url, &text)?;
+    Ok(text)
+}
+
+/// POST the transcript to the assistant, exactly as the palette would.
+fn say(console_url: &str, text: &str) -> ListenResult<()> {
+    use std::io::{BufRead, BufReader, Write};
+    let (host, port) = split_host_port(console_url)
+        .ok_or_else(|| format!("cannot parse the console url {console_url}"))?;
+    let body = format!(
+        "{{\"text\":{},\"source\":\"voice\"}}",
+        json_string(text)
+    );
+    let mut stream = std::net::TcpStream::connect((host.as_str(), port))
+        .map_err(|e| format!("cannot reach the console: {e}"))?;
+    let head = format!(
+        "POST /api/assistant/say HTTP/1.1\r\nHost: {host}:{port}\r\n\
+         Content-Type: application/json\r\nX-Console-Request: 1\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|()| stream.write_all(body.as_bytes()))
+        .map_err(|e| format!("cannot send the transcript: {e}"))?;
+    let mut status = String::new();
+    BufReader::new(stream)
+        .read_line(&mut status)
+        .map_err(|e| format!("no answer from the console: {e}"))?;
+    if !status.contains(" 200") {
+        return Err(format!("the console said {}", status.trim()));
+    }
+    Ok(())
+}
+
+/// Minimal JSON string escaping. The transcript is model-adjacent text from a
+/// speech engine; a stray quote in it must not produce a malformed body.
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn split_host_port(url: &str) -> Option<(String, u16)> {
+    let rest = url.strip_prefix("http://")?;
+    let authority = rest.split('/').next()?;
+    let (host, port) = authority.rsplit_once(':')?;
+    Some((host.to_string(), port.parse().ok()?))
+}
+
+fn note(assistant: &Arc<Mutex<Assistant>>, event: Event) {
+    if let Ok(mut a) = assistant.lock() {
+        a.apply(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_transcript_with_quotes_cannot_break_the_body() {
+        // The transcript comes from a speech engine listening to a room, so
+        // it is not trusted input.
+        assert_eq!(json_string(r#"say "hello""#), r#""say \"hello\"""#);
+        assert_eq!(json_string("back\\slash"), r#""back\\slash""#);
+        assert_eq!(json_string("two\nlines"), r#""two\nlines""#);
+    }
+
+    #[test]
+    fn control_characters_are_escaped_not_emitted() {
+        // Escaped as JSON requires, not dropped: a raw control byte
+        // inside a string is what would make the request body malformed.
+        assert_eq!(json_string("bell\u{7}"), r#""bell\u0007""#);
+    }
+
+    #[test]
+    fn ordinary_words_pass_through() {
+        assert_eq!(json_string("status ticket two"), r#""status ticket two""#);
+    }
+
+    #[test]
+    fn the_console_url_splits() {
+        assert_eq!(
+            split_host_port("http://127.0.0.1:8790"),
+            Some(("127.0.0.1".to_string(), 8790))
+        );
+        assert_eq!(split_host_port("nonsense"), None);
+    }
+
+    #[test]
+    fn the_hint_explains_whichever_half_is_missing() {
+        let empty = std::env::temp_dir().join("t006-nothing-here");
+        let h = hint(&empty);
+        assert!(!h.is_empty());
+        assert!(h.contains("microphone") || h.contains("get-whisper"), "{h}");
+    }
+
+    #[test]
+    fn release_is_safe_when_nothing_is_listening() {
+        release();
+        assert!(!listening());
+    }
+}

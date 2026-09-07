@@ -31,9 +31,6 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# VS Code related
-.vscode/
-
 # Environment variables
 .env
 .env.*
@@ -45,8 +42,10 @@ Thumbs.db
 *.swp
 *.swo
 
-# IDE
-.vscode/
+# IDE — share launch/tasks; keep personal settings local
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.sublime-project
 *.sublime-workspace
@@ -86,3 +85,6 @@ knowledge-center/agent-runs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# T-006 speech engine and model, fetched by desktop/get-whisper.ps1
+desktop/stt/

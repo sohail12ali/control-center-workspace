@@ -10,18 +10,61 @@ rust-version = "1.77"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+log = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = ["tray-icon"] }
+# `image-png` lets `tauri::image::Image::from_bytes` decode the tray-state
+# PNGs embedded with `include_bytes!`; without it the icons cannot be built
+# at runtime and the tray is stuck on its one bundled icon.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
 url = "2"
+
+# The loopback bridge the Python console calls. Sync and tiny on purpose: every
+# handler is short, and an async runtime here would be a second executor beside
+# Tauri's for no benefit.
+tiny_http = { version = "0.12", default-features = false }
+# Screen and window capture. Cross-platform (WGC/GDI on Windows, CoreGraphics
+# on macOS, X11 on Linux), which is why it is preferred over a Windows-only
+# capture path — one API, per-OS backends underneath.
+xcap = "0.9"
+# Clipboard read and write on all three targets.
+arboard = { version = "3", default-features = false }
+# Bridge token. Already in the lockfile via tauri's tree.
+getrandom = "0.3"
+
+# T-006 voice. Audio in AND out: capture for speech-to-text, playback for the
+# chime and for synthesised replies. One crate for both, and pure Rust on
+# every target (WASAPI / CoreAudio / ALSA), so no C toolchain appears here.
+cpal = "0.16"
+# Voice activity detection, so a "short take" ends when the speaker stops
+# rather than after a fixed timer. Pure Rust - no ONNX runtime, no model file.
+earshot = "1"
+# Push-to-talk. Registered from Rust, so no webview capability is widened.
+tauri-plugin-global-shortcut = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_System_Console",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
+] }
+# WinRT OCR. Ships with Windows, needs no model download and no extra build
+# tooling. Already in the lockfile via tauri/wry. (Speech synthesis is NOT
+# here: `tts.rs` spawns the OS synthesiser instead, so the feature would be
+# claiming a dependency nothing uses.)
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Foundation_Collections",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Security_Cryptography",
+  "Storage_Streams",
+  "Win32_System_WinRT",
 ] }
 
 [features]

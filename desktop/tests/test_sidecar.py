@@ -2,6 +2,7 @@
 
 import os
 import socket
+import subprocess
 import sys
 
 import pytest
@@ -67,6 +68,68 @@ class TestConsoleStaysStdlib:
         assert not os.path.isfile(os.path.join(console, "package.json"))
         assert not os.path.isfile(os.path.join(console, "requirements.txt"))
         assert not os.path.isdir(os.path.join(console, "node_modules"))
+
+
+class TestServeLogCapture:
+    """`sidecar.py:124-130` — serve stdout/stderr land in `serve.log`
+    instead of vanishing into DEVNULL."""
+
+    def test_spawn_serve_redirects_to_the_log_file(self, monkeypatch, tmp_path):
+        calls = []
+
+        class _FakeProc:
+            pid = 4242
+
+        def fake_popen(cmd, **kwargs):
+            calls.append(kwargs)
+            return _FakeProc()
+
+        monkeypatch.setattr(sidecar.subprocess, "Popen", fake_popen)
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "console"), exist_ok=True)
+        with open(os.path.join(root, "console", "kanban.py"), "w") as fh:
+            fh.write("")
+
+        sidecar.spawn_serve(root, "127.0.0.1", 8790)
+
+        assert calls, "Popen was not called"
+        kw = calls[0]
+        assert kw["stdout"] is not subprocess.DEVNULL
+        assert kw["stdout"] is kw["stderr"]
+        assert kw["stdout"].name == os.path.join(root, sidecar.SERVE_LOG_REL)
+        kw["stdout"].close()
+
+    def test_a_log_directory_that_cannot_be_made_falls_back_to_devnull(
+        self, monkeypatch, tmp_path
+    ):
+        def boom(*a, **kw):
+            raise OSError("no permission")
+
+        monkeypatch.setattr(sidecar.os, "makedirs", boom)
+        handle = sidecar._serve_log_handle(str(tmp_path))
+        assert handle is subprocess.DEVNULL
+
+
+class TestKillTreeFlags:
+    """`sidecar.py:152-159` — taskkill keeps its own inline
+    `CREATE_NO_WINDOW`-equivalent constant, no import of `procs.py`."""
+
+    def test_taskkill_carries_the_no_window_flag_on_nt(self, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr(sidecar.subprocess, "run", fake_run)
+        monkeypatch.setattr(sidecar.os, "name", "nt")
+        sidecar.kill_tree(4242)
+        assert calls
+        assert calls[0]["creationflags"] & sidecar.CREATE_NO_WINDOW
+
+    def test_module_does_not_import_procs(self):
+        # A standalone-importable file must not reach into console/server —
+        # the Tauri host shells it out with no console/ on sys.path.
+        assert "procs" not in dir(sidecar)
 
 
 class TestEnsureLive:

@@ -1,0 +1,19 @@
+{
+  "_comment": "Launch entries for the Delivery Console. Paths are relative to the workspace root. Not consumed by any T-003 code path yet — read by editor/agent launchers per desktop/README.md and T-003-decision-log.md.",
+  "configurations": [
+    {
+      "name": "desktop-shell",
+      "description": "Launch the release build of the Tauri desktop shell (Windows). Build first: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml",
+      "program": "desktop/src-tauri/target/release/delivery-console-desktop.exe",
+      "args": [],
+      "cwd": "."
+    },
+    {
+      "name": "console-serve",
+      "description": "Launch the console's own HTTP server directly (browser-only, no Tauri shell).",
+      "program": "python",
+      "args": ["console/kanban.py", "serve", "--port", "8790"],
+      "cwd": "."
+    }
+  ]
+}

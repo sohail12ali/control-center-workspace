@@ -24,6 +24,14 @@ READY_PATH = "/api/config"
 READY_TIMEOUT_SEC = 45.0
 PROBE_TIMEOUT_SEC = 0.5
 
+# This file is shelled out to by the Tauri host and must keep working with no
+# `console/` on `sys.path` — so it keeps its own inline copy of this constant
+# rather than importing `console/server/procs.py` (T-003 decision-log §
+# "sidecar.py stays standalone-importable").
+CREATE_NO_WINDOW = 0x08000000
+
+SERVE_LOG_REL = os.path.join("console", ".cache", "desktop", "serve.log")
+
 
 class SidecarError(RuntimeError):
     pass
@@ -111,6 +119,19 @@ def python_cmd():
     return [sys.executable]
 
 
+def _serve_log_handle(repo_root):
+    """Append handle for `serve.log` so `httpd.py` startup lines and any
+    traceback survive a launch, instead of vanishing into DEVNULL. Best
+    effort: a log directory that cannot be created must not stop the serve
+    process from starting."""
+    path = os.path.join(repo_root, SERVE_LOG_REL)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return open(path, "ab")
+    except OSError:
+        return subprocess.DEVNULL
+
+
 def spawn_serve(repo_root, bind_host, port):
     kanban = os.path.join(repo_root, "console", "kanban.py")
     if not os.path.isfile(kanban):
@@ -121,15 +142,15 @@ def spawn_serve(repo_root, bind_host, port):
         "--port", str(int(port)),
     ]
     flags = 0
+    log_handle = _serve_log_handle(repo_root)
     popen_kw = dict(
         cwd=repo_root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_handle,
+        stderr=log_handle,
         stdin=subprocess.DEVNULL,
         close_fds=True,
     )
     if os.name == "nt":
-        CREATE_NO_WINDOW = 0x08000000
         CREATE_BREAKAWAY_FROM_JOB = 0x01000000
         flags = (
             subprocess.CREATE_NEW_PROCESS_GROUP
@@ -143,6 +164,11 @@ def spawn_serve(repo_root, bind_host, port):
         return subprocess.Popen(cmd, **popen_kw)
     except OSError as e:
         raise SidecarError("could not start serve: %s" % e) from e
+    finally:
+        # The child inherits its own copy of the handle; this process's copy
+        # would otherwise leak (and, on Windows, keep the file locked).
+        if log_handle is not subprocess.DEVNULL:
+            log_handle.close()
 
 
 def kill_tree(pid):
@@ -154,6 +180,7 @@ def kill_tree(pid):
             ["taskkill", "/PID", str(pid), "/T", "/F"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
             check=False,
         )
         return
