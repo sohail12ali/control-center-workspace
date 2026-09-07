@@ -202,3 +202,53 @@ class TestComposePrompt:
     def test_bare_prompt_is_untouched_in_every_style(self, repo):
         for bid in ("alpha", "beta"):
             assert agent_backends.get(repo, bid).compose_prompt("  go  ") == "go"
+
+
+class TestSystemAppend:
+    """T-004 C1: persona/context text threaded through `session_argv`.
+
+    An additive kwarg — a row that doesn't declare `{system_append}` in its
+    templates keeps working unchanged, and one that does gets the flag+text
+    when there's something to say, and no flag at all when there isn't.
+    """
+
+    def test_flag_present_with_text_when_non_empty(self, on_path):
+        b = agent_backends.Backend({
+            "id": "x", "transport": "stream_json",
+            "session_args": ["-p", "--append-system-prompt", "{system_append}"],
+        })
+        argv = b.session_argv(system_append="be terse")
+        assert argv[argv.index("--append-system-prompt") + 1] == "be terse"
+
+    def test_flag_dropped_entirely_when_empty(self, on_path):
+        b = agent_backends.Backend({
+            "id": "x", "transport": "stream_json",
+            "session_args": ["-p", "--append-system-prompt", "{system_append}"],
+        })
+        argv = b.session_argv()
+        assert "--append-system-prompt" not in argv
+
+    def test_a_row_with_no_system_append_placeholder_is_unaffected(self, repo, on_path):
+        # "alpha"'s fixture template has no {system_append} slot at all — the
+        # existing mechanism (_expand dropping unknown/empty placeholders)
+        # must not be touched by this kwarg's addition.
+        argv = agent_backends.get(repo, "alpha").session_argv(
+            model="big", system_append="ignored, no slot for it")
+        assert "ignored, no slot for it" not in argv
+
+    def test_supports_system_append_flag_reads_off_the_template(self, on_path):
+        with_flag = agent_backends.Backend({
+            "id": "x", "transport": "stream_json",
+            "session_args": ["-p", "--append-system-prompt", "{system_append}"],
+        })
+        without_flag = agent_backends.Backend({
+            "id": "y", "transport": "resume",
+            "turn_args": ["-p", "{prompt}"],
+        })
+        assert with_flag.supports_system_append_flag is True
+        assert without_flag.supports_system_append_flag is False
+
+    def test_shipped_claude_row_declares_the_flag(self):
+        rows = tomlio.load(SHIPPED).get("backend", [])
+        claude = next(r for r in rows if r.get("id") == "claude")
+        assert agent_backends.Backend(claude).supports_system_append_flag is True

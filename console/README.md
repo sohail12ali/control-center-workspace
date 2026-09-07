@@ -515,11 +515,13 @@ vocabulary.
   `enabled = false` and placeholder lanes — flip the flag and edit lanes to
   turn either on, no code changes needed.
 
-- `config/console.toml`'s `[agents.backends.*]` — one table per launchable
-  CLI for the Agents tab (`command` + `args`, with `{prompt}` substituted).
-  Ships with `claude` (`--permission-mode plan` by default — safe/read-only
-  until you change it) and `cursor-agent`. Add more the same way; nothing is
-  hardcoded to a specific CLI.
+- `config/agents.toml`'s `[[backend]]` rows — one row per launchable CLI/API
+  backend for the Agents tab (`command`/`session_args`/`turn_args`, with
+  `{prompt}`/`{mode}`/`{model}` substituted). Ships with `claude`
+  (`--permission-mode plan` by default — safe/read-only until you change it)
+  and `cursor-agent`. Add more the same way; nothing is hardcoded to a
+  specific CLI. See § Agents tab below for what launching one does and
+  doesn't do.
 - `config/plugins.toml` — which **features** load. This, not `console.toml`,
   is what decides the non-board tabs. See Plugin architecture below.
 
@@ -690,14 +692,32 @@ silently, and the connection pill reads `snapshot`.
 
 ## Agents tab — what it does and doesn't do
 
-Launches a configured backend (`console/config/console.toml`'s
-`[agents.backends.*]`) as a **headless one-shot subprocess** — `subprocess.Popen`
-with an argv list (never a shell string, so prompt content can't inject
-shell syntax), output captured in the background and polled by the UI.
+Backends (both the live chats below and the one-shot launcher this section
+describes) come from `console/config/agents.toml`'s `[[backend]]` rows —
+`agent_backends.py` is the one registry both read, so `kanban.py agents
+launch` and the tab's own chats can't disagree about a command, model, or
+permission mode. (Older revisions of this doc pointed at a `console.toml`
+`[agents.backends.*]` table; that table no longer exists.)
+
+This section covers `agents launch` (the one-shot CLI/verb path,
+`console/server/agents.py`) — a **headless one-shot subprocess**:
+`subprocess.Popen` with an argv list (never a shell string, so prompt content
+can't inject shell syntax), output captured in the background and polled by
+the UI, spawned windowless on Windows (`CREATE_NO_WINDOW`, `server/procs.py` —
+defensive hygiene, not a fix for an observed defect; see the desktop shell's
+own `T-003-decision-log.md`).
+
+**Live chats are a separate, more capable path** (`agent_session.py` /
+`agent_manager.py`): a `stream_json`-transport backend runs as one long-lived
+process per conversation with stdin held open, so a message can steer a turn
+already in flight — the limitation below is specific to the one-shot launcher,
+not to a live chat.
 
 Deliberately smaller than a full agent-orchestration UI:
 
-- **No live steering.** You can watch a run and stop it, not talk to it mid-turn.
+- **No live steering (one-shot launcher only).** `agents launch` starts a
+  process and lets you watch/stop it, not talk to it mid-turn — steering
+  needs the open stdin channel a live chat holds.
 - **No worktree isolation.** Every run executes directly in the workspace
   root (or a `cwd` you pass, still inside the workspace). Don't launch two
   runs against the same ticket/repo concurrently.
@@ -741,6 +761,206 @@ The preference is written **only from a desktop**. Below the breakpoint the
 list is a pane you swap to, and swapping away from it after picking a chat is
 navigation rather than a setting — persisting it would silently fold the list
 away on the next wide session.
+
+## The Assistant
+
+One reused chat you can talk to in short commands. It exists so the tray voice
+assistant (T-006) is testable **by typing today** — same endpoint, same
+dispatch, no microphone and no native shell required.
+
+It is not a second orchestrator. Every message does exactly one of two things:
+match one fast command and run its handler, or get sent once to an ordinary
+Agents chat. Nothing inspects the model's reply to pick a follow-up action.
+
+### Try it without a server
+
+```bash
+python console/kanban.py assistant say "what's open"
+python console/kanban.py assistant say "status T-002"
+python console/kanban.py assistant settings
+```
+
+The CLI runs the same handler the HTTP route runs (`assistant_feature.handlers`),
+so there is one implementation and no CSRF bypass — CSRF is enforced by
+`httpd.py` on the way in, not by the handler.
+
+One caveat: chat sessions live in the serving process's memory, so a message
+that reaches the **model** from the CLI dies with the command. Fast commands
+are fully useful from the CLI; model turns want a running server (that is how
+the desktop shell will call it anyway).
+
+### Fast commands
+
+Matched on the **whole utterance** only, after stripping a wake word and
+trailing punctuation. That is deliberate: `stop the server` must reach the
+model, not silently interrupt the turn. The cost is that a command buried
+mid-sentence is not recognised, which is the right way round.
+
+| Say | It does |
+|---|---|
+| `new chat`, `start over`, `reset` | ends the current Assistant chat and starts one |
+| `stop`, `cancel`, `interrupt` | interrupts the turn in flight |
+| `mute` / `unmute` | stores the `speak` setting (T-006 honours it) |
+| `use claude` / `use cursor` / `use ollama` … | backend for the **next** chat; a live chat keeps its context |
+| `status T-002`, `status t dash two` | lane, open tasks, blockers — **no model call** |
+| `what's open`, `standup` | the tickets digest — no model call |
+| `create ticket for {title}` | the `kickoff` verb: `ticket.toml`, rendered templates, artifact-map row |
+| `remember {fact}` | appends to memory; refuses anything shaped like a credential |
+| `copy that` | needs the native shell (see below) |
+| `do`/`fix`/`build`/`run {task}` | one send, rewritten through the `do` skill |
+| `screenshot of X and Y` | one send, rewritten to an explicit instruction; the tool itself is T-005's |
+| anything else | sent to the chat unchanged |
+
+Spoken ticket ids are canonicalised, so `t dash two`, `t 2`, `ticket 4` and
+`T-002` all resolve. A span with no number in it falls through to the model
+rather than inventing an id — `status of the migration` is a question, not a
+command.
+
+### Persona and injected context
+
+`console/config/assistant.md` is the persona — console-owned, deliberately
+**not** an eighth file under `.claude/agents/`, which stays at exactly seven.
+It reaches a Claude CLI backend on `--append-system-prompt`, an `openai_api`
+backend through the prompt builder's `extra=`, and a backend with no
+system-prompt flag as a first-turn prefix.
+
+Each new chat is also given a capped context block: the open-tickets digest,
+whatever has been remembered, and one line naming the backend, whether it is
+local or hosted, and whether the native bridge is up. Every section states it
+when truncated.
+
+### Settings
+
+`console/config/assistant.toml` holds the **committed defaults**. Your own
+choice — which backend, which model — is written by
+`POST /api/assistant/settings` to `console/.cache/assistant/settings.json`,
+which is gitignored, so picking a model on one laptop never lands in anyone
+else's diff. `GET` returns the merged view, which is what the desktop shell
+reads. A write is rejected whole if any key is unknown or any value invalid;
+a half-applied settings write is worse than a refused one.
+
+`backend = ""` means "resolve at use time": the first enabled and installed
+backend, local models first. A hardcoded id would be wrong on any machine
+without that particular CLI.
+
+### Desktop tools
+
+Six verbs reach the native shell over a loopback bridge, so they work from any
+backend and from the palette, MCP or the CLI like any other verb:
+
+| Verb | Gated? | What it does |
+|---|---|---|
+| `desktop-windows` | no | titles and geometry of capturable windows |
+| `desktop-monitors` | no | monitors, sizes, which is primary |
+| `desktop-screenshot` | **yes** | screen / monitor / window-by-title / region, returns a PNG path |
+| `desktop-clipboard-peek` | no | how much text is on the clipboard, and a 40-char preview |
+| `desktop-clipboard-read` | **yes** | the clipboard's full text |
+| `desktop-clipboard-write` | no (`needs_confirm`) | put text on the clipboard |
+
+Two of them are the most sensitive things this console can do, and they are
+guarded accordingly:
+
+- **A screenshot and a clipboard read can only be approved at this machine.**
+  A Telegram tap on one of those cards is refused — the person tapping cannot
+  see what is on the screen, or what a password manager last copied. A *deny*
+  is accepted from anywhere; refusing to let someone stop something would be a
+  strange reading of "this needs a human here".
+- **Neither gets "allow for this chat."** Each screen, and each clipboard, is
+  a fresh decision. `desktop-clipboard-peek` exists so the card can say "will
+  read 1,204 characters" without performing the read it is gating.
+- The window LIST is deliberately not gated, and returns titles and geometry
+  only — never a process path. Asking for approval to read a window list
+  trains people to click allow without reading, which is how a gate stops
+  working for the calls that matter.
+
+Captures are written to `console/.cache/desktop-captures/` and the tool returns
+a **path**, not image bytes: that is what lets a Claude or Cursor backend open
+it with its own file tools, keeps a multi-megabyte PNG out of a JSON response,
+and leaves a reviewable artefact on disk.
+
+`needs_confirm` on the clipboard write is a different guard from the approval
+card: it stops a *hallucinated* call, not an unwanted one.
+
+### Talking to it
+
+Click the tray icon (or press Ctrl+Alt+Space; Cmd+Option+Space on macOS) and
+speak. Recording stops when **you** stop — a voice-activity detector ends the
+take after about 700 ms of silence, so there is no timer to race and no need to
+finish a sentence early. A 20-second cap applies in case the detector wedges.
+
+The transcript goes to the same `POST /api/assistant/say` a typed message goes
+to, so a spoken command and a typed one are the same thing. Replies are read
+back aloud unless muted, and the tray icon shows which state it is in:
+
+| Icon | Meaning |
+|---|---|
+| grey disc | idle |
+| red disc, mic glyph | listening — the microphone is open |
+| amber ring | working |
+| green disc, speaker waves | reading a reply aloud |
+| orange dot overlay | a permission card is waiting for you |
+| grey with a slash | replies muted |
+
+Every state is distinguishable by shape as well as colour, because the macOS
+menu bar renders it monochrome and because colour alone is not an accessible
+signal.
+
+Talking while it is speaking interrupts it — the reply stops and a new take
+begins. Pressing the hotkey during a take ends that take rather than starting
+a second one.
+
+### Setting speech up
+
+Speech recognition needs an engine, and nothing here downloads one on its own:
+
+```powershell
+powershell -File desktop/get-whisper.ps1              # base.en, ~150 MB
+powershell -File desktop/get-whisper.ps1 -Model small.en   # better, ~470 MB
+powershell -File desktop/get-whisper.ps1 -WhatIf      # show sizes, fetch nothing
+```
+
+That puts a pinned `whisper.cpp` build and a ggml model in `desktop/stt/`
+(gitignored). Until then the tray reports listening as unavailable and says
+exactly what to run — it does not fail when you speak.
+
+Everything stays on the machine: the engine runs as a local process, the model
+is local, and audio never leaves. Reading replies aloud uses whatever
+synthesiser the OS already has (`System.Speech` on Windows, `say` on macOS,
+`spd-say` or `espeak-ng` on Linux), so there is nothing to install for that.
+
+### Spoken ticket ids
+
+"status ticket two" resolves to `T-002`, and so do "t dash two", "t 2" and
+"T-002". Homophones are handled too, because they are what a recogniser
+actually returns: asked to transcribe "status ticket two", whisper base.en
+gives back **"Status ticket too"**. So `too`, `to`, `won`, `for`, `fore`, `ate`
+and `oh` map to digits — but only inside a span an anchored command has
+already identified as a ticket id, never in general text.
+
+A span with no number in it falls through to the model rather than becoming an
+invented id, so "status of the migration" is answered rather than mistaken for
+a ticket.
+
+### What still needs the shell, or a later ticket
+
+With no shell running, every desktop verb returns
+`{"ok": false, "reason": "shell not running"}` — the pointer file
+`console/.cache/desktop/bridge.json` is written by the shell at startup and is
+the only thing that advertises the port. A shell killed outright leaves the
+file behind, so availability is a `/health` probe rather than a file check.
+
+With no shell running, every desktop verb — and speech — reports
+`shell not running`. Speech additionally needs the engine fetched (above); the
+tray says which of the two is missing.
+
+Each capability is **probed, not assumed**: `GET /health` asks whether an
+engine actually answers on this machine, so `ocr`, `speak` and `stt` describe
+this build rather than what the platform supports in principle.
+
+Still to come: hands-free listening (the mic is push-to-talk or click-to-talk
+for now), a Settings-tab control for the backend picker (the service side
+exists and round-trips through `GET`/`POST /api/assistant/settings`), OS
+actuation, and watch mode.
 
 ## Security notes
 

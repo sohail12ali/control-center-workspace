@@ -116,6 +116,51 @@ def recent_progress(repo_root, ticket_id, limit=MAX_PROGRESS_ENTRIES):
     return out
 
 
+# --------------------------------------------------------- tickets digest ---
+
+#: T-004's injected-context cap (FR-4): a workspace-wide "what's open" summary
+#: small enough to sit inside a session's `extra` budget alongside memory and
+#: capabilities — much tighter than a single ticket's own digest above,
+#: because this one has to cover every open ticket at once.
+TICKETS_DIGEST_CAP = 1_200
+
+
+def tickets_digest(repo_root, cap=TICKETS_DIGEST_CAP):
+    """A capped, plain-text "what's open" summary across every ticket —
+    composed from `tickets`/`boards`/`trackers`, the same three readers
+    `build()` above uses for one ticket, never a second source of truth for
+    lane labels or blocker rules.
+
+    Backs the `tickets_digest` verb (C6) and the Assistant's injected session
+    context (C4); truncation is stated, never silent, matching every other
+    cap in this module.
+    """
+    tickets = tickets_mod.list_tickets(repo_root)
+    tickets = [t for t in tickets if (t.get("status") or "active") != "archived"]
+    tickets.sort(key=lambda t: t.get("id", ""))
+
+    lines = []
+    for t in tickets:
+        kind = t.get("kind") or "tickets"
+        try:
+            lanes = {l["id"]: l for l in boards_mod.lanes_for(kind, repo_root)}
+        except ValueError:
+            lanes = {}
+        lane = lanes.get(t.get("stage") or "", {})
+        if lane.get("terminal"):
+            continue
+        label = lane.get("label") or t.get("stage") or "?"
+        blocked = trackers_mod.blockers(repo_root, t["id"])
+        flag = " [blocked]" if blocked else ""
+        lines.append("%s: %s (%s)%s" % (t["id"], t.get("title", ""), label, flag))
+
+    text = "\n".join(lines) if lines else "No open tickets."
+    truncated = len(text) > cap
+    if truncated:
+        text = text[:cap].rstrip() + "\n…(truncated — %d tickets total)" % len(lines)
+    return {"text": text, "count": len(lines), "truncated": truncated}
+
+
 # -------------------------------------------------------------- digest ------
 
 def build(repo_root, ticket_id):

@@ -197,6 +197,31 @@ class TestPromptInjection:
         run(build(api, provider), "hi")
         assert "BE HONEST" in provider.requests[0]["messages"][0]["content"]
 
+    def test_extra_reaches_the_prompt_via_build(self, api):
+        # T-004 C1: `extra=` threads through BaseSession -> ApiSession.start ->
+        # prompt_build.build, so the assistant's injected context (tickets
+        # digest/memory/capabilities) lands in the system message.
+        provider = Provider(say("ok"))
+        session = build(api, provider, extra="TICKET DIGEST: nothing open")
+        run(session, "hi")
+        system = provider.requests[0]["messages"][0]["content"]
+        assert "TICKET DIGEST: nothing open" in system
+
+    def test_extra_defaults_to_empty_and_adds_nothing(self, api):
+        provider = Provider(say("ok"))
+        session = build(api, provider)
+        assert session.extra == ""
+
+    def test_system_append_defaults_to_empty(self, api):
+        provider = Provider(say("ok"))
+        session = build(api, provider)
+        assert session.system_append == ""
+
+    def test_system_append_is_stored_when_given(self, api):
+        provider = Provider(say("ok"))
+        session = build(api, provider, system_append="be terse")
+        assert session.system_append == "be terse"
+
     def test_a_missing_skill_is_reported_rather_than_silently_absent(self, api):
         session = build(api, Provider(say("ok")), skill="nonexistent")
         assert "skill:nonexistent" in session._system_report["missing"]

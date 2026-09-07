@@ -45,6 +45,7 @@ import re
 import subprocess
 
 from . import mcp as mcp_mod
+from . import procs
 from . import verbs as verbs_mod
 
 #: Never read, list, or search inside these, whatever the pattern says. They are
@@ -246,7 +247,9 @@ def run_command(repo_root, command="", cwd=""):
     try:
         proc = subprocess.run(command, shell=True, cwd=workdir,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, timeout=COMMAND_TIMEOUT)
+                              stdin=subprocess.DEVNULL,
+                              text=True, timeout=COMMAND_TIMEOUT,
+                              **procs.popen_kwargs())
     except subprocess.TimeoutExpired:
         raise ToolError("command exceeded %ds and was killed" % COMMAND_TIMEOUT)
     output = (proc.stdout or "").strip()

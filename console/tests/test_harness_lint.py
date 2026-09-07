@@ -203,3 +203,23 @@ class TestDeclaredCounts:
     def test_accurate_count_is_quiet(self, harness):
         self._claude_md(harness, "This workspace has 2 skills and 1 agents.\n")
         assert "stale-count" not in _codes(harness_lint.lint(harness)[0])
+
+
+#: The real workspace, not a fixture — a few things can only be wrong (or
+#: right) about the actual roster.
+REAL_WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+
+
+class TestRealAgentRoster:
+    """T-004 C0 (task 1-1-2): the ticket adds zero agents — the assistant is
+    one chat plus a dispatch table, never an 8th `.claude/agents/` file
+    (BR-3, FR-2 AC6). This must fail loudly the day an 8th one appears."""
+
+    def test_the_claude_agents_directory_stays_at_exactly_seven(self):
+        agents_dir = os.path.join(REAL_WORKSPACE, ".claude", "agents")
+        names = [f for f in os.listdir(agents_dir) if f.endswith(".md")]
+        assert len(names) == 7, (
+            "found %d agent files (%s) — T-004 (and CLAUDE.md's 'Exactly 7 "
+            "agents' rule) requires the assistant to stay one chat plus a "
+            "dispatch table, never a new agent file." % (len(names), sorted(names)))

@@ -25,9 +25,9 @@
 # where the CLI cannot do it, rather than offering a button that lies.
 #
 # Placeholders in the *_args templates: {prompt} {mode} {model} {persona}
-# {settings} {resume_id} {dir}. An arg whose placeholder resolves to empty is
-# dropped along with the flag in front of it, so optional flags simply vanish
-# instead of being passed as "".
+# {settings} {resume_id} {dir} {system_append}. An arg whose placeholder
+# resolves to empty is dropped along with the flag in front of it, so optional
+# flags simply vanish instead of being passed as "".
 #
 # prompt_prefix_style — how a chosen skill/persona is referenced:
 #   slash   "@persona /skill text"  (CLI has slash commands)
@@ -60,6 +60,7 @@ session_args = [
   "--model", "{model}",
   "--agent", "{persona}",
   "--settings", "{settings}",
+  "--append-system-prompt", "{system_append}",
 ]
 add_dir_args = ["--add-dir", "{dir}"]
 
@@ -85,6 +86,11 @@ default_mode = "plan"
 gated_tools = [
   "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
   "WebFetch", "Task", "ExitPlanMode", "KillShell",
+  # T-005 desktop tools, under their MCP names. A screenshot sends the pixels
+  # of whatever is on screen to Anthropic; a clipboard read can send a
+  # password. Both are answered at the desk only (agent_approvals.LOCAL_ONLY).
+  "mcp__console__desktop-screenshot",
+  "mcp__console__desktop-clipboard-read",
 ]
 approval_timeout = 300
 
@@ -212,7 +218,9 @@ prompt_prefix_style = "none"
 # gated: asking a human to approve "look up this ticket's lane" trains them to
 # click allow without reading, which is how a gate stops working for the calls
 # that matter.
-gated_tools = ["write_file", "edit_file", "run_command"]
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read"]
 approval_timeout = 300
 
 # Budgets for the loop the console runs. Omit either and it takes the default
@@ -311,7 +319,9 @@ start_hint = "Start it with `ollama serve`."
 notes = "local — free, private, offline. Needs a tool-capable model."
 prompt_prefix_style = "none"
 
-gated_tools = ["write_file", "edit_file", "run_command"]
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read"]
 approval_timeout = 300
 
 # A local model's context is usually far smaller than a hosted one's, so the
@@ -349,7 +359,9 @@ start_hint = "Start the local server from LM Studio's Developer tab, and load a 
 notes = "local — the server must be running AND a model loaded."
 prompt_prefix_style = "none"
 
-gated_tools = ["write_file", "edit_file", "run_command"]
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read"]
 approval_timeout = 300
 
 # Same reasoning as ollama: a locally served model's window is the constraint.

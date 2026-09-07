@@ -488,7 +488,8 @@ class Backend:
         }
 
     # -- argv builders -------------------------------------------------------
-    def session_argv(self, *, mode="", model="", persona="", settings_path="", add_dirs=()):
+    def session_argv(self, *, mode="", model="", persona="", settings_path="",
+                      add_dirs=(), system_append=""):
         """The argv for a long-lived streaming session (`stream_json`)."""
         tmpl = self.raw.get("session_args")
         if not tmpl:
@@ -498,6 +499,7 @@ class Backend:
             "model": model,
             "persona": persona,
             "settings": settings_path,
+            "system_append": system_append,
         })
         for d in add_dirs or ():
             for part in _expand(self.raw.get("add_dir_args", []), {"dir": d}):
@@ -518,6 +520,24 @@ class Backend:
             "model": model,
             "resume_id": resume_id,
         })
+
+    @property
+    def supports_system_append_flag(self):
+        """Does this backend's argv template have its own flag for injected
+        system text (claude's `--append-system-prompt`)?
+
+        Read off the templates themselves rather than hardcoded per backend
+        id, so a config row is the only thing that changes this: a row that
+        adds `{system_append}` to its own args gains the capability for free,
+        and one that doesn't is honestly reported as not having it — the
+        caller (`agent_manager.create`) falls back to prepending the text to
+        the first message instead of silently dropping it.
+        """
+        for key in ("session_args", "turn_args", "resume_args", "oneshot_args"):
+            tmpl = self.raw.get(key)
+            if tmpl and any("{system_append}" in str(item) for item in tmpl):
+                return True
+        return False
 
     @property
     def prompt_prefix_style(self):

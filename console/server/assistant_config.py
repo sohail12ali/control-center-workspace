@@ -1,0 +1,177 @@
+"""T-004 C7 (service half): the Assistant's settings.
+
+Two layers, deliberately:
+
+    console/config/assistant.toml        committed defaults — what this
+                                         workspace ships with.
+    console/.cache/assistant/settings.json   this machine's choices, written
+                                         by `POST /api/assistant/settings`.
+
+## Why the runtime choice is not written back into the committed file
+
+`plugins.toml`'s own header draws the line this follows: a committed config
+file "is committed and applies to everyone who pulls the checkout," while a
+per-user toggle is not. Picking a backend on this laptop is the second kind,
+so persisting it into `console/config/assistant.toml` would put a personal
+choice into everyone's diff and make `git status` dirty every time someone
+changed their mind. Overrides live in the gitignored cache instead, and the
+committed file keeps its job: stating the defaults.
+
+The native shell (T-006) reads the merged view through
+`GET /api/assistant/settings`, so it never needs to know there are two files.
+
+## Why the backend default is empty
+
+An id hardcoded here would be wrong on any machine that doesn't have that CLI
+installed. Empty means "resolve it at use time" — first enabled+installed
+backend in `LOCAL_FIRST` order — so the default is correct on a laptop with
+only Ollama and on one with only Claude, without either being named here.
+"""
+
+import json
+import os
+
+from . import tomlio
+
+CONFIG_REL = os.path.join("console", "config", "assistant.toml")
+OVERRIDE_REL = os.path.join("console", ".cache", "assistant", "settings.json")
+
+#: Preference order when no backend has been chosen. Local first, per the
+#: locked "local-first default" decision in the desktop-assistant design —
+#: a private model before a hosted one, every time, unless asked otherwise.
+LOCAL_FIRST = ("ollama", "lm-studio", "claude", "openrouter", "cursor-agent")
+
+#: Every key the Assistant reads, with the value used when neither the
+#: committed file nor the override supplies one. This dict IS the schema:
+#: a key absent from here is rejected by `update`, so a typo in a POST body
+#: fails loudly instead of being stored and silently ignored forever.
+DEFAULTS = {
+    "backend": "",              # "" = resolve local-first at use time
+    "model": "",                # "" = the backend's own default
+    "mode": "default",          # not "plan" — gated writes must be reachable
+    "vision_models": [],        # globs/ids that can see a screenshot (T-007)
+    "session_idle_minutes": 240,
+    "speak": True,              # T-006 honours this; stored here from T-004
+    "reply_chars": 400,         # spoken-form cap
+    "ticket_prefix": "T-",
+}
+
+#: Keys a POST may change. `vision_models` is excluded on purpose: it is a
+#: capability statement about models, which belongs in the committed file
+#: where it can be reviewed, not in a per-machine override.
+WRITABLE = frozenset({
+    "backend", "model", "mode", "session_idle_minutes", "speak",
+    "reply_chars", "ticket_prefix",
+})
+
+
+def _committed(repo_root):
+    path = os.path.join(repo_root, CONFIG_REL)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        return tomlio.load(path).get("assistant", {}) or {}
+    except (OSError, ValueError):
+        # A malformed committed file must not take the Assistant down; the
+        # defaults below are always a working configuration.
+        return {}
+
+
+def _overrides(repo_root):
+    path = os.path.join(repo_root, OVERRIDE_REL)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def settings(repo_root):
+    """The merged view: defaults <- committed file <- this machine."""
+    merged = dict(DEFAULTS)
+    merged.update({k: v for k, v in _committed(repo_root).items() if k in DEFAULTS})
+    merged.update({k: v for k, v in _overrides(repo_root).items() if k in DEFAULTS})
+    return merged
+
+
+def resolve_backend(repo_root, registry, requested=""):
+    """Which backend a brand-new Assistant chat should use.
+
+    Order: an explicit request, then the stored choice, then the first
+    enabled+installed backend in `LOCAL_FIRST`, then whatever else is
+    installed. Raises only when nothing at all is usable, which is a real
+    setup problem and worth saying out loud.
+    """
+    installed = [bid for bid, b in registry.items() if b.installed]
+    for candidate in (requested, settings(repo_root).get("backend", "")):
+        if candidate and candidate in installed:
+            return candidate
+    for candidate in LOCAL_FIRST:
+        if candidate in installed:
+            return candidate
+    if installed:
+        return installed[0]
+    raise ValueError("no enabled+installed backend is configured — set one up "
+                     "in console/config/agents.toml first")
+
+
+def _coerce(key, value):
+    """Match the default's type, or raise ValueError naming the key."""
+    want = type(DEFAULTS[key])
+    if want is bool:
+        if isinstance(value, bool):
+            return value
+        if str(value).lower() in ("true", "1", "yes", "on"):
+            return True
+        if str(value).lower() in ("false", "0", "no", "off"):
+            return False
+        raise ValueError("%s must be true or false" % key)
+    if want is int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ValueError("%s must be a whole number" % key) from None
+    return str(value)
+
+
+def update(repo_root, patch, installed_backends=()):
+    """Validate and persist a settings patch. Returns the merged view.
+
+    Nothing is written unless every key in `patch` is valid, so a request
+    that is half-wrong leaves the stored settings exactly as they were —
+    a partially-applied settings write is worse than a rejected one.
+    """
+    if not isinstance(patch, dict) or not patch:
+        raise ValueError("no settings given")
+
+    unknown = sorted(set(patch) - WRITABLE)
+    if unknown:
+        raise ValueError("not a writable setting: %s" % ", ".join(unknown))
+
+    clean = {}
+    for key, value in patch.items():
+        clean[key] = _coerce(key, value)
+
+    backend = clean.get("backend")
+    if backend and installed_backends and backend not in installed_backends:
+        raise ValueError(
+            "backend %r is not enabled and installed — available: %s"
+            % (backend, ", ".join(sorted(installed_backends)) or "none"))
+
+    if "session_idle_minutes" in clean and clean["session_idle_minutes"] < 1:
+        raise ValueError("session_idle_minutes must be at least 1")
+    if "reply_chars" in clean and clean["reply_chars"] < 1:
+        raise ValueError("reply_chars must be at least 1")
+
+    path = os.path.join(repo_root, OVERRIDE_REL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    stored = _overrides(repo_root)
+    stored.update(clean)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(stored, fh, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+    return settings(repo_root)

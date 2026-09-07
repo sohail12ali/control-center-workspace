@@ -32,6 +32,7 @@ import re
 import subprocess
 
 from . import boards as boards_mod
+from . import procs
 
 DEFAULT_ROOT = os.path.join(".claude", "worktrees")
 DEFAULT_BRANCH_PATTERN = "agent/{ticket}"
@@ -56,7 +57,8 @@ def _config(repo_root):
 def _git(repo_root, *args, check=True):
     proc = subprocess.run(
         ["git"] + list(args), cwd=repo_root,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        **procs.popen_kwargs())
     if check and proc.returncode != 0:
         raise WorktreeError("git %s failed: %s"
                             % (" ".join(args), (proc.stderr or proc.stdout).strip()))

@@ -19,6 +19,7 @@ import datetime  # noqa: E402
 from server import agent_backends, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
+from server.features import assistant_feature  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
 
 
@@ -339,6 +340,41 @@ def cmd_agents_catalog(args, repo_root):
     print(json.dumps(agents.list_catalog(repo_root), indent=2))
 
 
+def cmd_assistant_say(args, repo_root):
+    """The same `say` the HTTP route runs (see `assistant_feature.handlers`)."""
+    out = assistant_feature.call(repo_root, "assistant.say",
+                                 {"text": args.text, "source": "cli"})
+    if args.json:
+        print(json.dumps(out, indent=2, default=str))
+        return
+    # A fast command answers with `spoken`; a model turn only confirms that
+    # the message was accepted, because the reply arrives on the stream.
+    if out.get("spoken"):
+        print(out["spoken"])
+    elif out.get("result") == "error":
+        _die(out.get("reason", "the assistant could not answer"))
+    else:
+        print("%s -> chat %s" % (out.get("result"), out.get("id", "?")))
+
+
+def cmd_assistant_session(args, repo_root):
+    print(json.dumps(assistant_feature.call(repo_root, "assistant.session"),
+                     indent=2, default=str))
+
+
+def cmd_assistant_memory(args, repo_root):
+    print(assistant_feature.call(repo_root, "assistant.memory_get")["memory"])
+
+
+def cmd_assistant_settings(args, repo_root):
+    if args.set:
+        patch = _parse_kv(args.set)
+        out = assistant_feature.call(repo_root, "assistant.settings_post", patch)
+    else:
+        out = assistant_feature.call(repo_root, "assistant.settings_get")
+    print(json.dumps(out, indent=2, default=str))
+
+
 def cmd_agents_launch(args, repo_root):
     print(json.dumps(agents.launch(repo_root, args.backend, args.prompt, cwd=args.cwd), indent=2))
 
@@ -602,6 +638,27 @@ def build_parser():
 
     p = vault_sub.add_parser("graph")
     p.set_defaults(func=cmd_vault_graph)
+
+    assistant_cmd = sub.add_parser(
+        "assistant", help="the Assistant: say/session/memory/settings")
+    assistant_sub = assistant_cmd.add_subparsers(dest="action", required=True)
+
+    p = assistant_sub.add_parser("say")
+    p.add_argument("text")
+    p.add_argument("--json", action="store_true",
+                   help="print the whole result, not just the spoken line")
+    p.set_defaults(func=cmd_assistant_say)
+
+    p = assistant_sub.add_parser("session")
+    p.set_defaults(func=cmd_assistant_session)
+
+    p = assistant_sub.add_parser("memory")
+    p.set_defaults(func=cmd_assistant_memory)
+
+    p = assistant_sub.add_parser("settings")
+    p.add_argument("--set", action="append", metavar="KEY=VALUE",
+                   help="persist a setting; repeatable")
+    p.set_defaults(func=cmd_assistant_settings)
 
     agents_cmd = sub.add_parser("agents", help="agent backend/job operations")
     agents_sub = agents_cmd.add_subparsers(dest="action", required=True)

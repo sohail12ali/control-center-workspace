@@ -118,3 +118,51 @@ class TestBudget:
     def test_report_counts_characters(self, harness):
         text, report = prompt_build.build(harness, persona="builder")
         assert report["chars"] == len(text)
+
+
+class TestConsoleOwnedPersonaSecondRoot:
+    """T-004 `persona-console-owned-second-root`: `console/config/{persona}.md`
+    is tried before `.claude/agents/{persona}.md`, so the Assistant's persona
+    is console-owned rather than a synthetic 8th agent file (BR-3)."""
+
+    def test_a_console_owned_persona_is_found(self, repo):
+        _write(repo, "console/config/assistant.md",
+              "---\nname: assistant\n---\n\nYou are the Assistant.\n")
+        assert "You are the Assistant." in prompt_build.persona_text(repo, "assistant")
+
+    def test_the_console_owned_root_wins_over_the_agents_fallback(self, repo):
+        _write(repo, "console/config/dup.md", "CONSOLE-OWNED TEXT")
+        _write(repo, ".claude/agents/dup.md", "AGENT-FILE TEXT")
+        assert prompt_build.persona_text(repo, "dup") == "CONSOLE-OWNED TEXT"
+
+    def test_the_existing_agent_persona_mechanism_is_unaffected(self, harness):
+        # "builder" has no console/config/builder.md — must still resolve via
+        # the pre-existing .claude/agents/ fallback, unchanged.
+        assert "You implement one task at a time" in prompt_build.persona_text(
+            harness, "builder")
+
+
+class TestPersonaCap:
+    """BR-7: persona text is capped at 4,000 chars, truncated+stated (never
+    silent), and the cut is audited — enforced once, in `persona_text`
+    itself, so every caller (an `openai_api` build, a CLI's `system_append`)
+    inherits the same guarantee."""
+
+    def test_a_persona_within_the_cap_is_untouched(self, repo):
+        _write(repo, "console/config/short.md", "a short persona")
+        assert prompt_build.persona_text(repo, "short") == "a short persona"
+
+    def test_an_oversized_persona_is_cut_and_stated(self, repo):
+        _write(repo, "console/config/huge.md", "x" * 4500)
+        text = prompt_build.persona_text(repo, "huge")
+        assert len(text) < 4500
+        assert text.startswith("x" * 4000)
+        assert "cut here" in text
+        assert "4,000-char cap" in text or "4000-char cap" in text
+
+    def test_an_oversized_persona_is_audited(self, repo):
+        from server import audit
+        _write(repo, "console/config/huge.md", "y" * 4500)
+        prompt_build.persona_text(repo, "huge")
+        rows = audit.read(repo, action="assistant.persona_truncated")
+        assert rows and rows[0]["target"] == "persona:huge"

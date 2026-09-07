@@ -45,6 +45,7 @@ import subprocess
 
 from . import agent_backends
 from . import boards as boards_mod
+from . import procs
 from . import tickets as tickets_mod
 
 #: The pre-freeze requirements chain, in the order the skills run. Named here
@@ -68,7 +69,8 @@ def _step(sid, title, status, detail, **extra):
 def _git_user(repo_root):
     try:
         out = subprocess.run(["git", "config", "user.name"], cwd=repo_root,
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, timeout=5,
+                             **procs.popen_kwargs())
         return (out.stdout or "").strip()
     except (OSError, subprocess.SubprocessError):
         return ""

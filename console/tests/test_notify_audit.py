@@ -258,6 +258,18 @@ class TestAudit:
     def test_actor_without_a_request_is_local(self):
         assert audit.actor_of(None)["addr"] == "local"
 
+    @pytest.mark.parametrize("action", [
+        "assistant.say", "assistant.kickoff", "assistant.remember",
+        "assistant.settings", "assistant.persona_truncated"])
+    def test_every_t004_assistant_action_is_accepted(self, repo, action):
+        # T-004 C0: each new action name must be recorded without raising —
+        # this is what threads the assistant's mutating calls through the
+        # same audit trail as everything else (BR-2).
+        assert action in audit.ACTIONS
+        record = audit.record(repo, action, target="x")
+        assert record is not None
+        assert record["action"] == action
+
 
 class TestBindingWarning:
     @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])

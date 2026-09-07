@@ -51,7 +51,12 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # is a thing that happens, and this is the only place it is visible.
            "telegram.command", "telegram.rejected",
            # Both quiet the channel or prove it works; neither can widen it.
-           "notify.prefs", "notify.test")
+           "notify.prefs", "notify.test",
+           # T-004: the Assistant's own mutating calls — one chat, a dispatch
+           # table, and a settings file, audited the same way everything else
+           # here is (BR-2).
+           "assistant.say", "assistant.kickoff", "assistant.remember",
+           "assistant.settings", "assistant.persona_truncated")
 
 
 def audit_dir(repo_root):

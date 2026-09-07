@@ -79,6 +79,17 @@ class TestShippedRegistry:
         assert "register_tab" not in _read(
             root, "console/server/features/verbs_feature.py")
 
+    def test_assistant_plugin_is_enabled(self, root):
+        # T-004: exactly one new plugins.toml row, httpd.py untouched.
+        ids = {row["id"] for row in plugin_registry._load_rows(root)}
+        assert "assistant" in ids
+
+    def test_assistant_plugin_registers_no_tab(self, root):
+        # No palette box yet (T-006) — the routes exist without a
+        # destination, same reasoning as the verbs plugin above.
+        assert "register_tab" not in _read(
+            root, "console/server/features/assistant_feature.py")
+
 
 class TestVerbRoutes:
     """The handlers, called directly — no HTTP, so a signature mistake is
@@ -159,6 +170,40 @@ class TestVerbRoutes:
 
         with pytest.raises(verbs.VerbError):
             routes[("POST", "verbs.run")](Req(), "context")
+
+
+class TestAssistantRoutes:
+    """Route registration only — the handlers spawn real backend processes,
+    so they're exercised against a throwaway `repo` fixture in
+    `test_assistant.py`, never against the real checkout `root` used here."""
+
+    def test_it_registers_the_expected_routes(self, root):
+        from server.features import assistant_feature
+
+        routes = {}
+
+        class Ctx:
+            repo_root = root
+
+            def get(self, pattern, fn, name):
+                routes[("GET", name)] = fn
+
+            def post(self, pattern, fn, name):
+                routes[("POST", name)] = fn
+
+            def register_tab(self, *a, **kw):
+                raise AssertionError("the assistant plugin must not register a tab")
+
+            def provide(self, *a, **kw):
+                pass
+
+        assistant_feature.apply(Ctx())
+        assert set(routes) == {
+            ("GET", "assistant.session"), ("POST", "assistant.new"),
+            ("POST", "assistant.say"), ("GET", "assistant.stream"),
+            ("GET", "assistant.memory_get"), ("POST", "assistant.memory_post"),
+            ("GET", "assistant.settings_get"),
+            ("POST", "assistant.settings_post")}
 
 
 class TestPaletteAssets:

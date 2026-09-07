@@ -78,6 +78,15 @@ id = "vault"
 module = "features.vault_feature"
 enabled = true
 
+# T-004: one reused "Assistant" chat, typed-first — say/session/new/stream/
+# memory. No tab of its own yet (T-006 adds the palette box); the routes
+# exist so a native bridge (T-005) or a CLI (`kanban assistant say`) has
+# something to post to today.
+[[plugin]]
+id = "assistant"
+module = "features.assistant_feature"
+enabled = true
+
 # The nav manifest itself. Disabling this leaves the frontend with no tab
 # list to boot from, so it is effectively required.
 [[plugin]]

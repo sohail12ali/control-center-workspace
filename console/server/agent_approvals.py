@@ -49,6 +49,33 @@ class Pending:
         self.by = ""
 
 
+#: Tools that may only ever be approved by someone sitting at this machine.
+#:
+#: Two rules apply to every name here, and both exist because the person
+#: answering cannot see what they are agreeing to from a phone:
+#:
+#:   * a Telegram tap is refused - a parked approval that ships a screenshot of
+#:     a bank app to a chat is a different product from the one this is;
+#:   * "allow for this chat" is downgraded to a single allow - the whole point
+#:     is that each screen, and each clipboard, is a fresh decision.
+#:
+#: Names are matched exactly, and both the `console_*` (API-backend) and
+#: `mcp__console__*` (CLI-backend) spellings are listed, because the same verb
+#: reaches a model under two names depending on transport.
+LOCAL_ONLY = frozenset({
+    "console_desktop_screenshot",
+    "console_desktop_clipboard_read",
+    "mcp__console__desktop-screenshot",
+    "mcp__console__desktop-clipboard-read",
+})
+
+
+def local_only(tool):
+    """Is `tool` desk-only? Kept a function so callers do not each re-derive
+    the membership test (and so a future prefix rule lands in one place)."""
+    return tool in LOCAL_ONLY
+
+
 class Approvals:
     """Registry of questions in flight. One per server process."""
 
@@ -70,7 +97,10 @@ class Approvals:
         log rather than a gate.
         """
         with self._lock:
-            if tool in self._session_allow.get(chat, ()):
+            # Desk-only tools deliberately skip this: even if something had
+            # recorded a session allow for one, each screen and each clipboard
+            # is its own decision.
+            if not local_only(tool) and tool in self._session_allow.get(chat, ()):
                 return "allow", "%s was allowed for this chat" % tool
 
         key = uuid.uuid4().hex[:12]
@@ -104,10 +134,17 @@ class Approvals:
                 # arrived. Without them the message says a run is blocked and
                 # leaves you to find a browser — which on a phone means the
                 # run dies on this same timeout regardless.
-                notify.send(repo_root, "approval",
-                            notify.approval_message(tool, tool_input, preview,
-                                                    timeout, chat_title=title),
-                            buttons=notify.approval_buttons(key))
+                # A desk-only tool still gets a notification - a run that
+                # stalls in silence is worse than one you cannot answer
+                # remotely - but no buttons, because tapping one would be
+                # approving something you cannot see.
+                buttons = None if local_only(tool) else notify.approval_buttons(key)
+                message = notify.approval_message(tool, tool_input, preview,
+                                                  timeout, chat_title=title)
+                if buttons is None:
+                    message += ("\n\nAnswer this one in the console - it needs "
+                                "someone at the machine.")
+                notify.send(repo_root, "approval", message, buttons=buttons)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -127,7 +164,13 @@ class Approvals:
         return "allow", p.reason or ""
 
     def decide(self, key, decision, by="", reason=""):
-        """Answer a pending question: ``allow``, ``allow-session`` or ``deny``."""
+        """Answer a pending question: ``allow``, ``allow-session`` or ``deny``.
+
+        A desk-only tool (see ``LOCAL_ONLY``) refuses a remote answer outright
+        and never records a session allow. A DENY is always accepted, from
+        anywhere: refusing to let someone stop something would be a strange
+        reading of "this needs a human here".
+        """
         if decision not in ("allow", "allow-session", "deny"):
             raise ValueError("unknown decision %r" % decision)
         with self._lock:
@@ -136,6 +179,13 @@ class Approvals:
                 raise ValueError(
                     "that approval is no longer pending — it may have timed "
                     "out or already been answered")
+            if local_only(p.tool) and decision != "deny":
+                if by.startswith("telegram:"):
+                    raise ValueError(
+                        "%s can only be approved from the console, by someone "
+                        "who can see what is on the screen" % p.tool)
+                # Allow, but only this once.
+                decision = "allow"
             if decision == "allow-session":
                 self._session_allow.setdefault(p.chat, set()).add(p.tool)
             p.decision = "allow" if decision.startswith("allow") else "deny"

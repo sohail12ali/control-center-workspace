@@ -150,17 +150,31 @@ class Stream:
                 return [], True
             return [e for e in self._ring if e["seq"] > from_seq], False
 
-    def subscribe(self, from_seq=0):
+    def subscribe(self, from_seq=0, types=None):
         """Yield SSE frames for every event after `from_seq`, blocking until
         the stream closes. Emits a heartbeat comment while idle so an
-        intermediary doesn't reap the connection."""
+        intermediary doesn't reap the connection.
+
+        `types`, if given, narrows the frames actually SENT to that set of
+        event `type`s — everything else still advances `from_seq` (so a
+        reconnect never re-sends what was already skipped) but is otherwise
+        invisible to this subscriber. `stream.reset` always passes through: a
+        filtered subscriber still needs to know a reconnect predates the ring.
+        Used by the Assistant's `/api/assistant/stream` (T-004, FR-1 AC5) to
+        expose only the handful of event types a voice/typed UI cares about,
+        without a second event log to keep in sync with this one.
+        """
+        def _wanted(ev):
+            return types is None or ev.get("type") in types or ev.get("type") == "stream.reset"
+
         missed, gap = self.since(from_seq)
         if gap:
             yield sse_pack({"type": "stream.reset", "seq": from_seq,
                             "reason": "reconnect predates the retained ring"})
             missed, _ = self.since(0)
         for ev in missed:
-            yield sse_pack(ev)
+            if _wanted(ev):
+                yield sse_pack(ev)
             from_seq = max(from_seq, ev["seq"])
 
         while True:
@@ -177,5 +191,6 @@ class Stream:
                         yield ": ping\n\n"
                         continue
             for ev in pending:
-                yield sse_pack(ev)
+                if _wanted(ev):
+                    yield sse_pack(ev)
                 from_seq = max(from_seq, ev["seq"])

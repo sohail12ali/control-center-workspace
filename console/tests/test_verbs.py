@@ -203,6 +203,72 @@ class TestDispatch:
             verbs.run(repo, "boom", ticket=None)
 
 
+T004_VERBS = """\
+[[verb]]
+id = "kickoff"
+label = "Create ticket"
+handler = "verb_handlers.kickoff"
+needs_confirm = true
+
+[[verb]]
+id = "tickets-digest"
+label = "Tickets digest"
+handler = "verb_handlers.tickets_digest"
+
+[[verb]]
+id = "remember"
+label = "Remember a fact"
+handler = "verb_handlers.remember"
+needs_confirm = true
+"""
+
+
+@pytest.fixture
+def t004_wired(repo):
+    _write_verbs(repo, T004_VERBS)
+    yield repo
+    verbs._cache.clear()
+
+
+class TestT004Verbs:
+    """C6: the `kickoff`/`tickets-digest`/`remember` rows, called the way any
+    other verb is — `verbs.run`, gates included."""
+
+    def test_kickoff_needs_confirm(self, t004_wired):
+        with pytest.raises(verbs.VerbError):
+            verbs.run(t004_wired, "kickoff", args={"title": "New thing"})
+
+    def test_kickoff_confirmed_creates_a_ticket(self, t004_wired, monkeypatch):
+        from server import kickoff as kickoff_mod
+        # PowerShell-unavailable is still a real, honest run of the gated
+        # handler: the ticket.toml step (before rendering) must have happened.
+        monkeypatch.setattr(kickoff_mod, "_powershell_exe", lambda: None)
+        with pytest.raises(kickoff_mod.PowerShellUnavailable):
+            verbs.run(t004_wired, "kickoff", confirm=True,
+                     args={"title": "New thing"})
+        assert tickets.load(t004_wired, "T-001") is not None
+
+    def test_tickets_digest_runs_without_confirm(self, t004_wired):
+        out = verbs.run(t004_wired, "tickets-digest")
+        assert "text" in out and "count" in out
+
+    def test_remember_needs_confirm(self, t004_wired):
+        with pytest.raises(verbs.VerbError):
+            verbs.run(t004_wired, "remember", args={"fact": "the sky is blue"})
+
+    def test_remember_confirmed_appends(self, t004_wired):
+        from server import assistant
+        out = verbs.run(t004_wired, "remember", confirm=True,
+                        args={"fact": "the sky is blue"})
+        assert out["ok"] is True
+        assert "the sky is blue" in assistant.read_memory(t004_wired)
+
+    def test_remember_confirmed_still_declines_a_secret(self, t004_wired):
+        out = verbs.run(t004_wired, "remember", confirm=True,
+                        args={"fact": "sk-abcdefghijklmnopqrstuvwxyz0123456789"})
+        assert out["ok"] is False
+
+
 class TestShippedRegistry:
     """The config this template actually ships must load and be runnable."""
 

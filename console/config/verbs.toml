@@ -22,9 +22,12 @@
 # what lets a verb be dispatched from config with no per-verb glue anywhere.
 # Adapters live in console/server/verb_handlers.py and should stay one-liners.
 #
-# Every verb below is READ-ONLY. `needs_confirm` exists and is enforced (see
-# verbs.py), but nothing here yet needs it — the first mutating verb should set
-# it, and the tests already cover the gate.
+# Most verbs here are READ-ONLY. The ones that are not say so with
+# `needs_confirm` (see verbs.py, which enforces it): `kickoff` writes a ticket
+# directory, `remember` writes the Assistant's memory, `desktop-clipboard-write`
+# replaces the system clipboard. `needs_confirm` stops a stray click or a
+# hallucinated tool call; it is NOT the human approval gate — that lives in
+# `agents.toml`'s `gated_tools` and shows a card in the chat.
 
 [[verb]]
 id = "context"
@@ -86,3 +89,79 @@ id = "agent-models"
 label = "Agent models"
 hint = "Cached model catalogue per API provider; pass backend=<id> refresh=1 to re-fetch"
 handler = "verb_handlers.agent_models"
+
+# T-004: the Assistant's own verbs. `kickoff` mutates the vault (a new ticket
+# directory, artifact-map row) — needs_confirm so a stray click or a
+# hallucinated tool call cannot trigger it (BR-5's own paragraph on this).
+[[verb]]
+id = "kickoff"
+label = "Create ticket"
+hint = "Same 3 artifacts the kickoff skill produces: ticket.toml, rendered templates, artifact-map row"
+handler = "verb_handlers.kickoff"
+needs_confirm = true
+
+[[verb]]
+id = "tickets-digest"
+label = "Tickets digest"
+hint = "A capped what's-open summary across every ticket"
+handler = "verb_handlers.tickets_digest"
+
+# Mutates console/.cache/assistant/memory.md — not the vault (BR-4) — but
+# still a write, so it goes through needs_confirm like every other mutating
+# verb here.
+[[verb]]
+id = "remember"
+label = "Remember a fact"
+hint = "Append to the Assistant's memory; declines anything that looks like a credential"
+handler = "verb_handlers.remember"
+needs_confirm = true
+
+# ---------------------------------------------------------------- desktop ----
+# T-005. These are the only verbs that leave the repo: they ask the native
+# shell to look at, or touch, the actual desktop. Two of them are gated in
+# `agents.toml` rather than here, because `needs_confirm` guards against a
+# HALLUCINATED call while the approval card guards against an unwanted one —
+# different problems, and a screenshot needs the second.
+
+[[verb]]
+id = "desktop-windows"
+label = "Open windows"
+hint = "Titles and geometry of windows the desktop shell can capture"
+handler = "verb_handlers.desktop_windows"
+
+[[verb]]
+id = "desktop-monitors"
+label = "Monitors"
+hint = "Monitors the desktop shell can capture"
+handler = "verb_handlers.desktop_monitors"
+
+[[verb]]
+id = "desktop-screenshot"
+label = "Screenshot"
+hint = "Capture the screen, a monitor, a window by title, or a region; returns a PNG path"
+handler = "verb_handlers.desktop_screenshot"
+
+[[verb]]
+id = "desktop-ocr"
+label = "Read text in a capture"
+hint = "Text and line boxes from a capture already taken; needs its capture_id"
+handler = "verb_handlers.desktop_ocr"
+
+[[verb]]
+id = "desktop-clipboard-peek"
+label = "Clipboard size"
+hint = "How much text is on the clipboard, and a short preview - never the whole thing"
+handler = "verb_handlers.desktop_clipboard_peek"
+
+[[verb]]
+id = "desktop-clipboard-read"
+label = "Read clipboard"
+hint = "The clipboard's full text; gated on every backend"
+handler = "verb_handlers.desktop_clipboard_read"
+
+[[verb]]
+id = "desktop-clipboard-write"
+label = "Write clipboard"
+hint = "Put text on the clipboard"
+handler = "verb_handlers.desktop_clipboard_write"
+needs_confirm = true

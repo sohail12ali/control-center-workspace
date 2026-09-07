@@ -49,6 +49,7 @@ import threading
 import time
 import uuid
 
+from . import procs
 from . import telemetry
 from .agent_events import Stream
 from .agent_normalize import Normalizer
@@ -65,7 +66,7 @@ class BaseSession:
 
     def __init__(self, sid, backend, cwd, stream, *, log_path=None, title="",
                  model="", mode="", skill="", persona="", on_exit=None,
-                 settings_path="", ticket=""):
+                 settings_path="", ticket="", system_append="", extra=""):
         self.id = sid
         self.backend = backend
         self.agent = backend.id
@@ -83,6 +84,15 @@ class BaseSession:
         # Optional: an exploratory chat belongs to no ticket, and recording it
         # against one would corrupt that ticket's cost.
         self.ticket = ticket
+        # Persona/context injection, additive to skill/persona above: a second
+        # text a caller (the assistant feature) wants threaded to the backend
+        # without overloading `persona`'s existing meaning as an agent-file id.
+        # `system_append` is a raw string handed straight to a backend's own
+        # system-prompt flag; `extra` is folded into `prompt_build.build`'s
+        # "extra" section for the `openai_api` transport. Empty by default so
+        # no existing chat changes at all.
+        self.system_append = system_append
+        self.extra = extra
 
         self.proc = None
         self.native_session_id = ""
@@ -366,13 +376,14 @@ class LiveSession(BaseSession):
         self._open_log()
         argv = self.backend.session_argv(
             mode=self.mode, model=self.model, persona=self.persona,
-            settings_path=self.settings_path)
+            settings_path=self.settings_path, system_append=self.system_append)
         self.proc = subprocess.Popen(
             argv, cwd=self.cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=self._log_fh or subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            creationflags=procs.no_window_flags(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)),
         )
         self.started = _now()
         self.stream.publish({
@@ -509,6 +520,7 @@ class TurnSession(BaseSession):
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
+                **procs.popen_kwargs(),
             )
         except FileNotFoundError as e:
             with self._state_lock:
@@ -585,7 +597,8 @@ class TurnSession(BaseSession):
 
 
 def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
-          skill="", persona="", on_exit=None, settings_path="", ticket=""):
+          skill="", persona="", on_exit=None, settings_path="", ticket="",
+          system_append="", extra=""):
     """Pick the transport the backend declared. The only place that decision
     is made, so a new transport is one branch here plus a class."""
     if backend.transport == "openai_api":
@@ -600,4 +613,5 @@ def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
     stream = Stream(sid, path=log_path.replace(".log", ".events.jsonl") if log_path else None)
     return cls(sid, backend, cwd, stream, log_path=log_path, title=title,
                model=model, mode=mode, skill=skill, persona=persona,
-               on_exit=on_exit, settings_path=settings_path, ticket=ticket)
+               on_exit=on_exit, settings_path=settings_path, ticket=ticket,
+               system_append=system_append, extra=extra)

@@ -1,0 +1,50 @@
+# The Assistant's defaults — the persona's settings, not its instructions
+# (those are `console/config/assistant.md`).
+#
+# This file is COMMITTED: it states what this workspace ships with. Your own
+# choice of backend is not committed — `POST /api/assistant/settings` writes
+# it to `console/.cache/assistant/settings.json` (gitignored) so picking a
+# model on your laptop never lands in anyone else's diff. The merged view is
+# what `GET /api/assistant/settings` returns and what the native shell reads.
+#
+# Schema and per-key defaults: `console/server/assistant_config.py`'s
+# `DEFAULTS`. A key that is not in there is refused by a settings write, so a
+# typo fails loudly instead of being stored and quietly ignored.
+
+[assistant]
+
+# "" means resolve at use time: the first enabled+installed backend in
+# local-first order (ollama, lm-studio, claude, openrouter, cursor-agent).
+# Deliberately not a hardcoded id — that would be wrong on any machine that
+# doesn't have that particular CLI installed.
+backend = ""
+
+# "" means the backend's own default model.
+model = ""
+
+# `default`, not `plan`. The Assistant is asked to create tickets and write
+# to memory; in `plan` mode a CLI backend refuses every write, so the
+# gated-but-reachable mode is the honest one. Gated tools still raise the
+# "Permission needed" card — the mode does not remove the gate.
+mode = "default"
+
+# Model ids/aliases that can actually see a screenshot's pixels. Used to
+# decide image-vs-OCR once multimodal send lands (T-007), and reported in the
+# Assistant's own injected capabilities line today. Empty = assume none can,
+# which is an honest "not configured" rather than a guess.
+vision_models = []
+
+# How long an idle Assistant chat is still "the" Assistant chat. Past this,
+# the next message starts a fresh one rather than resuming a stale context.
+session_idle_minutes = 240
+
+# Whether replies are spoken aloud. Stored from T-004 so the setting exists
+# and round-trips; the speaking path itself is T-006's.
+speak = true
+
+# Cap on the spoken form of a reply (T-006). The full text always stays in
+# the chat — this only bounds what gets read out.
+reply_chars = 400
+
+# Ticket id prefix, used to canonicalise a spoken id ("t dash two" -> T-002).
+ticket_prefix = "T-"

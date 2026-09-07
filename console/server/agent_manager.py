@@ -39,7 +39,8 @@ def _paths(repo_root, sid):
 
 
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
-           persona="", title="", server_port=0, ticket=""):
+           persona="", title="", server_port=0, ticket="",
+           system_append="", extra=""):
     """Start a chat and send its opening message."""
     backend = agent_backends.get(repo_root, backend_id)
     if not backend.installed:
@@ -75,7 +76,8 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         sid, backend, repo_root, log_path=log_path,
         title=title or text[:80], model=model, mode=mode,
         skill=skill, persona=persona, on_exit=_on_exit,
-        settings_path=settings_path, ticket=ticket)
+        settings_path=settings_path, ticket=ticket,
+        system_append=system_append, extra=extra)
 
     with _lock:
         _sessions[sid] = sess
@@ -83,6 +85,11 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
 
     wire = backend.compose_prompt(text, skill=skill, persona=persona,
                                   repo_root=repo_root)
+    if system_append and not backend.supports_system_append_flag:
+        # No flag to carry it, so the first turn's prompt has to. Only the
+        # opening message needs this — everything after it is a normal
+        # continuation of the same conversation, which already has the text.
+        wire = system_append + "\n\n" + wire
     sess.send(wire, mode="auto", display=text)
     return sess.snapshot()
 
@@ -169,11 +176,12 @@ def transcript(repo_root, sid):
             "snapshot": None}
 
 
-def subscribe(repo_root, sid, from_seq=0):
+def subscribe(repo_root, sid, from_seq=0, types=None):
     """SSE frames for a live chat. A dead chat has nothing to push, so this
-    refuses rather than opening a stream that will never emit."""
+    refuses rather than opening a stream that will never emit. `types`
+    narrows to a subset of event types — see `agent_events.Stream.subscribe`."""
     sess = require(sid)
-    return sess.stream.subscribe(from_seq)
+    return sess.stream.subscribe(from_seq, types=types)
 
 
 def send(sid, text, mode="auto"):

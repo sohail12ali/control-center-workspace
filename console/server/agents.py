@@ -48,6 +48,7 @@ import uuid
 
 from . import agent_backends
 from . import boards as boards_mod
+from . import procs
 from . import tickets as tickets_mod
 from .paths import find_repo_root
 
@@ -214,6 +215,7 @@ def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None,
             stdin=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            **procs.popen_kwargs(),
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"backend command not found on PATH: {argv[0]!r} ({exc})") from None

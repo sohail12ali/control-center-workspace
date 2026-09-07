@@ -31,7 +31,20 @@ import re
 
 DEFAULT_BUDGET = 24_000  # characters, ~6k tokens
 
+#: T-004's persona cap (BR-7): ≤4,000 chars, truncated+stated when over, never
+#: silent. Small enough that a run-away persona file cannot itself blow the
+#: session-argv budget C1 threads it through (`--append-system-prompt`, or a
+#: first-turn wire prefix).
+PERSONA_CAP = 4_000
+
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
+
+#: Console-owned personas (T-004's `persona-console-owned-second-root`
+#: decision) live directly under `console/config/` — `assistant.md` is the
+#: first tenant. Tried FIRST, so a persona id with a console-owned file here
+#: resolves to it; `.claude/agents/%s.md` stays the fallback for every
+#: existing agent persona, unchanged.
+PERSONA_ROOT_REL = os.path.join("console", "config")
 
 
 def _read(path):
@@ -54,10 +67,43 @@ def core_text(repo_root):
 
 
 def persona_text(repo_root, persona):
+    """The persona's text, tried console-owned root first, capped at
+    `PERSONA_CAP` chars (BR-7).
+
+    `console/config/{persona}.md` — the second root T-004 adds, so the
+    Assistant's persona (`console/config/assistant.md`) is console-owned
+    rather than a synthetic 8th `.claude/agents/` file (BR-3) — wins if it
+    exists; `.claude/agents/{persona}.md` is the fallback every pre-existing
+    agent persona still resolves through, unchanged.
+
+    The cap is enforced here, in the one place every caller (`build()` for
+    `openai_api`, and a CLI backend's `system_append` composition) reads
+    persona text from, so a run-away persona file can never silently blow a
+    session's argv or prompt budget: it is cut, the cut is stated in the text
+    itself, and the cut is audited — never a silent truncation.
+    """
     if not persona:
         return ""
-    return _strip_frontmatter(_read(os.path.join(
-        repo_root, ".claude", "agents", "%s.md" % persona)))
+    console_owned = os.path.join(repo_root, PERSONA_ROOT_REL, "%s.md" % persona)
+    if os.path.isfile(console_owned):
+        text = _strip_frontmatter(_read(console_owned))
+    else:
+        text = _strip_frontmatter(_read(os.path.join(
+            repo_root, ".claude", "agents", "%s.md" % persona)))
+    if len(text) > PERSONA_CAP:
+        text = text[:PERSONA_CAP] + (
+            "\n\n_[Persona text cut here — over the %d-char cap. Read the "
+            "file itself if you need the rest.]_" % PERSONA_CAP)
+        try:
+            from . import audit
+            audit.record(repo_root, "assistant.persona_truncated",
+                         target="persona:%s" % persona,
+                         detail={"cap": PERSONA_CAP})
+        except Exception:  # noqa: BLE001
+            # The audit trail losing an entry must never be why a persona
+            # fails to load.
+            pass
+    return text
 
 
 def skill_text(repo_root, skill):

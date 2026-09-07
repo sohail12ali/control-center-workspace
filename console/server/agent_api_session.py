@@ -104,7 +104,7 @@ class ApiSession(BaseSession):
         self.started = self._stamp()
         system, report = prompt_build.build(
             self.cwd, persona=self.persona, skill=self.skill,
-            ticket=self.ticket)
+            ticket=self.ticket, extra=self.extra)
         self._system_report = report
         self._messages = [{"role": "system", "content": system}]
         self.stream.publish({
