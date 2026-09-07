@@ -4,6 +4,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
+- [[T-008-summary]] — Hands-free listening: wake word, echo handling, barge-in — Open — Sohail Ali — 2026-09-07
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Verify — Sohail Ali — 2026-09-05
 
 ## Blocked

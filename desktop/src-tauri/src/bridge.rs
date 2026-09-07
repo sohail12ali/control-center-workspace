@@ -41,6 +41,7 @@ use crate::ocr;
 use crate::tray_state::Event;
 use crate::tts;
 use crate::listen;
+use crate::hands_free;
 use crate::tray_state::Assistant;
 
 /// Where the pointer file goes, relative to the repo root. The console reads
@@ -346,6 +347,28 @@ fn route(
                         Err(e) => err(500, "internal", format!("cannot start a take: {e}")),
                     }
                 }
+                // Always-on listening. A separate mode rather than a separate
+                // route: from the caller's side this is still "start or stop
+                // listening", and the difference is how long it lasts.
+                "hands_free" => {
+                    if !listen::available(repo_root) {
+                        return err(503, "unavailable", listen::hint(repo_root));
+                    }
+                    let policy = hands_free::fetch_policy(console_url);
+                    match hands_free::start(
+                        repo_root,
+                        assistant.clone(),
+                        console_url.to_string(),
+                        policy,
+                    ) {
+                        Ok(()) => ok(json!({"hands_free": true})),
+                        Err(e) => err(409, "busy", e),
+                    }
+                }
+                "hands_free_off" => {
+                    hands_free::stop("asked to stop");
+                    ok(json!({"hands_free": false}))
+                }
                 other => err(400, "bad_request", format!("unknown listen mode {other:?}")),
             }
         }
@@ -356,6 +379,11 @@ fn route(
             "microphone": crate::audio::device_name(),
             "engine_running": crate::stt::running(),
             "model": crate::stt::loaded_model(),
+            "hands_free": hands_free::running(),
+            // Why it stopped, so a loop that ended by itself (time limit, a
+            // microphone that went away) can say so instead of just going
+            // quiet.
+            "hands_free_stopped": hands_free::last_stop_reason(),
         })),
         ("POST", "/speak") => {
             let body = match read_body(request) {

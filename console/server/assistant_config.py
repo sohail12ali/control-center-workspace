@@ -54,6 +54,24 @@ DEFAULTS = {
     "speak": True,              # T-006 honours this; stored here from T-004
     "reply_chars": 400,         # spoken-form cap
     "ticket_prefix": "T-",
+
+    # -- hands-free (T-008) --------------------------------------------------
+    # An always-on microphone is a different proposition from push-to-talk, so
+    # every one of these defaults to the cautious answer.
+    #
+    # `hands_free_require_wake` is the important one. With it on, audio is
+    # transcribed LOCALLY and the transcript is thrown away unless it is
+    # addressed to the assistant — so leaving the mic on does not mean sending
+    # the room to a model. Turning it off means every utterance becomes a turn.
+    "hands_free_require_wake": True,
+    "hands_free_wake_word": "console",
+    # Whether to keep listening while a reply is being read aloud. Off by
+    # default because on speakers the assistant hears itself and answers its
+    # own voice. On headphones there is no echo, and turning this on is what
+    # makes barge-in work by voice rather than by hotkey.
+    "hands_free_listen_while_speaking": False,
+    # A cap, so an always-on mic left running by accident stops on its own.
+    "hands_free_max_minutes": 30,
 }
 
 #: Keys a POST may change. `vision_models` is excluded on purpose: it is a
@@ -62,6 +80,8 @@ DEFAULTS = {
 WRITABLE = frozenset({
     "backend", "model", "mode", "session_idle_minutes", "speak",
     "reply_chars", "ticket_prefix",
+    "hands_free_require_wake", "hands_free_wake_word",
+    "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
 
 
@@ -165,6 +185,15 @@ def update(repo_root, patch, installed_backends=()):
         raise ValueError("session_idle_minutes must be at least 1")
     if "reply_chars" in clean and clean["reply_chars"] < 1:
         raise ValueError("reply_chars must be at least 1")
+    if "hands_free_max_minutes" in clean and clean["hands_free_max_minutes"] < 1:
+        raise ValueError("hands_free_max_minutes must be at least 1")
+    if "hands_free_wake_word" in clean:
+        word = clean["hands_free_wake_word"].strip()
+        # A blank or one-letter wake word would match almost anything, which
+        # defeats the point of requiring one.
+        if len(word) < 2:
+            raise ValueError("hands_free_wake_word needs at least two characters")
+        clean["hands_free_wake_word"] = word
 
     path = os.path.join(repo_root, OVERRIDE_REL)
     os.makedirs(os.path.dirname(path), exist_ok=True)

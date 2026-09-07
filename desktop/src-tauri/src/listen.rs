@@ -67,11 +67,32 @@ pub fn take(
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
 ) -> ListenResult<String> {
+    // Push-to-talk: you already said this was for the assistant by pressing
+    // the key, so there is nothing further to decide.
+    take_gated(repo_root, assistant, console_url, |_| true)
+}
+
+/// A take whose transcript must pass `gate` before it is sent anywhere.
+///
+/// The gate is a closure rather than a policy type so this module does not
+/// depend on `hands_free`, which depends on it. It exists for always-on
+/// listening, where the transcript has to be checked for whether it was
+/// addressed to the assistant at all — and where failing that check must mean
+/// the words never leave this machine.
+pub fn take_gated<F>(
+    repo_root: &std::path::Path,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+    gate: F,
+) -> ListenResult<String>
+where
+    F: Fn(&str) -> bool,
+{
     if LISTENING.swap(true, Ordering::SeqCst) {
         return Err("already listening".into());
     }
     // Whatever happens below, the flag and the tray must come back.
-    let outcome = take_inner(repo_root, assistant, console_url);
+    let outcome = take_inner(repo_root, assistant, console_url, &gate);
     LISTENING.store(false, Ordering::SeqCst);
     if outcome.is_err() {
         note(assistant, Event::Cancel);
@@ -79,11 +100,15 @@ pub fn take(
     outcome
 }
 
-fn take_inner(
+fn take_inner<F>(
     repo_root: &std::path::Path,
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
-) -> ListenResult<String> {
+    gate: &F,
+) -> ListenResult<String>
+where
+    F: Fn(&str) -> bool,
+{
     if !audio::available() {
         return Err(hint(repo_root));
     }
@@ -145,6 +170,15 @@ fn take_inner(
         note(assistant, Event::Cancel);
         return Err("the speech engine returned nothing".into());
     }
+    // The gate runs HERE: after local transcription, before anything is sent.
+    // That ordering is the whole privacy argument for always-on listening —
+    // unaddressed speech is heard, transcribed on this machine, and dropped,
+    // rather than travelling anywhere to be judged.
+    if !gate(&text) {
+        log::debug!("listen: not addressed to the assistant, discarded");
+        note(assistant, Event::Cancel);
+        return Err("not addressed".into());
+    }
     log::info!("listen: heard {text:?}");
 
     // Handing it to the console is what makes a spoken command and a typed
@@ -178,10 +212,25 @@ fn say(console_url: &str, text: &str) -> ListenResult<()> {
     BufReader::new(stream)
         .read_line(&mut status)
         .map_err(|e| format!("no answer from the console: {e}"))?;
-    if !status.contains(" 200") {
+    if !accepted(&status) {
         return Err(format!("the console said {}", status.trim()));
     }
     Ok(())
+}
+
+/// Did the console accept the transcript?
+///
+/// Any 2xx, not 200 alone. The first message of a brand-new chat is answered
+/// `201 Created` — found by a live hands-free run, where a perfectly delivered
+/// sentence was logged as a failure because it had created the chat it landed
+/// in.
+fn accepted(status_line: &str) -> bool {
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .map(|code| (200..300).contains(&code))
+        .unwrap_or(false)
 }
 
 /// Minimal JSON string escaping. The transcript is model-adjacent text from a
@@ -214,6 +263,29 @@ fn split_host_port(url: &str) -> Option<(String, u16)> {
 fn note(assistant: &Arc<Mutex<Assistant>>, event: Event) {
     if let Ok(mut a) = assistant.lock() {
         a.apply(event);
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::accepted;
+
+    #[test]
+    fn any_2xx_means_the_console_took_it() {
+        // 201 is not hypothetical: it is what the console answers when the
+        // transcript starts a new chat, which is the ordinary case for the
+        // first thing you say after launching.
+        for line in ["HTTP/1.0 200 OK", "HTTP/1.1 201 Created", "HTTP/1.0 204 No Content"] {
+            assert!(accepted(line), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn anything_else_is_a_failure_worth_reporting() {
+        for line in ["HTTP/1.0 400 Bad Request", "HTTP/1.1 500 Internal Server Error",
+                     "HTTP/1.0 302 Found", "garbage", ""] {
+            assert!(!accepted(line), "{line:?}");
+        }
     }
 }
 

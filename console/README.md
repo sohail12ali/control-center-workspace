@@ -983,8 +983,17 @@ Each capability is **probed, not assumed**: `GET /health` asks whether an
 engine actually answers on this machine, so `ocr`, `speak` and `stt` describe
 this build rather than what the platform supports in principle.
 
-Still to come: hands-free listening (the mic is push-to-talk or click-to-talk
-for now), a Settings-tab control for the backend picker (the service side
+Hands-free listening exists too: turn it on from the tray, or with
+`POST /listen {"mode":"hands_free"}` on the native bridge. Audio is
+transcribed **on this machine** and the transcript is thrown away unless it
+starts with the wake word, so leaving the microphone on means the room is
+heard locally and forgotten rather than sent anywhere. It pauses while a reply
+is being read aloud (otherwise the assistant answers its own voice) and while
+an approval card is open, and it stops on its own after
+`hands_free_max_minutes`. All four settings live in
+`console/config/assistant.toml`.
+
+Still to come: a Settings-tab control for the backend picker (the service side
 exists and round-trips through `GET`/`POST /api/assistant/settings`), OS
 actuation, and watch mode.
 

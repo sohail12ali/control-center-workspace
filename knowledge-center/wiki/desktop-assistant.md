@@ -55,11 +55,12 @@ Do not rebuild these. Cite them when implementing.
 - **Safety pattern.** `gated_tools` plus in-chat Allow / Deny.
   `run_command` is already “the shell, therefore gated.” Desktop actuation
   is the same class of danger with a larger blast radius.
-- **Voice today.** `console/static/voice.js`: Web Speech dictation (audio
-  leaves the machine on Chrome / Edge) and local `speechSynthesis` for
-  finished replies. Push-to-talk is not a hands-free loop. STT must become
-  local. The reply path (speak `text.done`) is already correct for every
-  backend.
+- **Voice today.** Local whisper.cpp in the shell (T-006), with
+  `console/static/voice.js`'s Web Speech dictation as the browser-only
+  fallback, and local `speechSynthesis` for finished replies. Hands-free
+  landed in T-008: a loop over the same take, with the wake-word check sitting
+  between local transcription and the send, so unaddressed speech never leaves
+  the machine. The reply path (speak `text.done`) is correct for every backend.
 - **Clipboard today.** Ticket-id copy in the board UI only.
 
 ```text

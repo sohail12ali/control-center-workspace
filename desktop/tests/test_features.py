@@ -50,6 +50,8 @@ class TestSkeletonAvailable:
             # T-006: voice
             "listen_mode", "listen_off", "listen_short_take",
             "pause_listen_on_permission",
+            # T-008: always-on listening, behind a wake word
+            "listen_hands_free",
         }
         available = {row["id"] for row in _features() if row["available"]}
         assert available == built, (

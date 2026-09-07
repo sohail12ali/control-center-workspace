@@ -149,11 +149,11 @@ risk = "gated"
 requires = ["stt_local", "live_chat"]
 tray = "show"
 parent = "listen_mode"
-available = false
+available = true
 enabled_default = false
 skeleton = false
 never_one_click = false
-reason_unavailable = "Needs always-on VAD and echo handling; push-to-talk and click-to-talk are what exist"
+reason_unavailable = ""
 hotkey = ""
 
 [[features]]

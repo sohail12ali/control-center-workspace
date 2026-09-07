@@ -13,6 +13,7 @@ use std::sync::Mutex;
 pub struct TrayUi {
     pub header: MenuItem<tauri::Wry>,
     pub mute: CheckMenuItem<tauri::Wry>,
+    pub hands_free: CheckMenuItem<tauri::Wry>,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +97,17 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         true,
         None::<&str>,
     )?;
+    // Hands-free is a checkbox, not a command: it is a state you are in, and
+    // the tick is how you can tell the microphone is open without waiting for
+    // the icon to change.
+    let hands_free_item = CheckMenuItem::with_id(
+        handle,
+        "listen_hands_free",
+        "Hands-free listening",
+        true,
+        false,
+        None::<&str>,
+    )?;
     let interrupt = MenuItem::with_id(
         handle,
         "interrupt",
@@ -111,6 +123,7 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&show)
         .item(&new_chat)
         .item(&mute)
+        .item(&hands_free_item)
         .item(&interrupt)
         .item(&PredefinedMenuItem::separator(handle)?)
         .item(&quit)
@@ -119,6 +132,7 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let ui = TrayUi {
         header: header.clone(),
         mute: mute.clone(),
+        hands_free: hands_free_item.clone(),
     };
     app.manage(ui.clone());
 
@@ -150,6 +164,15 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     // `Event::Mute` as never constructed outside tests.
                     note_mute(app, muted);
                 }
+                "listen_hands_free" => {
+                    // The tick follows the outcome, not the click: starting
+                    // can fail, and a ticked box over a closed microphone is
+                    // the one state this must never show.
+                    let on = crate::toggle_hands_free(app);
+                    if let Some(item) = app.try_state::<TrayUi>() {
+                        warn_on_err("hands_free set_checked", item.hands_free.set_checked(on));
+                    }
+                }
                 "interrupt" => {
                     show_main(app);
                     eval_tray(app, "interrupt");
@@ -174,6 +197,32 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tray.build(handle)?;
+
+    // Hands-free can end without anyone clicking the row — the session time
+    // cap expires, or the microphone goes away. This keeps the tick honest in
+    // those cases; without it the menu would claim an open microphone that had
+    // already closed itself.
+    {
+        let app_for_sync = handle.clone();
+        let watched = ui.hands_free.clone();
+        let mut shown = false;
+        let _ = std::thread::Builder::new()
+            .name("hands-free-tick".into())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let on = crate::hands_free::running();
+                if on != shown {
+                    shown = on;
+                    let item = watched.clone();
+                    warn_on_err(
+                        "hands_free tick sync",
+                        app_for_sync.run_on_main_thread(move || {
+                            let _ = item.set_checked(on);
+                        }),
+                    );
+                }
+            });
+    }
 
     let header_cb = ui.header.clone();
     let mute_cb = ui.mute.clone();

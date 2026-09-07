@@ -4,6 +4,7 @@ mod audio;
 mod bridge;
 mod capture;
 mod clipboard;
+mod hands_free;
 mod icons;
 mod listen;
 mod logger;
@@ -65,6 +66,39 @@ pub fn begin_listening(app: &tauri::AppHandle) {
             Ok(text) => log::info!("listen: sent {text:?}"),
             Err(e) => log::info!("listen: {e}"),
         });
+}
+
+/// Turn always-on listening on or off. Returns the state it left it in, so a
+/// tray checkbox can show what actually happened rather than what was asked
+/// for — starting can fail (no speech model), and a checkbox that ticks anyway
+/// would be lying.
+pub fn toggle_hands_free(app: &tauri::AppHandle) -> bool {
+    if hands_free::running() {
+        hands_free::stop("turned off from the tray");
+        return false;
+    }
+    let Some(state) = app.try_state::<Mutex<ShellState>>() else {
+        return false;
+    };
+    let (root, url) = match state.inner().lock() {
+        Ok(s) => (s.repo_root.clone(), s.console_url.clone()),
+        Err(_) => return false,
+    };
+    let Some(assistant) = app.try_state::<Arc<Mutex<tray_state::Assistant>>>() else {
+        return false;
+    };
+    let assistant = assistant.inner().clone();
+    let policy = hands_free::fetch_policy(&url);
+    match hands_free::start(&root, assistant, url, policy) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("hands-free: {e}");
+            alert(&format!("Hands-free listening could not start.
+
+{e}"));
+            false
+        }
+    }
 }
 
 fn init_script() -> &'static str {

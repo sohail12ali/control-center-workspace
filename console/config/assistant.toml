@@ -53,3 +53,27 @@ reply_chars = 400
 
 # Ticket id prefix, used to canonicalise a spoken id ("t dash two" -> T-002).
 ticket_prefix = "T-"
+
+# -- hands-free listening ----------------------------------------------------
+# Off unless you turn it on from the tray. An always-on microphone is a
+# different proposition from push-to-talk, so these default to the cautious
+# answer in every case.
+
+# With this on, audio is transcribed LOCALLY and the transcript is discarded
+# unless it is addressed to the assistant. Leaving the mic on therefore does
+# not mean sending the room to a model — only what you said to it. Turning it
+# off makes every utterance a turn, which is what you want with headphones on
+# and nobody else in the room, and not otherwise.
+hands_free_require_wake = true
+hands_free_wake_word = "console"
+
+# Keep listening while a reply is being read aloud?
+#
+# Off by default: through speakers the assistant hears its own voice and
+# answers itself. On headphones there is no echo, and turning this on is what
+# makes barge-in work by voice instead of by hotkey.
+hands_free_listen_while_speaking = false
+
+# Hands-free stops on its own after this long, so a microphone left on by
+# accident does not stay on.
+hands_free_max_minutes = 30

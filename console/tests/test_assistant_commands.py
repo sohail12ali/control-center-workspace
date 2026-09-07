@@ -299,6 +299,54 @@ class TestSettings:
         with pytest.raises(ValueError, match="at least 1"):
             assistant_config.update(str(tmp_path), {key: 0})
 
+
+class TestHandsFreeSettings:
+    """T-008. These four decide how an always-on microphone behaves, so the
+    thing worth testing is that the shipped answer is the cautious one and
+    that a setting which would weaken it has to be asked for explicitly."""
+
+    def test_the_defaults_are_the_cautious_ones(self, tmp_path):
+        s = assistant_config.settings(str(tmp_path))
+        assert s["hands_free_require_wake"] is True, (
+            "unaddressed speech must not be sent by default")
+        assert s["hands_free_listen_while_speaking"] is False, (
+            "on speakers the assistant would answer its own voice")
+        assert s["hands_free_max_minutes"] >= 1, "it must stop on its own"
+        assert len(s["hands_free_wake_word"]) >= 2
+
+    def test_turning_the_wake_word_off_round_trips(self, tmp_path):
+        # It is a legitimate choice with headphones on — it just has to be
+        # a choice, made here, rather than the default.
+        assistant_config.update(str(tmp_path), {"hands_free_require_wake": "off"})
+        assert assistant_config.settings(
+            str(tmp_path))["hands_free_require_wake"] is False
+
+    def test_a_too_short_wake_word_is_refused(self, tmp_path):
+        # A one-letter wake word matches almost anything, which is the same as
+        # having none while looking like it has one.
+        with pytest.raises(ValueError, match="two characters"):
+            assistant_config.update(str(tmp_path), {"hands_free_wake_word": "c"})
+
+    def test_a_wake_word_is_stored_trimmed(self, tmp_path):
+        assistant_config.update(str(tmp_path), {"hands_free_wake_word": "  jarvis "})
+        assert assistant_config.settings(
+            str(tmp_path))["hands_free_wake_word"] == "jarvis"
+
+    def test_the_time_cap_cannot_be_switched_off_with_a_zero(self, tmp_path):
+        with pytest.raises(ValueError, match="at least 1"):
+            assistant_config.update(str(tmp_path), {"hands_free_max_minutes": 0})
+
+    def test_the_committed_file_ships_the_same_answers(self, tmp_path):
+        """`assistant.toml` documents these; if it drifted from DEFAULTS the
+        documentation would describe a configuration nobody runs."""
+        import server.tomlio as tomlio
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        shipped = tomlio.load(os.path.join(
+            root, "config", "assistant.toml"))["assistant"]
+        for key in ("hands_free_require_wake", "hands_free_wake_word",
+                    "hands_free_listen_while_speaking", "hands_free_max_minutes"):
+            assert shipped[key] == assistant_config.DEFAULTS[key], key
+
     def test_a_malformed_committed_file_falls_back_to_defaults(self, tmp_path):
         cfg = tmp_path / "console" / "config"
         cfg.mkdir(parents=True)
