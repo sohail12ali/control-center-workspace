@@ -222,6 +222,47 @@ class TestRepointingAShippedProvider:
         assert "lm-studio" not in po.load(str(tmp_path))["where"]
 
 
+class TestEditingAnExistingProvider:
+    """The Settings panel can now edit a provider rather than only add or
+    remove one. Two different edits, because the rows come from two different
+    places: yours is rewritable, a shipped one can only be re-pointed."""
+
+    def test_editing_a_custom_provider_replaces_it_in_place(self, tmp_path):
+        po.update(str(tmp_path), {"custom": {
+            "id": "mine", "label": "Before", "base_url": "http://a/v1"}})
+        po.update(str(tmp_path), {"custom": {
+            "id": "mine", "label": "After", "base_url": "http://b/v1",
+            "api_key_env": "MY_KEY"}})
+        stored = po.load(str(tmp_path))["custom"]
+        assert len(stored) == 1, "editing must not leave a second copy"
+        assert stored[0]["label"] == "After"
+        assert stored[0]["base_url"] == "http://b/v1"
+        assert stored[0]["api_key_env"] == "MY_KEY"
+
+    def test_the_panel_can_tell_a_moved_provider_from_a_default_one(self, tmp_path):
+        """Without the shipped address beside the live one, a re-pointed
+        provider looks identical to one that ships at that address — and there
+        is no way to offer "put it back"."""
+        cfg = tmp_path / "console" / "config"
+        cfg.mkdir(parents=True)
+        (cfg / "agents.toml").write_text(
+            '[[backend]]\nid = "lm-studio"\ntransport = "openai_api"\n'
+            'enabled = true\nauth = "none"\n'
+            'base_url = "http://127.0.0.1:1234/v1"\n', encoding="utf-8")
+        agent_backends.forget_config()
+        rows = agent_backends.provider_list(str(tmp_path))
+        assert rows[0]["base_url"] == rows[0]["default_base_url"]
+
+        po.update(str(tmp_path), {"where": {
+            "lm-studio": {"base_url": "http://192.168.1.14:1234/v1"}}},
+            committed_ids=["lm-studio"])
+        agent_backends.forget_config()
+        rows = agent_backends.provider_list(str(tmp_path))
+        assert rows[0]["base_url"] == "http://192.168.1.14:1234/v1"
+        assert rows[0]["default_base_url"] == "http://127.0.0.1:1234/v1", (
+            "the shipped address has to survive, or Reset has nothing to go to")
+
+
 class TestThroughTheRegistry:
     def test_enabling_ollama_makes_it_usable(self, tmp_path):
         cfg = tmp_path / "console" / "config"

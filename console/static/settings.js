@@ -261,7 +261,14 @@
     var body = C.el("div", {}, [C.skeleton(3)]);
     var adding = false;
 
-    function save(patch, done) {
+    function save(patch, done, where) {
+      // `where` re-points ONE shipped provider. Built here rather than by the
+      // caller so the wire shape lives in one place.
+      if (where && where.id) {
+        patch = { where: {} };
+        patch.where[where.id] = { base_url: where.base_url || "",
+                                  api_key_env: where.api_key_env || "" };
+      }
       C.post("/api/agents/providers", patch)
         .then(function (d) {
           C.toast("Saved", "ok");
@@ -270,6 +277,94 @@
         })
         .catch(function (err) { C.toast(err.message, "err"); load(); });
     }
+
+    /* Which provider's edit form is open, if any. One at a time: two open
+       forms invite editing one and saving the other. */
+    var editing = null;
+    /* Editing a provider means two different things depending on where its row
+       came from, and the form says which.
+
+       A provider YOU added is yours to rewrite — label, address, key name. A
+       SHIPPED one can only be re-pointed: its address and the name of its key
+       are facts about this machine, while its tool gates, context caps and
+       transport are reviewed decisions that live in the committed file. So the
+       shipped form offers two fields and a way back to the default, rather
+       than pretending everything is editable and refusing on save. */
+    function editForm(p, done) {
+      var label = C.el("input", { type: "text", placeholder: "Label",
+                                  "aria-label": "Label" });
+      label.value = p.label || "";
+      var url = C.el("input", { type: "text", style: "min-width:17em",
+                                placeholder: "http://host:port/v1",
+                                "aria-label": "Base URL" });
+      url.value = p.base_url || "";
+      var keyEnv = C.el("input", { type: "text", placeholder: "KEY_ENV_VAR (optional)",
+                                   "aria-label": "Key environment variable name" });
+      keyEnv.value = p.key_env || "";
+      var result = C.el("div", { class: "muted", style: "font-size:11.5px;flex-basis:100%" });
+
+      var test = C.el("button", {
+        class: "btn sm",
+        // Before saving, so a wrong port is a sentence rather than a failed
+        // turn ten minutes later.
+        onclick: function () {
+          result.textContent = "Testing…";
+          C.post("/api/agents/providers/probe",
+                 { base_url: url.value, api_key_env: keyEnv.value })
+            .then(function (d) {
+              result.textContent = d.ok
+                ? "answering — " + (d.count || 0) + " models"
+                  + (d.models && d.models.length ? ": " + d.models.slice(0, 3).join(", ") : "")
+                : d.reason || "no answer";
+            })
+            .catch(function (err) { result.textContent = err.message; });
+        },
+      }, ["Test"]);
+
+      var apply = C.el("button", {
+        class: "btn sm primary",
+        onclick: function () {
+          if (p.custom) {
+            save({ custom: { id: p.id, label: label.value,
+                             base_url: url.value, api_key_env: keyEnv.value } }, done);
+          } else {
+            // A shipped row: only where it is and what its key is called.
+            // The patch is built from the third argument, so there is nothing
+            // to pass as the first.
+            save(null, done, { id: p.id, base_url: url.value,
+                               api_key_env: keyEnv.value });
+          }
+        },
+      }, ["Save"]);
+
+      var cancel = C.el("button", { class: "btn sm", onclick: function () { done(); } },
+                        ["Cancel"]);
+
+      // Only for a shipped row that has been moved: put it back where the
+      // committed file says it lives.
+      var moved = !p.custom && p.default_base_url && p.base_url !== p.default_base_url;
+      var reset = moved ? C.el("button", {
+        class: "btn sm",
+        title: "Back to " + p.default_base_url,
+        onclick: function () {
+          save(null, done, { id: p.id, base_url: "", api_key_env: "" });
+        },
+      }, ["Reset to default"]) : null;
+
+      var fields = p.custom ? [label, url, keyEnv] : [url, keyEnv];
+      return C.el("div", { class: "setrow", style: "flex-wrap:wrap" }, [
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: "Editing " + p.label }),
+          C.el("span", { text: p.custom
+            ? "your provider — label, address and the NAME of its key"
+            : "a shipped provider — only where it is and what its key is "
+              + "called. Everything else stays in agents.toml" }),
+        ]),
+        C.el("div", { class: "setctl" }, fields.concat([test, apply, reset, cancel])),
+        result,
+      ]);
+    }
+
 
     function row(p) {
       var toggle = C.el("input", {
@@ -322,6 +417,10 @@
               ["local"]) : null,
             p.custom ? C.el("span", { class: "chip", style: "margin-left:6px" },
               ["yours"]) : null,
+            (!p.custom && p.default_base_url && p.base_url !== p.default_base_url)
+              ? C.el("span", { class: "chip warn", style: "margin-left:6px",
+                               title: "ships as " + p.default_base_url },
+                     ["moved"]) : null,
           ]),
           C.el("span", { text: state }),
         ]),
@@ -329,6 +428,12 @@
           ? C.chip(p.available ? "ready" : "unusable", p.available ? "ok" : "warn")
           : null,
         p.enabled ? refresh : null,
+        C.el("button", {
+          class: "btn sm",
+          title: p.custom ? "Edit this provider"
+                          : "Point this provider somewhere else on this machine",
+          onclick: function () { editing = p.id; load(); },
+        }, [C.icon("pencil")]),
         p.custom ? C.el("button", {
           class: "btn sm", title: "Remove this provider",
           onclick: function () { save({ remove: p.id }); },
@@ -400,7 +505,12 @@
 
     function paintRows(rows) {
       C.clear(body);
-      rows.forEach(function (p) { body.appendChild(row(p)); });
+      rows.forEach(function (p) {
+        body.appendChild(row(p));
+        if (editing === p.id) {
+          body.appendChild(editForm(p, function () { editing = null; load(); }));
+        }
+      });
       if (adding) {
         body.appendChild(addForm());
       } else {

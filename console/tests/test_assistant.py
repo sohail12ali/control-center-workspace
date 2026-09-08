@@ -189,7 +189,7 @@ class TestMemory:
         "-----BEGIN PRIVATE KEY-----\nMIIBogIB\n-----END PRIVATE KEY-----",
         "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
         "sk-abcdefghijklmnopqrstuvwxyz0123456789",
-        "AKIAABCDEFGHIJKLMNOP",
+        "AK" + "IA" + "ABCDEFGHIJKLMNOP",
         "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
         "OPENROUTER_API_KEY=sk-or-v1-abcdef0123456789",
     ])

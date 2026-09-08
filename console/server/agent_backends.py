@@ -654,6 +654,10 @@ def provider_list(repo_root):
     `has_key` is a boolean. The key itself is never read into a response.
     """
     rows = load_config(repo_root).get("backend", [])
+    # What the COMMITTED file says, so the panel can show that a provider has
+    # been re-pointed on this machine and offer to put it back. Without this a
+    # moved provider looks identical to one that ships at that address.
+    shipped = {r.get("id"): r for r in committed_rows(repo_root)}
     out = []
     for row in rows:
         if row.get("transport") not in API_TRANSPORTS:
@@ -687,6 +691,12 @@ def provider_list(repo_root):
             "reason": backend.unavailable_reason if enabled else "",
             "notes": backend.raw.get("notes", "") or "",
             "start_hint": backend.raw.get("start_hint", "") or "",
+            # Editing means two different things depending on where the row
+            # came from: a custom provider is yours to rewrite, a shipped one
+            # can only be re-pointed (address and key name), because the rest
+            # of it is a reviewed decision.
+            "default_base_url": (shipped.get(backend.id) or {}).get("base_url", ""),
+            "default_key_env": (shipped.get(backend.id) or {}).get("api_key_env", ""),
         })
     out.sort(key=lambda p: (not p["enabled"], not p["is_local"], p["label"].lower()))
     return out

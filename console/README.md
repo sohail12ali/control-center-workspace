@@ -1115,10 +1115,17 @@ file:
 python console/kanban.py agents provider enable lm-studio
 ```
 
-then set its address in Settings → Model providers (or write
-`where.lm-studio.base_url` in `console/.cache/agents/providers.json`). Only the
-address and the key's env-var NAME can be overridden — everything else about a
-row is a reviewed decision that stays in `agents.toml`.
+then use the pencil beside it in Settings → Model providers. A shipped row
+offers two fields — the address, and the NAME of its key — and a **Reset to
+default** once it has been moved; a `moved` chip beside the name says it is not
+where the committed file puts it. A provider you added yourself is fully
+editable: label, address and key name.
+
+Only the address and the key's env-var name can be overridden on a shipped row.
+Everything else about it — its tool gates, its context caps, its transport — is
+a reviewed decision that stays in `agents.toml`, which is also why the form
+shows two fields rather than pretending everything is editable and refusing on
+save.
 
 ### Which models are loaded
 
