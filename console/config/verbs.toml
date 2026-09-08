@@ -93,6 +93,20 @@ handler = "verb_handlers.agent_models"
 # T-004: the Assistant's own verbs. `kickoff` mutates the vault (a new ticket
 # directory, artifact-map row) — needs_confirm so a stray click or a
 # hallucinated tool call cannot trigger it (BR-5's own paragraph on this).
+# T-014: the talk model handing work to the work model. `needs_confirm`
+# because it starts a process with this workspace's files in reach — but that
+# is only the stray-click guard. The human gate is `console_delegate` in the
+# local rows' `gated_tools` in agents.toml, which raises the Allow/Deny card:
+# a 9B running on your laptop should not be able to spend money on a hosted
+# model without you seeing it. Remove it from those rows if you want the
+# hand-off to be seamless.
+[[verb]]
+id = "delegate"
+label = "Hand a task to the work model"
+hint = "Code, builds, test runs — anything the talk model should not attempt itself"
+handler = "verb_handlers.delegate"
+needs_confirm = true
+
 [[verb]]
 id = "kickoff"
 label = "Create ticket"

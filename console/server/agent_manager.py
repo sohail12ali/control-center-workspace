@@ -44,6 +44,22 @@ def _paths(repo_root, sid):
     return base + ".log", base + ".events.jsonl"
 
 
+#: The port this console is bound to, set once by the agents plugin. A chat
+#: started from somewhere with no request context — a verb, the scheduler —
+#: still needs it, because it is what the approval hook calls home to. Without
+#: it a gated tool has nowhere to raise its card.
+_SERVER_PORT = 0
+
+
+def set_server_port(port):
+    global _SERVER_PORT
+    _SERVER_PORT = int(port or 0)
+
+
+def server_port():
+    return _SERVER_PORT
+
+
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
            persona="", title="", server_port=0, ticket="",
            system_append="", extra=""):

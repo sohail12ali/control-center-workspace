@@ -25,6 +25,11 @@ def apply(ctx):
     # config before plugins load, so a --port override reaches the hook too.
     server_port = int((ctx.config.get("general") or {}).get("port", 8790) or 8790)
 
+    # So a chat started from a verb (`console_delegate`) installs the same
+    # approval hook as one started from this tab — the hook needs a port to
+    # call home to, and a verb handler has no request to read it from.
+    agent_manager.set_server_port(server_port)
+
     ctx.provide("agents", agent_manager)
     ctx.register_tab(
         "agents", label="Agents", short="Run", icon="cpu", group="main",
@@ -124,9 +129,25 @@ def apply(ctx):
         if not hit:
             return {"backend": backend, "models": [], "count": 0,
                     "error": "no cached catalogue yet"}
-        return {"backend": backend, "models": hit["models"],
+        # Which of them are RESIDENT, and what the server says each can do.
+        # Both are live reads against a local runtime, not the paid catalogue
+        # this route is careful about: they cost a request to a box on your own
+        # network and they are the difference between picking a model and
+        # picking a twenty-second wait.
+        resident = model_catalog.loaded(repo_root, backend)
+        caps = model_catalog.capabilities(repo_root, backend)
+        rows = []
+        for row in hit["models"]:
+            row = dict(row)
+            # None, not False, when the server does not report residency — a
+            # sleeping box must not read as "nothing is loaded".
+            row["loaded"] = None if resident is None else (row["id"] in resident)
+            row.update(caps.get(row["id"], {}))
+            rows.append(row)
+        return {"backend": backend, "models": rows,
                 "count": hit["count"], "fetched_at": hit["fetched_at"],
-                "age_days": hit["age_days"], "error": ""}
+                "age_days": hit["age_days"], "error": "",
+                "reports_residency": resident is not None}
 
     def models_refresh(req):
         """Re-fetch from the provider. A POST because it leaves this machine.

@@ -815,18 +815,130 @@
       return row(label, hint, C.el("div", { class: "setctl" }, [sel]), iconName);
     }
 
+
+    /* A role: which provider answers, and which of its models.
+
+       The model is a DROPDOWN built from that provider's fetched catalogue,
+       not a text box — a typed id that does not exist falls back to the
+       backend's default silently, which is how you end up wondering why the
+       model you chose is not the one answering.
+
+       Each option carries what the server said about it: whether it is
+       resident (LM Studio keeps ONE model loaded and swaps on demand, so
+       picking an unloaded one is a ~20-second decision), and whether it claims
+       tool training — which the Assistant needs for any of its verbs to work. */
+    function roleRow(s, d, opts) {
+        var wrap = C.el("div", {});
+        var backends = [["", opts.autoLabel]].concat(
+            (d.installed || []).map(function (id) { return [id, id]; }));
+
+        var sel = C.el("select", { "aria-label": opts.label + " backend" });
+        backends.forEach(function (o) {
+            var opt = C.el("option", { value: o[0], text: o[1] });
+            if (String(s[opts.backendKey] || "") === o[0]) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.addEventListener("change", function () {
+            var patch = {}; patch[opts.backendKey] = sel.value;
+            // The model belonged to the old provider; keeping it would send a
+            // qwen id to claude.
+            patch[opts.modelKey] = "";
+            save(patch);
+        });
+
+        var models = C.el("select", { "aria-label": opts.label + " model" });
+        var note = C.el("span", { class: "muted", style: "font-size:11px" });
+
+        function fillModels(rows, reportsResidency) {
+            C.clear(models);
+            var chosen = String(s[opts.modelKey] || "");
+            models.appendChild(C.el("option", { value: "", text: "(backend default)" }));
+            (rows || []).forEach(function (m) {
+                var bits = [];
+                if (m.loaded === true) bits.push("● loaded");
+                else if (m.loaded === false) bits.push("○ not loaded");
+                if (m.params) bits.push(m.params);
+                if (m.tool_use === false) bits.push("no tool training");
+                var opt = C.el("option", {
+                    value: m.id,
+                    text: m.id + (bits.length ? "  — " + bits.join(" · ") : ""),
+                });
+                if (m.id === chosen) opt.selected = true;
+                models.appendChild(opt);
+            });
+            // A chosen model the catalogue does not list still has to appear,
+            // or switching provider would silently drop it.
+            if (chosen && !(rows || []).some(function (m) { return m.id === chosen; })) {
+                var kept = C.el("option", { value: chosen, text: chosen + "  — not in the catalogue" });
+                kept.selected = true;
+                models.appendChild(kept);
+            }
+            if (!(rows || []).length) {
+                note.textContent = "no catalogue yet — Refresh models on the provider above";
+            } else if (!reportsResidency) {
+                note.textContent = rows.length + " models · this provider does not report what is loaded";
+            } else {
+                note.textContent = rows.length + " models";
+            }
+        }
+
+        models.addEventListener("change", function () {
+            var picked = models.value;
+            var row = (models._rows || []).filter(function (m) { return m.id === picked; })[0];
+            // Ask ONCE, and only when we actually know it is not resident.
+            // Nothing here ever loads a model; the first request does that,
+            // and this is the warning that it will take a while.
+            if (row && row.loaded === false) {
+                var ok = window.confirm(
+                    picked + " is not loaded.\n\nThe first request will load it, "
+                    + "which takes roughly 5-25 seconds depending on size. "
+                    + "Once loaded, replies are about a second.\n\nUse it anyway?");
+                if (!ok) { models.value = String(s[opts.modelKey] || ""); return; }
+            }
+            var patch = {}; patch[opts.modelKey] = picked;
+            save(patch);
+        });
+
+        var chosenBackend = String(s[opts.backendKey] || "");
+        if (chosenBackend) {
+            C.get("/api/agents/models?backend=" + encodeURIComponent(chosenBackend))
+                .then(function (m) {
+                    models._rows = m.models || [];
+                    fillModels(m.models, m.reports_residency);
+                })
+                .catch(function () { fillModels([], false); });
+        } else {
+            fillModels([], false);
+            note.textContent = "pick a provider to choose a model";
+        }
+
+        wrap.appendChild(C.el("div", { class: "setrow" }, [
+            C.icon(opts.icon),
+            C.el("div", { class: "settext" }, [
+                C.el("b", { text: opts.label }),
+                C.el("span", { text: opts.hint }),
+            ]),
+            C.el("div", { class: "setctl" }, [sel, models, note]),
+        ]));
+        return wrap;
+    }
+
     function paint(d) {
       var s = d.settings || {};
       C.clear(body);
 
-      var backends = [["", "Auto — first installed, local first"]].concat(
-        (d.installed || []).map(function (id) { return [id, id]; }));
-      body.appendChild(choice(s, "backend", "Backend",
-        (d.installed || []).length
-          ? "where a spoken command or a screenshot would go"
-          : "nothing installed — see Agent CLIs above", backends, "cpu"));
-      body.appendChild(field(s, "model", "Model",
-        "blank means the backend's own default", "text", "brain"));
+      body.appendChild(roleRow(s, d, {
+        label: "Talk", backendKey: "backend", modelKey: "model", icon: "cpu",
+        autoLabel: "Auto — first installed, local first",
+        hint: "conversation, status, ticket lookups — a fast local model does "
+              + "this well",
+      }));
+      body.appendChild(roleRow(s, d, {
+        label: "Work", backendKey: "work_backend", modelKey: "work_model",
+        icon: "wrench", autoLabel: "None — nothing to delegate to",
+        hint: "code, builds, test runs. The talk model hands these over with "
+              + "console_delegate rather than attempting them",
+      }));
       body.appendChild(choice(s, "mode", "Tool mode",
         "plan refuses every write, so the Assistant could not create a ticket "
         + "or remember anything",

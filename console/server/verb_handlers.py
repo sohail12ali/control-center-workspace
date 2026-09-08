@@ -13,7 +13,11 @@ This file is deliberately dull. When an adapter starts wanting logic of its own,
 that logic belongs in the module that owns the fact, not in the glue.
 """
 
+from . import agent_backends
+from . import agent_manager
 from . import assistant as assistant_mod
+from . import assistant_config
+from . import assistant_reply
 from . import context as context_mod
 from . import harness_lint
 from . import kickoff as kickoff_mod
@@ -123,6 +127,71 @@ def kickoff(repo_root, ticket=None, title="", kind="tickets", owner="",
     skill produces by hand, never a thin `tickets.create` wrapper (BR-5)."""
     return kickoff_mod.create_ticket(repo_root, title, kind=kind, owner=owner,
                                      prefix=prefix)
+
+
+def delegate(repo_root, ticket=None, task=""):
+    """Hand a task to the work model (T-014).
+
+    The Assistant's `backend`/`model` are the TALK pair — fast, local, good at
+    conversation and ticket lookups. Code changes, builds and test runs want a
+    different animal, and this is how the talk model asks for one: a new chat
+    on `work_backend`, with the task as its opening message.
+
+    Two things it refuses to do. It never runs the task on the talk model when
+    no work backend is configured — a local 9B quietly attempting a refactor is
+    the worst outcome available. And it never claims to have finished: it
+    reports where the work went, and `assistant_reply.watch_delegate` posts the
+    result back when there is one.
+    """
+    task = (task or "").strip()
+    if not task:
+        return {"ok": False, "error": "say what to delegate"}
+
+    settings = assistant_config.settings(repo_root)
+    backend_id = (settings.get("work_backend") or "").strip()
+    if not backend_id:
+        return {"ok": False, "error":
+                "no work backend is set — choose one in Settings > Assistant "
+                "(Work), or set work_backend. I have not run this on the talk "
+                "model."}
+    try:
+        backend = agent_backends.get(repo_root, backend_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not backend.installed:
+        return {"ok": False, "error": backend.unavailable_reason}
+
+    # A chat whose approval card can never be raised is a chat that hangs on
+    # its first gated tool. That happens when this verb runs somewhere with no
+    # server behind it — `kanban verb run delegate` from a terminal — because
+    # the hook the CLI calls back into needs a port. Refusing beats starting an
+    # agent that will sit at `turn.start` forever, which is what it did the
+    # first time this was tested.
+    port = agent_manager.server_port()
+    if backend.gated_tools and backend.transport == "stream_json" and not port:
+        return {"ok": False, "error":
+                "delegation needs the console server running — the work "
+                "agent's approval card has nowhere to appear from here. Start "
+                "the console (kanban serve) and delegate from the Assistant."}
+
+    pointer = assistant_mod.read_session(repo_root)
+    title = "Delegated: " + (task[:60] + ("…" if len(task) > 60 else ""))
+    try:
+        snap = agent_manager.create(
+            repo_root, backend_id, task, title=title,
+            model=(settings.get("work_model") or ""),
+            mode=(settings.get("mode") or ""),
+            ticket=ticket or "",
+            server_port=port)
+    except (ValueError, RuntimeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+    if pointer and pointer.get("sid"):
+        assistant_reply.watch_delegate(repo_root, snap["id"], pointer["sid"], task)
+
+    return {"ok": True, "chat": snap["id"], "backend": backend_id,
+            "model": snap.get("model") or "(backend default)",
+            "status": "started — the result will be reported back here"}
 
 
 # -- desktop (T-005) --------------------------------------------------------

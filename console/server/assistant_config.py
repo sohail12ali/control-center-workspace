@@ -55,6 +55,17 @@ DEFAULTS = {
     "reply_chars": 400,         # spoken-form cap
     "ticket_prefix": "T-",
 
+    # -- two models, two jobs (T-014) ----------------------------------------
+    # `backend`/`model` above are the TALK pair: conversation, status, ticket
+    # lookups, memory. On a local server that is a 1.4-second answer.
+    #
+    # These are where real work goes — code changes, builds, test runs. The
+    # talk model hands a task over with `console_delegate`; the work model is
+    # what picks it up. Empty means there is nowhere to delegate to, and the
+    # tool says so rather than quietly running the task on the talk model.
+    "work_backend": "",
+    "work_model": "",
+
     # -- how a reply sounds (T-013) -------------------------------------------
     # Which neural voice reads replies, by name, matching a file in
     # desktop/tts (`en_US-amy-medium`). Blank means "whichever is installed";
@@ -121,6 +132,7 @@ WRITABLE = frozenset({
     "reply_chars", "ticket_prefix", "tray_click_action",
     "listen_max_seconds", "listen_silence_ms", "stt_model",
     "speak_voice", "speak_rate_percent",
+    "work_backend", "work_model",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
@@ -216,11 +228,12 @@ def update(repo_root, patch, installed_backends=()):
     for key, value in patch.items():
         clean[key] = _coerce(key, value)
 
-    backend = clean.get("backend")
-    if backend and installed_backends and backend not in installed_backends:
-        raise ValueError(
-            "backend %r is not enabled and installed — available: %s"
-            % (backend, ", ".join(sorted(installed_backends)) or "none"))
+    for key in ("backend", "work_backend"):
+        chosen = clean.get(key)
+        if chosen and installed_backends and chosen not in installed_backends:
+            raise ValueError(
+                "%s %r is not enabled and installed — available: %s"
+                % (key, chosen, ", ".join(sorted(installed_backends)) or "none"))
 
     if "session_idle_minutes" in clean and clean["session_idle_minutes"] < 1:
         raise ValueError("session_idle_minutes must be at least 1")

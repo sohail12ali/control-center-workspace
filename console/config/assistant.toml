@@ -28,6 +28,20 @@ model = ""
 # "Permission needed" card — the mode does not remove the gate.
 mode = "default"
 
+# -- the work model ----------------------------------------------------------
+# `backend` and `model` above are the TALK pair — conversation, status, ticket
+# lookups. These are where real work goes: code changes, builds, test runs.
+#
+# The point of the split is that they want different things. A local 9B answers
+# "what's open?" in about a second and is a poor engineer; a CLI agent is the
+# other way round. The talk model hands a task over with `console_delegate`,
+# and this is what picks it up.
+#
+# Empty means there is nowhere to delegate to, and the tool says so rather than
+# silently running the task on the talk model.
+work_backend = ""
+work_model = ""
+
 # Model ids that can actually look at a screenshot. When one of these matches,
 # a capture is sent to the model as pixels; when none does, the model is told
 # to read the image with OCR instead — and to say that is what it did, rather

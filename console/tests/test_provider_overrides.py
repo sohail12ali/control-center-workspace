@@ -161,7 +161,7 @@ class TestPersistence:
             fh.write("{not json")
         # A broken override must not take the console down: the committed rows
         # are always a working configuration.
-        assert po.load(str(tmp_path)) == {"enabled": {}, "custom": []}
+        assert po.load(str(tmp_path)) == {"enabled": {}, "custom": [], "where": {}}
 
     def test_the_committed_file_is_never_written(self, tmp_path):
         """The whole reason this layer exists. `agents.toml` is a document —
@@ -174,6 +174,52 @@ class TestPersistence:
         po.update(str(tmp_path), {"enabled": {"ollama": True}},
                   committed_ids=["ollama"])
         assert committed.read_text(encoding="utf-8") == original
+
+
+class TestRepointingAShippedProvider:
+    """T-014. The shipped `lm-studio` row says 127.0.0.1:1234 because that is
+    LM Studio's default. A server on the LAN, with its own key, is a fact about
+    this machine — so the address is overridable without touching the committed
+    file or its comments."""
+
+    def test_a_committed_row_can_be_pointed_elsewhere(self):
+        rows = po.apply(COMMITTED, {"where": {
+            "ollama": {"base_url": "http://192.168.1.14:1234/v1"}}})
+        moved = [r for r in rows if r["id"] == "ollama"][0]
+        assert moved["base_url"] == "http://192.168.1.14:1234/v1"
+        # Everything else about the row is untouched: its gates and caps are
+        # reviewed decisions, not machine facts.
+        assert moved["auth"] == "none"
+
+    def test_naming_a_key_makes_it_a_key_backend(self):
+        rows = po.apply(COMMITTED, {"where": {
+            "ollama": {"api_key_env": "LMSTUDIO_KEY"}}})
+        moved = [r for r in rows if r["id"] == "ollama"][0]
+        assert moved["auth"] == "key" and moved["api_key_env"] == "LMSTUDIO_KEY"
+
+    def test_only_where_it_is_can_be_overridden(self):
+        with pytest.raises(ValueError, match="cannot override"):
+            po.validate_where({"gated_tools": []})
+        with pytest.raises(ValueError, match="cannot override"):
+            po.validate_where({"max_tool_rounds": 999})
+
+    def test_a_bad_url_is_refused(self):
+        with pytest.raises(ValueError, match="http"):
+            po.validate_where({"base_url": "192.168.1.14:1234"})
+
+    def test_a_pasted_key_is_refused_here_too(self):
+        with pytest.raises(ValueError, match="NAME of an environment variable"):
+            po.validate_where({"api_key_env": "sk-proj-abc123"})
+
+    def test_it_round_trips_and_can_be_undone(self, tmp_path):
+        po.update(str(tmp_path), {"where": {
+            "lm-studio": {"base_url": "http://192.168.1.14:1234/v1"}}},
+            committed_ids=["lm-studio"])
+        assert po.load(str(tmp_path))["where"]["lm-studio"]["base_url"]             == "http://192.168.1.14:1234/v1"
+        # Clearing it puts the provider back where the committed row says.
+        po.update(str(tmp_path), {"where": {"lm-studio": {"base_url": ""}}},
+                  committed_ids=["lm-studio"])
+        assert "lm-studio" not in po.load(str(tmp_path))["where"]
 
 
 class TestThroughTheRegistry:

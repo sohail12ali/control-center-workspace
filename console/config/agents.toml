@@ -244,7 +244,12 @@ prompt_prefix_style = "none"
 # that matter.
 gated_tools = ["write_file", "edit_file", "run_command",
                "console_desktop_screenshot",
-               "console_desktop_clipboard_read"]
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
 approval_timeout = 300
 
 # Budgets for the loop the console runs. Omit either and it takes the default
@@ -349,7 +354,12 @@ prompt_prefix_style = "none"
 
 gated_tools = ["write_file", "edit_file", "run_command",
                "console_desktop_screenshot",
-               "console_desktop_clipboard_read"]
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
 approval_timeout = 300
 
 # A local model's context is usually far smaller than a hosted one's, so the
@@ -389,7 +399,12 @@ prompt_prefix_style = "none"
 
 gated_tools = ["write_file", "edit_file", "run_command",
                "console_desktop_screenshot",
-               "console_desktop_clipboard_read"]
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
 approval_timeout = 300
 
 # Same reasoning as ollama: a locally served model's window is the constraint.

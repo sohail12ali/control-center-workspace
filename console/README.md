@@ -1083,6 +1083,54 @@ whether it is useful to you is tool calling: the console runs the agent loop
 and that loop needs tools. Ollama answers `does not support tools` for a model
 that lacks them, and the console shows you that verbatim.
 
+### Two models: one to talk to, one to work
+
+The Assistant has two slots, and they want different animals. A small local
+model answers "what's open?" in about a second and is a poor engineer; a CLI
+agent is the other way round.
+
+- **Talk** (`backend` / `model`) — conversation, status, ticket lookups, memory.
+- **Work** (`work_backend` / `work_model`) — code changes, builds, test runs.
+
+The talk model does not attempt the second kind. It calls `console_delegate`,
+which starts a chat on the work backend with the task and reports where it
+went; when that chat's turn ends, a notice comes back into the Assistant chat
+with the gist, and the full transcript stays in the Agents tab.
+
+Delegating **raises the approval card** on every API-backed talk model: a
+local model starting a second, often paid, agent is exactly the shape of thing
+this console asks about first. Remove `console_delegate` from a row's
+`gated_tools` if you would rather it were seamless.
+
+With no work backend configured, `console_delegate` says so and does **not**
+fall back to running the task on the talk model.
+
+### Where a model actually is
+
+The shipped rows point at defaults — LM Studio at `127.0.0.1:1234`. If yours
+is a box on the LAN, re-point it per machine without touching the committed
+file:
+
+```bash
+python console/kanban.py agents provider enable lm-studio
+```
+
+then set its address in Settings → Model providers (or write
+`where.lm-studio.base_url` in `console/.cache/agents/providers.json`). Only the
+address and the key's env-var NAME can be overridden — everything else about a
+row is a reviewed decision that stays in `agents.toml`.
+
+### Which models are loaded
+
+A local runtime keeps one model resident and swaps on demand, so choosing a
+different one is a ~20-second decision rather than a dropdown. The model picker
+shows what is loaded, what each model's server says about tool training, and
+asks once before you pick something that is not resident. Nothing is ever
+loaded silently.
+
+A provider that cannot report residency says **unknown** — never "not loaded",
+which would invite you to wait for a load that never starts.
+
 ### Resuming a chat
 
 A chat used to die with the console. Now a past chat carries a **Resume**

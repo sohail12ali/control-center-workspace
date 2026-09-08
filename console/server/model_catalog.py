@@ -247,6 +247,143 @@ def _write_cache(repo_root, backend_id, rows):
     return ""
 
 
+
+# ------------------------------------------------------------- residency ---
+#: How long a "what is loaded" answer is trusted. Short, because loading is
+#: exactly the thing that changes it, and a stale dot is worse than a slow one.
+LOADED_TTL = 10
+
+_loaded_cache = {}
+
+
+def _host_of(base_url):
+    """`http://host:1234/v1` -> `http://host:1234`."""
+    url = (base_url or "").rstrip("/")
+    for suffix in ("/v1", "/api/v1", "/api/v0"):
+        if url.endswith(suffix):
+            return url[: -len(suffix)]
+    return url
+
+
+def _lm_studio_loaded(payload):
+    """LM Studio's native listing: a model is resident when it has instances."""
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return None
+    out = set()
+    for m in models:
+        if isinstance(m, dict) and m.get("loaded_instances"):
+            out.add(str(m.get("key") or m.get("id") or ""))
+    return {m for m in out if m}
+
+
+def _ollama_loaded(payload):
+    """Ollama's `/api/ps`: what is in memory right now."""
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return None
+    return {str(m.get("name") or m.get("model") or "") for m in models
+            if isinstance(m, dict) and (m.get("name") or m.get("model"))}
+
+
+#: (path, parser) pairs, tried in order. Chosen by what the server ANSWERS
+#: rather than by provider id, so a custom row pointing at an LM Studio on the
+#: LAN gets residency for free — the whole point of the custom-provider path.
+_RESIDENCY_PROBES = (
+    ("/api/v1/models", _lm_studio_loaded),
+    ("/api/v0/models", _lm_studio_loaded),
+    ("/api/ps", _ollama_loaded),
+)
+
+
+def loaded(repo_root, backend_id, opener=None):
+    """Which of this provider's models are resident, or None if it cannot say.
+
+    `None` and `set()` mean different things and the UI must not merge them:
+    an empty set is "nothing is loaded", `None` is "this server does not
+    report residency, or did not answer". Showing a sleeping box as
+    "not loaded" would invite someone to pick a model and wait for a load that
+    never starts.
+
+    Only meaningful for a local runtime that swaps models in and out. A hosted
+    provider has no residency and honestly returns None.
+    """
+    backend, _why = resolve(repo_root, backend_id)
+    if backend is None or not backend.base_url:
+        return None
+
+    now = time.time()
+    hit = _loaded_cache.get(backend_id)
+    if hit and now - hit[0] < LOADED_TTL:
+        return hit[1]
+
+    host = _host_of(backend.base_url)
+    answer = None
+    for path, parse_loaded in _RESIDENCY_PROBES:
+        try:
+            request = urllib.request.Request(
+                host + path, headers={"Accept": "application/json"}, method="GET")
+            with (opener or urllib.request.urlopen)(request, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+        except Exception:  # noqa: BLE001
+            continue
+        answer = parse_loaded(payload)
+        if answer is not None:
+            break
+
+    _loaded_cache[backend_id] = (now, answer)
+    return answer
+
+
+def forget_loaded():
+    """Drop the residency cache. For tests, and after anything that loads."""
+    _loaded_cache.clear()
+
+
+def capabilities(repo_root, backend_id, opener=None):
+    """Per-model facts the SERVER reports, keyed by model id.
+
+    LM Studio publishes `trained_for_tool_use`, `vision` and a context length
+    per model. The Assistant needs tool calling to be of any use, so a picker
+    that can say which models claim it is worth the one extra request.
+
+    A provider that says nothing gets an empty dict — never a guess. Worth
+    noting the flag is a hint rather than a hard capability: `muse-glimmer`
+    declares `trained_for_tool_use: false` and called a tool correctly anyway.
+    """
+    backend, _why = resolve(repo_root, backend_id)
+    if backend is None or not backend.base_url:
+        return {}
+    host = _host_of(backend.base_url)
+    for path in ("/api/v1/models", "/api/v0/models"):
+        try:
+            request = urllib.request.Request(
+                host + path, headers={"Accept": "application/json"}, method="GET")
+            with (opener or urllib.request.urlopen)(request, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+        except Exception:  # noqa: BLE001
+            continue
+        models = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(models, list):
+            continue
+        out = {}
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            mid = str(m.get("key") or m.get("id") or "")
+            caps = m.get("capabilities") or {}
+            if not mid or not isinstance(caps, dict):
+                continue
+            out[mid] = {
+                "tool_use": bool(caps.get("trained_for_tool_use")),
+                "vision": bool(caps.get("vision")),
+                "context": m.get("max_context_length"),
+                "params": m.get("params_string") or "",
+            }
+        if out:
+            return out
+    return {}
+
 # ------------------------------------------------------------------ read ---
 def cached(repo_root, backend_id):
     """The stored catalogue, or None. `age_days` is what the UI shows.

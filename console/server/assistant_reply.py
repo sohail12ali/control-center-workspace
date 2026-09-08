@@ -97,6 +97,89 @@ def watching(sid):
         return bool(t and t.is_alive())
 
 
+
+def watch_delegate(repo_root, work_sid, assistant_sid, task=""):
+    """Follow a delegated chat and report back into the Assistant's chat.
+
+    The talk model hands work to the work model and then has nothing more to
+    say about it. Without this, finding out what happened means opening the
+    Agents tab — so the console watches, and when the work ends it posts one
+    notice into the Assistant's own stream, which is also the path that speaks
+    it aloud.
+    """
+    key = "delegate:%s" % work_sid
+    with _lock:
+        if key in _watchers and _watchers[key].is_alive():
+            return False
+        thread = threading.Thread(
+            target=_run_delegate, args=(repo_root, work_sid, assistant_sid, task),
+            name="delegate-watch-%s" % work_sid, daemon=True)
+        _watchers[key] = thread
+        thread.start()
+        return True
+
+
+def _run_delegate(repo_root, work_sid, assistant_sid, task):
+    """Wait for the delegated TURN to end, not for the chat to die.
+
+    Those are different moments and the difference matters: a steerable
+    backend keeps its process alive between turns, so a watcher waiting for
+    the session to end waits forever. Found by watching one answer correctly
+    and then say nothing. The turn ending is what "the work is done" means.
+    """
+    seq = 0
+    last_text = ""
+    gone_since = None
+    finished = False
+    while not finished:
+        work = agent_manager.get(work_sid)
+        if work is None:
+            _tell_assistant(repo_root, assistant_sid,
+                            "The delegated chat is gone; nothing to report.")
+            return
+        try:
+            events, _gap = work.stream.since(seq)
+        except Exception:  # noqa: BLE001
+            return
+        for event in events:
+            seq = max(seq, event.get("seq", seq))
+            kind = event.get("type")
+            if kind == "text.done" and (event.get("text") or "").strip():
+                last_text = event["text"]
+            elif kind == "turn.end":
+                finished = True
+        if finished:
+            break
+        if not work.alive:
+            # It died without finishing a turn — a crash, or a backend that
+            # exits per turn. Still worth reporting, after a short drain.
+            gone_since = gone_since or time.time()
+            if time.time() - gone_since > IDLE_EXIT_SECONDS:
+                break
+        time.sleep(POLL_SECONDS)
+
+    headline = _first_sentences(last_text) or "no reply"
+    _tell_assistant(
+        repo_root, assistant_sid,
+        "Finished%s: %s (chat %s — full transcript in the Agents tab)"
+        % (" — " + task[:60] if task else "", headline, work_sid))
+
+
+def _first_sentences(text, cap=240):
+    """The gist, for a one-line report. The whole thing stays in the Agents
+    tab; reading a page of it into a chat — or aloud — helps nobody."""
+    plain = spoken_form(text or "", cap)
+    return plain.strip()
+
+
+def _tell_assistant(repo_root, assistant_sid, text):
+    session = agent_manager.get(assistant_sid)
+    if session is None:
+        return
+    # A `notice`, because that is the event type the Assistant's stream already
+    # relays and the voice path already speaks.
+    session.stream.publish({"type": "notice", "text": text})
+
 def _run(repo_root, sid):
     seq = 0
     gone_since = None

@@ -61,7 +61,8 @@ DEFAULTS_FOR_CUSTOM = {
     # more trust than the ones that shipped with the template.
     "gated_tools": ["write_file", "edit_file", "run_command",
                     "console_desktop_screenshot",
-                    "console_desktop_clipboard_read"],
+                    "console_desktop_clipboard_read",
+                    "console_delegate"],
     "approval_timeout": 300,
     # A locally served model's context window is usually the constraint, and a
     # custom endpoint is more often local than not.
@@ -88,7 +89,7 @@ def path(repo_root):
 
 def load(repo_root):
     """This machine's choices, or the empty set of them."""
-    blank = {"enabled": {}, "custom": []}
+    blank = {"enabled": {}, "custom": [], "where": {}}
     try:
         with open(path(repo_root), "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -100,9 +101,12 @@ def load(repo_root):
         return blank
     enabled = data.get("enabled")
     custom = data.get("custom")
+    where = data.get("where")
     return {
         "enabled": {str(k): bool(v) for k, v in (enabled or {}).items()},
         "custom": [c for c in (custom or []) if isinstance(c, dict)],
+        "where": {str(k): dict(v) for k, v in (where or {}).items()
+                  if isinstance(v, dict)},
     }
 
 
@@ -123,12 +127,23 @@ def apply(rows, overrides):
     it: which `enabled` wins, and what a half-specified custom row becomes.
     """
     enabled = (overrides or {}).get("enabled") or {}
+    where = (overrides or {}).get("where") or {}
     out = []
     for row in rows or []:
         row = dict(row)
         rid = row.get("id")
         if rid in enabled:
             row["enabled"] = enabled[rid]
+        # Where this machine actually reaches it. The shipped `lm-studio` row
+        # says 127.0.0.1:1234 because that is where LM Studio runs by default;
+        # yours may be a box on the LAN with its own key. Overriding the
+        # address here keeps agents.toml — and its comments — the same file on
+        # every machine.
+        for field, value in (where.get(rid) or {}).items():
+            if value:
+                row[field] = value
+        if (where.get(rid) or {}).get("api_key_env"):
+            row["auth"] = "key"
         out.append(row)
     known = {r.get("id") for r in out}
     for custom in (overrides or {}).get("custom") or []:
@@ -204,6 +219,42 @@ def validate(provider, committed_ids=()):
     return clean
 
 
+#: Fields a committed row can be re-pointed at, per machine. Deliberately
+#: only the two that are facts about THIS machine — where the server is, and
+#: what its key is called. Everything else about a row (its gates, its context
+#: caps, its transport) is a reviewed decision that belongs in the committed
+#: file.
+WHERE_FIELDS = ("base_url", "api_key_env")
+
+
+def validate_where(patch):
+    """Check a re-pointing patch, returning the cleaned fields."""
+    if not isinstance(patch, dict) or not patch:
+        raise ValueError("nothing to change")
+    unknown = sorted(set(patch) - set(WHERE_FIELDS))
+    if unknown:
+        raise ValueError("cannot override %s on a shipped provider — only %s"
+                         % (", ".join(unknown), " and ".join(WHERE_FIELDS)))
+    clean = {}
+    if "base_url" in patch:
+        url = str(patch["base_url"] or "").strip().rstrip("/")
+        # Empty is not invalid — it is the undo. Clearing the field is how a
+        # provider goes back to where the committed row says it lives, and a
+        # refusal here would leave no way back except editing the file.
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        clean["base_url"] = url
+    if "api_key_env" in patch:
+        name = str(patch["api_key_env"] or "").strip()
+        if name and not ENV_RE.match(name):
+            raise ValueError(
+                "api_key_env is the NAME of an environment variable (like "
+                "LMSTUDIO_API_KEY), not the key itself — put the value in the "
+                "workspace .env")
+        clean["api_key_env"] = name
+    return clean
+
+
 def update(repo_root, patch, committed_ids=()):
     """Apply a patch and persist it. Returns the stored overrides.
 
@@ -217,7 +268,7 @@ def update(repo_root, patch, committed_ids=()):
     """
     if not isinstance(patch, dict) or not patch:
         raise ValueError("nothing to change")
-    unknown = sorted(set(patch) - {"enabled", "custom", "remove"})
+    unknown = sorted(set(patch) - {"enabled", "custom", "remove", "where"})
     if unknown:
         raise ValueError("not a provider setting: %s" % ", ".join(unknown))
 
@@ -240,6 +291,23 @@ def update(repo_root, patch, committed_ids=()):
                 "can be removed" % rid)
         data["custom"] = [c for c in data["custom"] if c.get("id") != rid]
         data["enabled"].pop(rid, None)
+
+    if "where" in patch:
+        pointing = patch["where"]
+        if not isinstance(pointing, dict) or not pointing:
+            raise ValueError("where must name at least one provider")
+        allowed = set(committed_ids) | {c.get("id") for c in data["custom"]}
+        stored_where = data.setdefault("where", {})
+        for pid, fields in pointing.items():
+            if pid not in allowed:
+                raise ValueError("unknown provider %r" % pid)
+            clean = validate_where(fields)
+            if clean.get("base_url") or clean.get("api_key_env"):
+                stored_where.setdefault(str(pid), {}).update(clean)
+            else:
+                # An empty patch is how you put a provider back where the
+                # committed row says it lives.
+                stored_where.pop(str(pid), None)
 
     if "enabled" in patch:
         flags = patch["enabled"]
