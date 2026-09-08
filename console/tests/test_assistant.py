@@ -241,6 +241,13 @@ class FakeAssistantSession:
         self.sent.append(text)
         return self.next_send_result
 
+    def stop(self):
+        """Ending the chat is part of starting a new one, so the stand-in has
+        to model it — without this the fake diverges from a real session
+        exactly where `new chat` does its work."""
+        self._alive = False
+        return True
+
     def snapshot(self):
         return {"id": self.id, "agent": self.agent, "model": self.model,
                 "busy": False, "alive": self.alive}
@@ -250,12 +257,26 @@ class FakeAssistantSession:
 def fake_manager(monkeypatch):
     """Stands in for the whole agent_manager module: create/get/require/
     subscribe, so a route test never spawns a real process."""
-    store = {}
+    class Store(dict):
+        """A dict of sessions, plus what `create` was called with.
+
+        A subclass rather than an extra key, because several tests count
+        `len(fake_manager)` to assert the one Assistant chat is reused — and a
+        bookkeeping entry in there would break that meaning.
+        """
+
+        created = None
+
+    store = Store()
+    store.created = []
 
     def fake_create(repo_root, backend_id, prompt, **kw):
         sid = "fake-%d" % (len(store) + 1)
         sess = FakeAssistantSession(sid, agent=backend_id, model=kw.get("model", ""))
         store[sid] = sess
+        # Kept so a test can assert what the Assistant actually asked for —
+        # its mode and model reaching the chat is the thing that broke.
+        store.created.append(dict(kw, backend=backend_id))
         return sess.snapshot()
 
     def fake_get(sid):
@@ -362,6 +383,53 @@ class TestInjectedContext:
             fh.write('[assistant]\nvision_models = ["big"]\n')
         backend = agent_backends.get(repo, "alpha")  # "alpha" has model "big"
         assert assistant_feature._vision_capable(repo, backend) is True
+
+
+class TestTheChatGetsTheSettings:
+    """The Assistant's `mode` and `model` settings have to reach the chat it
+    starts. They did not: the chat inherited the backend's defaults, so it ran
+    in `plan` — the mode assistant.toml explicitly rejects, because the
+    Assistant is asked to create tickets and plan mode refuses every write —
+    and no model was sent at all, which an OpenAI-compatible provider needs."""
+
+    def test_mode_and_model_are_passed_to_the_new_chat(self, routes, fake_manager, repo):
+        from server import assistant_config
+        assistant_config.update(repo, {"mode": "default", "model": "qwen3:8b"})
+        routes[("POST", "assistant.say")](Req(body={"text": "hello"}))
+        started = fake_manager.created[-1]
+        assert started["mode"] == "default", (
+            "the Assistant must not silently run in the backend's default mode")
+        assert started["model"] == "qwen3:8b"
+
+
+class TestNewChatStartsOne:
+    """`POST /api/assistant/new` returned the EXISTING chat: it called
+    `_ensure_session` without clearing the pointer, so the route named "new"
+    did nothing. It matters beyond the name — backend, model and mode are read
+    when a chat is CREATED, so a switched backend never took effect."""
+
+    def test_the_route_replaces_the_chat(self, routes, fake_manager, repo):
+        routes[("POST", "assistant.say")](Req(body={"text": "hello"}))
+        first = assistant.read_session(repo)["sid"]
+        routes[("POST", "assistant.new")](Req(body={}))
+        second = assistant.read_session(repo)["sid"]
+        assert second != first, "new chat must not hand back the old one"
+
+    def test_and_picks_up_a_backend_switched_in_between(self, routes, fake_manager, repo):
+        """The reason this bug mattered: switching the Assistant to Ollama (or
+        anything else) only takes effect when a chat is CREATED, so a "new
+        chat" that quietly reused the old one made the switch look broken.
+
+        `beta` rather than `ollama` because it is a backend this test
+        workspace actually configures — the point is the switch, not the name.
+        """
+        from server import assistant_config
+        routes[("POST", "assistant.say")](Req(body={"text": "hello"}))
+        assert fake_manager.created[-1]["backend"] == "alpha"
+        assistant_config.update(repo, {"backend": "beta"},
+                                installed_backends=["alpha", "beta"])
+        routes[("POST", "assistant.new")](Req(body={}))
+        assert fake_manager.created[-1]["backend"] == "beta"
 
 
 class TestSpokenModeInstruction:

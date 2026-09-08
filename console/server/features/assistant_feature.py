@@ -228,8 +228,17 @@ def apply(ctx):
 
         backend_id = _pick_backend(repo_root, backend_hint)
         backend = agent_backends.get(repo_root, backend_id)
+        # Mode and model come from the Assistant's own settings. Without
+        # them the chat inherited the BACKEND's defaults, and for claude that
+        # is `plan` — the one mode `assistant.toml` explicitly rejects, since
+        # the Assistant is asked to create tickets and write to memory and
+        # plan mode refuses every write. The model was dropped the same way,
+        # which is what made "use ollama" unable to work at all: an
+        # OpenAI-compatible endpoint needs to be told which model.
+        settings = assistant_config.settings(repo_root)
         snap = agent_manager.create(
             repo_root, backend_id, "Hello.", title="Assistant",
+            mode=settings.get("mode", ""), model=settings.get("model", ""),
             **_session_kwargs(repo_root, backend))
         assistant.write_session(repo_root, sid=snap["id"], backend=backend_id,
                                 model=snap.get("model", ""))
@@ -243,14 +252,26 @@ def apply(ctx):
     # of them may return another command, which is what keeps BR-1's "one
     # match, one action" true by construction rather than by discipline.
 
-    def _h_new_chat():
+    def _start_new_chat(backend_hint=""):
+        """End the current Assistant chat and start a fresh one.
+
+        ONE implementation, called by both the `new chat` command and the
+        `/api/assistant/new` route. They had drifted: the route called
+        `_ensure_session` without clearing the pointer first, so it returned
+        the EXISTING chat and "new chat" did nothing — which also meant a
+        changed backend or model never took effect, since those are read when
+        a chat is created.
+        """
         pointer = assistant.read_session(repo_root)
         if pointer:
             sess = agent_manager.get(pointer["sid"])
             if sess is not None and sess.alive:
                 agent_manager.stop(pointer["sid"])
         assistant.clear_session(repo_root)
-        sess = _ensure_session()
+        return _ensure_session(backend_hint=backend_hint)
+
+    def _h_new_chat():
+        sess = _start_new_chat()
         return "New chat on %s." % sess.agent
 
     def _h_interrupt():
@@ -391,7 +412,7 @@ def apply(ctx):
 
     def new(req):
         body = req.body or {}
-        sess = _ensure_session(backend_hint=(body.get("backend") or "").strip())
+        sess = _start_new_chat(backend_hint=(body.get("backend") or "").strip())
         return sess.snapshot()
 
     # -- stream ----------------------------------------------------------------
