@@ -54,19 +54,29 @@ fn ensure(app: &AppHandle, console_url: &str) -> bool {
             return false;
         }
     };
-    let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
+    // Transparency is per-platform by necessity. Tauri gates it on macOS
+    // behind `macos-private-api`, which is a private-API dependency and blocks
+    // App Store distribution — a poor trade for rounded corners. So the window
+    // is opaque there, and the page paints its own panel either way: on
+    // Windows and Linux it floats with rounded corners, on macOS it is a
+    // rectangle. Caught by CI, which builds all three.
+    #[allow(unused_mut)]
+    let mut built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
         .title("Assistant")
         .inner_size(WIDTH, HEIGHT)
         .resizable(false)
         .decorations(false)
-        .transparent(true)
         .always_on_top(true)
         // Not a window you alt-tab to or find in the taskbar: it is a
         // read-out, and it must not take focus from what you are typing in.
         .skip_taskbar(true)
         .focused(false)
-        .visible(false)
-        .build();
+        .visible(false);
+    #[cfg(not(target_os = "macos"))]
+    {
+        built = built.transparent(true);
+    }
+    let built = built.build();
     match built {
         Ok(window) => {
             place(&window);

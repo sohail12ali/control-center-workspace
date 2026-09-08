@@ -138,13 +138,23 @@ class TestArgv:
         assert b.can_resume is False
         assert "--resume" not in b.session_argv(resume_id="sess-9")
 
-    def test_the_shipped_claude_row_can_resume(self):
+    def test_the_shipped_claude_row_can_resume(self, monkeypatch):
+        """A claim about the CONFIG, not about this machine.
+
+        It used to build the argv, which resolves the executable on PATH — so
+        it passed here and failed in CI, where Claude Code is not installed.
+        The row's flags are the thing worth pinning; `_exe` is stubbed so the
+        assertion is about `agents.toml` rather than about what happens to be
+        on the runner.
+        """
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         root = os.path.dirname(root)
         registry = agent_backends.registry(root)
-        assert registry["claude"].can_resume, (
-            "claude's agents.toml row lost its resume flags")
-        argv = registry["claude"].session_argv(resume_id="sess-42", model="m")
+        claude = registry["claude"]
+        assert claude.can_resume, "claude's agents.toml row lost its resume flags"
+
+        monkeypatch.setattr(type(claude), "_exe", lambda self: "claude")
+        argv = claude.session_argv(resume_id="sess-42", model="m")
         assert "--resume" in argv and "sess-42" in argv
 
 
