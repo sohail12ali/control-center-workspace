@@ -1,13 +1,14 @@
 ---
 tags: [active]
-status: Open
+status: Done
 ticket: "T-002"
 ---
 
 # T-002: Desktop tray skeleton as the Agents control surface
 
-**Status:** Open  
+**Status:** Done  
 **Stage:** VERIFY  
+**Closed:** 2026-09-10 (by [[T-015-summary]])  
 **Owner:** Sohail Ali  
 **Created:** 2026-09-05  
 **Due:**  

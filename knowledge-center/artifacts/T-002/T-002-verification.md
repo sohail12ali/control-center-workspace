@@ -126,3 +126,42 @@ right-click the tray icon and choose "Interrupt current turn"; expect the turn
 to stop or a toast, not a silent no-op. Optionally also confirm row 4's
 backend-id case (header shows `claude` with a live chat on the Agents tab) and
 row 7's speech half (a reply stops being read aloud after Mute).
+
+
+## Closed by T-015 — 2026-09-10
+
+Closed as part of [[T-015-summary]], whose Thread 2 supersedes this ticket's scope: the
+tray menu is no longer eight hand-written rows but is GENERATED from
+`desktop/features.toml`, which this ticket wrote and which nothing had ever built from.
+The live drive below is against T-015's release build, using this ticket's own
+`ticket-scripts/tray-menu-lib.ps1`.
+
+```
+[0]  -                                              disabled  (backend header)
+[1]  (separator)
+[2]  Show window
+[3]  Listening                        -> Off / Short take / Hands-free
+[4]  Dictate - Needs a dictate mode:  disabled with its reason
+[5]  New chat
+[6]  Saved prompts - Optional clutter disabled with its reason
+[7]  Interrupt current turn
+[8]  Clipboard                        -> Copy last reply / Send clipboard...
+[9]  This turn includes screenshot
+[10] Region
+[11] Mute replies
+[12] Watch - Needs phase 6            disabled with its reason
+[13] (separator)
+[14] Quit
+ROWCOUNT=15
+```
+
+Fifteen rows against the ten this file last recorded, and the five submenu children make
+eighteen menu items in total. Re-confirmed by the same drive: **Show window**, **Mute
+replies**, **Quit** (process gone, sidecar port 8790 closed), and **Clipboard > Copy last
+reply**, which the console audited as
+`assistant.say tray {'command': 'copy_last'} handled`.
+
+**Row 8 is still not verified, and is NOT being marked passed.** Interrupting a live turn
+from the tray needs a turn in flight, which this drive did not have. It is carried into
+T-015's todo tracker rather than closed on an assumption — the whole point of this file is
+that it says what was actually checked.

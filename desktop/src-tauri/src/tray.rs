@@ -208,6 +208,34 @@ fn warn_about_drift() {
             );
         }
     }
+    // What the menu actually came out as, in one line.
+    //
+    // The tray is the hardest surface in this app to inspect after the fact:
+    // it is invisible to UI Automation, so reading it needs a Win32 popup
+    // drive (T-002's `ticket-scripts/tray-menu-lib.ps1`). A log line costs
+    // nothing and answers "what was on your menu" without any of that.
+    //
+    // `risk` is deliberately in it. It is not an invariant this can check —
+    // `listen_hands_free` is `gated` and one-click ON PURPOSE, because
+    // toggling a microphone from the icon is the feature — so the honest use
+    // of the field is to say what each row is, and let a reader judge.
+    let summary: Vec<String> = crate::features::all()
+        .iter()
+        .filter(|f| f.in_menu())
+        .map(|f| {
+            format!(
+                "{}{}{}",
+                f.id,
+                if f.available { "" } else { "(unavailable)" },
+                match f.risk.as_str() {
+                    "none" | "" => String::new(),
+                    risk if f.never_one_click => format!("[{risk},opens-window]"),
+                    risk => format!("[{risk}]"),
+                }
+            )
+        })
+        .collect();
+    log::info!("tray: {} rows — {}", summary.len(), summary.join(" "));
 }
 
 /// Build one row. `None` for a row the registry says to leave out entirely.
@@ -359,6 +387,21 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
+            // `never_one_click` is READ, not re-stated. Listing the three ids
+            // in the match below would have left the registry field decorative
+            // — declared, tested, and not actually deciding anything, which is
+            // the same two-sources-of-truth problem the generated menu exists
+            // to remove. The compiler noticed before anyone did, by reporting
+            // the field as dead code.
+            //
+            // A click cannot tell you what is about to be sent, and the
+            // clipboard can hold a password. So the row takes you to where the
+            // decision is made, with the destination and the gate visible.
+            if crate::features::get(id).is_some_and(|f| f.never_one_click) {
+                show_main(app);
+                eval_tray(app, id);
+                return;
+            }
             match id {
                 "show_window" => show_main(app),
                 "listen_short_take" => crate::click::act(app),
@@ -378,17 +421,8 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 // sees it, so the tray gets no privileged path of its own —
                 // this row and typing "copy that" do the identical thing.
                 "clipboard_copy_last" => say_from_tray(app, "copy that"),
-                // `never_one_click` in the registry, all three of them, and
-                // this is what that field means. A tray click cannot know
-                // which window you meant, and it must never be the thing that
-                // approves sending your screen or your clipboard anywhere —
-                // the clipboard could hold a password and the screen could
-                // hold anything. So the row takes you to where the decision
-                // is made, with the destination and the gate visible.
-                "clipboard_send" | "capture_this_turn" | "capture_region" => {
-                    show_main(app);
-                    eval_tray(app, id);
-                }
+                // clipboard_send, capture_this_turn and capture_region are
+                // handled above, by their registry `never_one_click` flag.
                 "new_chat" => {
                     show_main(app);
                     eval_tray(app, "new_chat");

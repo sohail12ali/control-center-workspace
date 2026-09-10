@@ -143,6 +143,11 @@ pub fn all() -> &'static [Feature] {
     ROWS.get_or_init(|| parse(REGISTRY))
 }
 
+/// One row by id, or `None`.
+pub fn get(id: &str) -> Option<&'static Feature> {
+    all().iter().find(|f| f.id == id)
+}
+
 /// The rows belonging to `parent`, in file order.
 pub fn children_of(parent: &str) -> Vec<&'static Feature> {
     all()

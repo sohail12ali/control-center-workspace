@@ -39,24 +39,24 @@ It can always be dismissed, it can never stick, and it can answer a permission c
 
 ## Tasks
 
-### [ ] T-015-01 — Start a chat without burning a turn (1 h)
-- [ ] `agent_manager.create(..., open=True)` — an `open=False` path starts the session and
+### [x] T-015-01 — Start a chat without burning a turn (1 h)
+- [x] `agent_manager.create(..., open=True)` — an `open=False` path starts the session and
       publishes `session.init` without calling `sess.send`
-- [ ] Defer the CLI-transport `system_append` wire-prefix (`create():110`) to the first real
+- [x] Defer the CLI-transport `system_append` wire-prefix (`create():110`) to the first real
       send, so a no-open session does not lose its persona
-- [ ] `assistant_feature._ensure_session` stops passing `"Hello."`
+- [x] `assistant_feature._ensure_session` stops passing `"Hello."`
 - **Done-criteria:** the first message of a new Assistant chat is the user's own, and its
   latency matches the second message's. A test asserts no `turn.start` is published between
   `create(open=False)` and the first `send`.
 - **Basis:** `agent_manager.py:63,75,108-115`; `assistant_feature.py:239`
 - **Depends on:** —
 
-### [ ] T-015-02 — Stop the settings endpoint probing the network (1 h)
-- [ ] `settings_get` returns settings without evaluating `Backend.installed` for every row
+### [x] T-015-02 — Stop the settings endpoint probing the network (1 h)
+- [x] `settings_get` returns settings without evaluating `Backend.installed` for every row
       (read the probe cache only; never initiate a probe)
-- [ ] Same for `assistant_config.resolve_backend`, which today probes every row before even
+- [x] Same for `assistant_config.resolve_backend`, which today probes every row before even
       checking the one that was requested
-- [ ] Availability stays available — on `GET /api/agents/backends`, which the Settings tab
+- [x] Availability stays available — on `GET /api/agents/backends`, which the Settings tab
       already polls and which is expected to be slow
 - **Done-criteria:** `GET /api/assistant/settings` makes zero outbound sockets. A test with a
   provider pointed at a black-hole address asserts the endpoint returns without probing it.
@@ -64,13 +64,13 @@ It can always be dismissed, it can never stick, and it can answer a permission c
   `PROBE_TIMEOUT = 1.5`; `assistant_config.py:181`
 - **Depends on:** —
 
-### [ ] T-015-03 — A backend chain with preflight, not a silent fall to `claude` (3 h)
-- [ ] Replace `LOCAL_FIRST` with a settings-driven ordered chain, defaulting to
+### [x] T-015-03 — A backend chain with preflight, not a silent fall to `claude` (3 h)
+- [x] Replace `LOCAL_FIRST` with a settings-driven ordered chain, defaulting to
       `("ollama", "lm-studio", "openrouter", "claude")` — moving `openrouter` ahead of
       `claude` is the actual default fix
-- [ ] Add a `usable_for_talk` preflight per candidate over `model_catalog.loaded` and
+- [x] Add a `usable_for_talk` preflight per candidate over `model_catalog.loaded` and
       `.capabilities`: reachable is not enough, it must have a loaded tool-capable model
-- [ ] A skipped candidate records a stated reason; the chosen backend and every skip reason
+- [x] A skipped candidate records a stated reason; the chosen backend and every skip reason
       are surfaced on `GET /api/assistant/settings`
 - **Done-criteria:** with Ollama stopped and LM Studio pointed at a dead host, the Assistant
   lands on OpenRouter **and says why**, rather than silently choosing `claude`. Tests cover
@@ -78,51 +78,51 @@ It can always be dismissed, it can never stick, and it can answer a permission c
 - **Basis:** `assistant_config.py:42,173`; `model_catalog.py:299,343`
 - **Depends on:** T-015-02
 
-### [ ] T-015-04 — Measure the fast path (1 h)
-- [ ] Real wall-clock `duration_ms` in `ApiSession._run_turn` (currently hardcoded `0`)
-- [ ] Time-to-first-token, since that is what decides whether it *feels* fast
+### [x] T-015-04 — Measure the fast path (1 h)
+- [x] Real wall-clock `duration_ms` in `ApiSession._run_turn` (currently hardcoded `0`)
+- [x] Time-to-first-token, since that is what decides whether it *feels* fast
 - **Done-criteria:** an API-backed turn appears in `knowledge-center/telemetry/2026-09.jsonl`
   with a non-zero duration and a TTFT. Without this, Verify step 2 has nothing to read.
 - **Basis:** `agent_api_session.py:276`
 - **Depends on:** —
 
-### [ ] T-015-05 — Generate the tray from `features.toml` (4 h)
-- [ ] `toml` dependency, `include_str!("../../features.toml")`, parsed once in `tray::attach`
-- [ ] Honour the fields that exist and are ignored today: `tray`
+### [x] T-015-05 — Generate the tray from `features.toml` (4 h)
+- [x] `toml` dependency, `include_str!("../../features.toml")`, parsed once in `tray::attach`
+- [x] Honour the fields that exist and are ignored today: `tray`
       (`show`/`hide`/`submenu`/`header`), `parent`, `available`, `reason_unavailable`, `risk`,
       and the `hide_unavailable_pref` projection key
-- [ ] `available = false` renders **disabled with its `reason_unavailable`** (or hidden under
+- [x] `available = false` renders **disabled with its `reason_unavailable`** (or hidden under
       `desktop.tray.hide_unavailable`) — never silently absent
-- [ ] `never_one_click = true` opens the window; it never performs the action
-- [ ] An id with no dispatch arm logs a warning at startup — the drift detector
+- [x] `never_one_click = true` opens the window; it never performs the action
+- [x] An id with no dispatch arm logs a warning at startup — the drift detector
 - **Done-criteria:** the menu shows every `available = true`, `tray != "hide"` row — 16, not 8.
 - **Basis:** `desktop/features.toml` (25 rows, 16 available); `tray.rs:113-165` (8 items)
 - **Depends on:** —
 
-### [ ] T-015-06 — Wire the built-but-unreachable rows (3 h)
-- [ ] `clipboard_menu`, `clipboard_copy_last`, `clipboard_send`, `capture_this_turn`,
+### [x] T-015-06 — Wire the built-but-unreachable rows (3 h)
+- [x] `clipboard_menu`, `clipboard_copy_last`, `clipboard_send`, `capture_this_turn`,
       `capture_region`, `listen_mode`, `listen_off`
-- [ ] The `risk = "gated"` ones (`clipboard_send`, both captures) route through the existing
+- [x] The `risk = "gated"` ones (`clipboard_send`, both captures) route through the existing
       approval card, not straight through
 - **Done-criteria:** every wired row performs its action, and each gated one raises a card.
 - **Basis:** `clipboard.rs`, `capture.rs`, `ocr.rs`, `listen.rs`; `agent_approvals.LOCAL_ONLY`
 - **Depends on:** T-015-05
 
-### [ ] T-015-07 — Never block the UI thread on a click (1 h)
-- [ ] Keep `tray_click_action` in `ShellState`, refreshed on a worker thread and invalidated by
+### [x] T-015-07 — Never block the UI thread on a click (1 h)
+- [x] Keep `tray_click_action` in `ShellState`, refreshed on a worker thread and invalidated by
       `console_settings::forget()`, so the click handler does zero I/O
-- [ ] Retire `string_or`, which bypasses the cache and has no other honest caller
+- [x] Retire `string_or`, which bypasses the cache and has no other honest caller
 - **Done-criteria:** with the console stopped entirely, a tray click responds instantly on its
   cached/default value. This is the frozen-menu regression.
 - **Basis:** `click.rs:122-137`; `console_settings.rs:186-200` (`string_or` calls `fetch`)
 - **Depends on:** T-015-02
 
-### [ ] T-015-08 — Make the overlay impossible to stick (3 h)
-- [ ] A visible ✕ and `Esc`, both invoking a new `hud::dismiss` command — the page gets no
+### [x] T-015-08 — Make the overlay impossible to stick (3 h)
+- [x] A visible ✕ and `Esc`, both invoking a new `hud::dismiss` command — the page gets no
       token and makes no console call, preserving the property `hud.rs`'s docstring argues for
-- [ ] `data-tauri-drag-region` on `#panel`, delivering the drag handle the page already claims
-- [ ] A watchdog ceiling in `hud.rs`: visible longer than N seconds with no state change → hide
-- [ ] `Event::ApprovalResolved` must `hide_soon`; `tray_link`'s reconnect path must clear a
+- [x] `data-tauri-drag-region` on `#panel`, delivering the drag handle the page already claims
+- [x] A watchdog ceiling in `hud.rs`: visible longer than N seconds with no state change → hide
+- [x] `Event::ApprovalResolved` must `hide_soon`; `tray_link`'s reconnect path must clear a
       stale **approval**, not only a stale `Thinking`
 - **Done-criteria:** kill the console mid-card and the panel clears rather than stranding. ✕,
   Esc and drag all work. No event sequence leaves it visible indefinitely.
@@ -130,20 +130,20 @@ It can always be dismissed, it can never stick, and it can answer a permission c
   `tray_paint.rs:138`; `tray_link.rs:76-82`
 - **Depends on:** —
 
-### [ ] T-015-09 — Make the overlay worth having on screen (3 h)
-- [ ] Map the existing `reply` event to `hud::text` — `assistant_reply` already publishes the
+### [x] T-015-09 — Make the overlay worth having on screen (3 h)
+- [x] Map the existing `reply` event to `hud::text` — `assistant_reply` already publishes the
       trimmed spoken form and `tray_link::events_for` already drops it on the floor
-- [ ] Allow / Deny buttons on a permission card, invoking Tauri commands so the *shell* calls
+- [x] Allow / Deny buttons on a permission card, invoking Tauri commands so the *shell* calls
       the console over loopback — the direction `console_settings::post` already goes.
       `agent_approvals.LOCAL_ONLY` stays desk-only
-- [ ] One Stop/Send button whose meaning follows state, reusing `click::action`'s table
+- [x] One Stop/Send button whose meaning follows state, reusing `click::action`'s table
 - **Done-criteria:** the panel shows what was said, and a card can be answered without opening
   the main window.
 - **Basis:** `assistant_reply.py:226`; `tray_link.rs:166-179`; `click.rs:50-86`
 - **Depends on:** T-015-08
 
-### [ ] T-015-10 — Close T-002 (1 h)
-- [ ] `reconcile` + `close-work` on [[T-002-summary]], whose tray-skeleton scope Thread 2
+### [x] T-015-10 — Close T-002 (1 h)
+- [x] `reconcile` + `close-work` on [[T-002-summary]], whose tray-skeleton scope Thread 2
       supersedes
 - **Done-criteria:** T-002 lane is `done` and the artifact-map row moves to Completed.
 - **Depends on:** T-015-06
@@ -196,6 +196,34 @@ Acceptance criteria are pinned in the approved plan's Verification section and r
 ## Dependencies
 - Blocks: [[T-002-summary]] (closed by T-015-10)
 - Blocked by: — (T-015-03 needs `OPENROUTER_API_KEY` from the user to be *verified*, not to be *built*)
+
+## Deltas from the approved plan
+
+Recorded rather than silently rewritten. Three things the plan asserted turned out to be
+wrong once the code was in front of me; each done-criterion above still reads as approved
+so the change is visible.
+
+1. **"16, not 8" menu rows (T-015-05) is wrong — it is 15.** 16 features are marked
+   `available`, but `pause_listen_on_permission` is `tray = "hide"`: a behaviour, not
+   something you click. The live drive found 15 rows, and `features.rs` pins that number.
+
+2. **The gated rows do not "route through the approval card" (T-015-06).** They carry
+   `never_one_click` in the registry, which means the tray must not act on them at all —
+   so they open the window, where the destination and the gate are visible. That is
+   stricter than the plan asked for and it is what the registry already said. It also made
+   this task much smaller than its 3h estimate: no new gated actuation was written.
+
+3. **`tray_click_action` did not need to live in `ShellState` (T-015-07).** The plan
+   offered that as the better of two options. It was unnecessary once the settings endpoint
+   stopped probing: the existing 30s cache is warmed by the startup thread that reads the
+   mute state, so the click costs a lock. Deleting `string_or` — the only reader that
+   bypassed the cache, and the tray's only caller — was the whole fix.
+
+One thing the plan did not anticipate: `never_one_click` and `risk` were at first
+re-stated in code rather than read from the registry, leaving both fields decorative. The
+release build's `dead_code` warning caught it. `never_one_click` now decides the routing;
+`risk` appears in the startup summary line, deliberately not as an invariant — see the
+decision log.
 
 ## Links
 - [[T-015-summary]] · [[T-015-analysis]] · [[T-015-requirements]] · [[T-015-decision-log]] · [[T-015-plan]] · [[T-015-progress]] · [[T-015-verification]]

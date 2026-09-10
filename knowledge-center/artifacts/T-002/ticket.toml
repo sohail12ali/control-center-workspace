@@ -2,12 +2,12 @@
 id = "T-002"
 title = "Desktop tray skeleton as the Agents control surface"
 kind = "tickets"
-stage = "verify"
+stage = "done"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"
 created = "2026-09-05"
-updated = "2026-09-05"
+updated = "2026-09-10"
 tags = []
 links = []
 scripts_dir = ""

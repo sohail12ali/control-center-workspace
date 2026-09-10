@@ -4,12 +4,13 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
-- [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Verify — Sohail Ali — 2026-09-05
+- [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
 
 ## Blocked
 
 ## Completed
 
+- [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Complete — Sohail Ali — 2026-09-10
 - [[T-014-summary]] — Model roles: a local model to talk, a capable one to work — Complete — Sohail Ali — 2026-09-08
 - [[T-013-summary]] — Voice quality: neural TTS, speech-shaped text, and a less robotic house style — Complete — Sohail Ali — 2026-09-07
 - [[T-012-summary]] — Provider switching: Ollama, LM Studio, custom OpenAI-compatible URLs — Complete — Sohail Ali — 2026-09-07

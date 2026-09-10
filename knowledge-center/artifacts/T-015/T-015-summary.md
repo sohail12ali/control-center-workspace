@@ -1,13 +1,13 @@
 ---
 tags: [active]
-status: Open
+status: Verify
 ticket: "T-015"
 ---
 
 # T-015: Make the Assistant fast, the tray honest, and the popup dismissible
 
-**Status:** Open  
-**Stage:** CANONICAL  
+**Status:** Verify  
+**Stage:** VERIFY  
 **Owner:** Sohail Ali  
 **Created:** 2026-09-10  
 **Due:**  
