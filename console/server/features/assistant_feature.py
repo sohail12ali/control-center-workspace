@@ -25,7 +25,7 @@ import calendar
 import os
 import time
 
-from .. import (agent_backends, agent_manager, assistant,
+from .. import (agent_approvals, agent_backends, agent_manager, assistant,
                 assistant_commands, assistant_config, assistant_reply, audit,
                 native_bridge, prompt_build, verbs)
 from .. import context as context_mod
@@ -445,6 +445,40 @@ def apply(ctx):
                                       types=STREAM_EVENT_TYPES)
         return EventSource(gen, closer=getattr(gen, "close", None))
 
+    # -- approvals -------------------------------------------------------------
+    def approve(req):
+        """Answer a permission card on the Assistant's own chat.
+
+        `/api/agents/chats/{sid}/approve` already does this, and needs the
+        chat id. The voice overlay does not have one and should not have to:
+        there is exactly ONE Assistant chat, this module is what knows which,
+        and asking the caller to look it up first would be two round trips to
+        answer a yes/no question — from a panel whose whole purpose is
+        answering it without breaking what you were doing.
+
+        Desk-only tools (`agent_approvals.LOCAL_ONLY` — a screenshot, a
+        clipboard read) are answerable here on purpose. The restriction on
+        those is that they must be answered by someone AT the machine, and the
+        overlay is a window on that machine's screen; it is Telegram that must
+        not offer them a button.
+        """
+        body = req.body or {}
+        key = (body.get("key") or "").strip()
+        decision = (body.get("decision") or "").strip()
+        if not key:
+            raise ValueError("an approval key is required")
+        pending = agent_approvals.REGISTRY.decide(key, decision)
+        audit.record(repo_root, "approval.decide", actor=audit.actor_of(req),
+                     target=pending.tool,
+                     detail={"chat": pending.chat, "decision": pending.decision,
+                             "via": "assistant"})
+        sess = agent_manager.get(pending.chat)
+        if sess is not None:
+            sess.stream.publish({"type": "approval.decided", "key": key,
+                                 "tool": pending.tool,
+                                 "decision": pending.decision, "by": pending.by})
+        return {"ok": True, "key": key, "decision": pending.decision}
+
     # -- memory ----------------------------------------------------------------
     def memory_get(req):
         return {"memory": assistant.read_memory(repo_root)}
@@ -493,6 +527,7 @@ def apply(ctx):
     ctx.post(r"^/api/assistant/new/?$", new, "assistant.new")
     ctx.post(r"^/api/assistant/say/?$", say, "assistant.say")
     ctx.get(r"^/api/assistant/stream/?$", stream, "assistant.stream")
+    ctx.post(r"^/api/assistant/approve/?$", approve, "assistant.approve")
     ctx.get(r"^/api/assistant/memory/?$", memory_get, "assistant.memory_get")
     ctx.post(r"^/api/assistant/memory/?$", memory_post, "assistant.memory_post")
     ctx.get(r"^/api/assistant/settings/?$", settings_get, "assistant.settings_get")

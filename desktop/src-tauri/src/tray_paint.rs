@@ -132,11 +132,51 @@ fn announce(event: &Event, before: State, after: State) {
             }
         }
         Event::ApprovalNeeded => {
-            crate::hud::show(app, &url, after, "open the window");
-            crate::hud::text(app, "waiting for you to allow or deny");
+            // Its own panel state, with Allow and Deny on it. It used to say
+            // "open the window", which is a longer way of not answering the
+            // question — and a card nobody answers is denied on a timeout.
+            crate::hud::approval(app, &url, &pending_tool());
         }
-        Event::ApprovalResolved | Event::Mute(_) => {}
+        // This used to do NOTHING, which is how the panel got stuck. An
+        // approval that resolved published no state change at all, so an
+        // always-on-top window with no close button sat over the screen until
+        // the shell was killed. Reported as "the pop up does not go away".
+        Event::ApprovalResolved => {
+            crate::hud::state(app, after);
+            if after == State::Idle {
+                crate::hud::hide_soon(app, LINGER);
+            }
+        }
+        Event::Mute(_) => {}
     }
+}
+
+/// (tool, key) for the card currently up. Empty strings mean none.
+///
+/// Set by `tray_link` when it reads `approval.request` off the console's
+/// stream, and cleared when it reads the decision. Kept here rather than
+/// threaded through `Event`, because the state machine is about what the ICON
+/// shows, and neither a tool name nor a key is something five pixels can say
+/// — only the panel has room for them.
+///
+/// The KEY is what answering needs: the console identifies a pending approval
+/// by it, and without it the overlay's Allow and Deny could only ever be a
+/// picture of two buttons.
+static PENDING: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
+
+pub fn note_pending(tool: &str, key: &str) {
+    if let Ok(mut held) = PENDING.lock() {
+        *held = (tool.to_string(), key.to_string());
+    }
+}
+
+fn pending_tool() -> String {
+    PENDING.lock().map(|h| h.0.clone()).unwrap_or_default()
+}
+
+/// The key to answer with, or "" when no card is up.
+pub fn pending_key() -> String {
+    PENDING.lock().map(|h| h.1.clone()).unwrap_or_default()
 }
 
 /// How long the overlay stays after there is nothing left to report — long

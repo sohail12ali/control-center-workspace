@@ -81,6 +81,42 @@ pub fn say_detached(console_url: &str, text: &'static str, source: &'static str)
     }
 }
 
+/// Answer a permission card on the Assistant's chat.
+///
+/// `decision` is "allow" or "deny". The chat id is deliberately not a
+/// parameter: there is exactly one Assistant chat and the console is what
+/// knows which — see `POST /api/assistant/approve`. Looking it up here first
+/// would be two round trips to answer a yes/no question.
+pub fn approve(console_url: &str, key: &str, decision: &str) -> ApiResult<()> {
+    let (host, port) = split_host_port(console_url)
+        .ok_or_else(|| format!("cannot parse the console url {console_url}"))?;
+    let body = format!(
+        "{{\"key\":{},\"decision\":{}}}",
+        json_string(key),
+        json_string(decision)
+    );
+    let mut stream = std::net::TcpStream::connect((host.as_str(), port))
+        .map_err(|e| format!("cannot reach the console: {e}"))?;
+    let head = format!(
+        "POST /api/assistant/approve HTTP/1.1\r\nHost: {host}:{port}\r\n\
+         Content-Type: application/json\r\nX-Console-Request: 1\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|()| stream.write_all(body.as_bytes()))
+        .map_err(|e| format!("cannot send the decision: {e}"))?;
+    let mut status = String::new();
+    BufReader::new(stream)
+        .read_line(&mut status)
+        .map_err(|e| format!("no answer from the console: {e}"))?;
+    if !accepted(&status) {
+        return Err(format!("the console said {}", status.trim()));
+    }
+    Ok(())
+}
+
 /// Did the console accept it?
 ///
 /// Any 2xx, not 200 alone. The first message of a brand-new chat is answered

@@ -244,6 +244,80 @@ fn open_window(app: &tauri::App, handle: &Handle) -> Result<(), Box<dyn std::err
 /// it. A chord already owned by another application fails here, and that is
 /// reported rather than silently doing nothing — a hotkey that does nothing
 /// is indistinguishable from a broken microphone.
+/// What the voice overlay's buttons do.
+///
+/// ## Why an event and not a command
+///
+/// The overlay is `console/static/hud.html`, served by the console over
+/// loopback. It has always been deliberately dumb — no API calls, no token,
+/// no polling — because it is always-on-top over whatever you are working in,
+/// and a credential in it would be a poor trade for a level meter. Giving it
+/// buttons must not change that.
+///
+/// So the page EMITS and the shell acts. The `hud` window already holds
+/// `core:event:default` in `capabilities/loopback-chrome.json`, so this needs
+/// no new permission, no `invoke_handler`, and no widening of what the webview
+/// can reach. The page still cannot talk to the console; it can only say what
+/// was pressed.
+///
+/// ## Why allow and deny are answerable here
+///
+/// `agent_approvals::LOCAL_ONLY` requires a screenshot or a clipboard read to
+/// be approved by someone AT the machine. This panel is a window on that
+/// machine's screen — it is the remote paths (Telegram) that must not offer
+/// those a button. Meanwhile "open the window to answer" was, in practice, a
+/// longer way of not answering: an unanswered card is denied on the console's
+/// own timeout.
+fn hud_actions(app: tauri::AppHandle, console_url: String) {
+    use tauri::Listener;
+    let handle = app.clone();
+    app.listen("hud-action", move |event| {
+        let action = serde_json::from_str::<serde_json::Value>(event.payload())
+            .ok()
+            .and_then(|v| v.get("action").and_then(|a| a.as_str()).map(String::from))
+            .unwrap_or_default();
+        log::info!("hud: {action}");
+        match action.as_str() {
+            "dismiss" => hud::dismiss(&handle),
+            // End the take now rather than waiting for the silence detector,
+            // which on a noisy microphone can mean waiting for the whole cap.
+            // The same meaning `click::Action::SendNow` already has.
+            "send" => listen::release(),
+            "stop" => {
+                tts::stop();
+            }
+            "allow" | "deny" => {
+                let key = tray_paint::pending_key();
+                if key.is_empty() {
+                    // Answered elsewhere, or already timed out. Saying so
+                    // beats posting a decision about nothing.
+                    tray_paint::said("that card is no longer waiting");
+                    hud::dismiss(&handle);
+                    return;
+                }
+                let url = console_url.clone();
+                let decision = action.clone();
+                let _ = std::thread::Builder::new()
+                    .name("hud-approve".into())
+                    .spawn(move || {
+                        match console_api::approve(&url, &key, &decision) {
+                            // The panel is not hidden here: the console
+                            // publishes `approval.decided`, and letting the
+                            // ordinary event path close it keeps one owner of
+                            // the panel's lifecycle instead of two.
+                            Ok(()) => log::info!("hud: {decision} sent"),
+                            Err(e) => {
+                                log::warn!("hud: could not {decision}: {e}");
+                                tray_paint::said("could not answer — open the window");
+                            }
+                        }
+                    });
+            }
+            _ => {}
+        }
+    });
+}
+
 fn register_hotkey(app: &tauri::AppHandle) {
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
@@ -387,6 +461,8 @@ fn main() {
             // something to paint. It owns its own reconnects: the stream 404s
             // until an assistant chat exists, which is ordinary, not an error.
             tray_link::spawn(app.handle().clone(), assistant.clone(), handle.url.clone());
+
+            hud_actions(app.handle().clone(), handle.url.clone());
 
             Ok(())
         })

@@ -504,6 +504,45 @@ class TestTheChatGetsTheSettings:
         assert started["model"] == "qwen3:8b"
 
 
+class TestAnsweringACardOnTheAssistantsOwnChat:
+    """`POST /api/assistant/approve` — the route the voice overlay's Allow and
+    Deny buttons reach.
+
+    `/api/agents/chats/{sid}/approve` already existed and needs the chat id.
+    The overlay does not have one and should not have to look one up first:
+    there is exactly one Assistant chat, this module knows which, and two
+    round trips to answer a yes/no question defeats the point of a panel whose
+    purpose is answering without breaking what you were doing.
+    """
+
+    def test_a_pending_card_is_answered_by_key(self, routes, repo, monkeypatch):
+        from server import agent_approvals
+
+        class FakePending:
+            key, chat, tool, decision, by = "k1", "sid1", "Bash", "allow", "desk"
+
+        seen = {}
+
+        def fake_decide(key, decision):
+            seen["args"] = (key, decision)
+            return FakePending()
+
+        # Through monkeypatch, so the real registry is restored afterwards —
+        # it is a module-level singleton and a leaked stub would silently
+        # answer every other test's approvals.
+        monkeypatch.setattr(agent_approvals.REGISTRY, "decide", fake_decide)
+        answer = routes[("POST", "assistant.approve")](
+            Req({"key": "k1", "decision": "allow"}))
+        assert seen["args"] == ("k1", "allow")
+        assert answer == {"ok": True, "key": "k1", "decision": "allow"}
+
+    def test_a_missing_key_is_refused_rather_than_guessed(self, routes, repo):
+        """There is no "the obvious card" to fall back to. Answering the wrong
+        approval is worse than refusing to answer."""
+        with pytest.raises(ValueError, match="approval key is required"):
+            routes[("POST", "assistant.approve")](Req({"decision": "allow"}))
+
+
 class TestSettingsReadTouchesNoNetwork:
     """The tray-freeze regression, pinned.
 

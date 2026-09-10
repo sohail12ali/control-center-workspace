@@ -73,12 +73,23 @@ fn run(app: AppHandle, assistant: Arc<Mutex<Assistant>>, console_url: String) {
         // microphone spent 2.9 seconds waiting for this mutex, and so did
         // moving on to transcribe, which is most of a five-second delay
         // nobody could see a cause for.
-        let was_thinking = assistant
+        let (was_thinking, was_waiting) = assistant
             .lock()
-            .map(|a| a.state() == crate::icons::State::Thinking)
-            .unwrap_or(false);
+            .map(|a| (a.state() == crate::icons::State::Thinking, a.needs_approval()))
+            .unwrap_or((false, false));
         if was_thinking {
             apply(&app, &assistant, Event::TurnEnd);
+        }
+        // And a card, which used to be left standing. The console answers an
+        // unanswered approval with a deny on its own timeout, so a stream we
+        // can no longer read means the question is no longer ours to show —
+        // while the panel showing it is always-on-top and, before this
+        // ticket, had no way to be closed. This is the exact sequence that
+        // stranded it: a card up, the console restarted under it, nothing
+        // left to ever say the card had gone.
+        if was_waiting {
+            log::info!("tray-link: stream lost with a card open; clearing it");
+            apply(&app, &assistant, Event::ApprovalResolved);
         }
         std::thread::sleep(RETRY);
     }
@@ -133,8 +144,19 @@ fn follow(
         if payload.is_empty() {
             continue;
         }
+        // Read BEFORE the events are applied, because painting the card is
+        // what needs the tool name: `ApprovalNeeded` reaches the panel
+        // through `tray_paint`, which reads what this stores.
+        note_approval(payload);
         for event in events_for(payload) {
             apply(app, assistant, event);
+        }
+        // The trimmed, spoken form of a reply — the one thing on this stream
+        // that exists nowhere else (`assistant_reply` composes it). It was
+        // parsed into no event and dropped, so the panel could say the
+        // assistant was speaking but never what it said.
+        if let Some(line) = reply_text(payload) {
+            crate::tray_paint::said(&line);
         }
         if let Some(backend) = backend_of(payload) {
             let changed = assistant
@@ -175,6 +197,30 @@ fn events_for(payload: &str) -> Vec<Event> {
         "speaking.start" => vec![Event::SpeakStart],
         "speaking.stop" => vec![Event::SpeakStop],
         _ => vec![],
+    }
+}
+
+/// The spoken form of a reply, if this payload is one.
+fn reply_text(payload: &str) -> Option<String> {
+    if field(payload, "type").as_deref() != Some("reply") {
+        return None;
+    }
+    field(payload, "text").filter(|t| !t.trim().is_empty())
+}
+
+/// Remember which tool a card is asking about, and forget it when answered.
+///
+/// The panel names the tool, which is the difference between "allow or deny"
+/// and "Bash wants to run" — and the second is the only one of those a person
+/// can actually answer.
+fn note_approval(payload: &str) {
+    match field(payload, "type").unwrap_or_default().as_str() {
+        "approval.request" => crate::tray_paint::note_pending(
+            &field(payload, "tool").unwrap_or_default(),
+            &field(payload, "key").unwrap_or_default(),
+        ),
+        "approval.decided" => crate::tray_paint::note_pending("", ""),
+        _ => {}
     }
 }
 
@@ -274,6 +320,52 @@ mod tests {
         assert_eq!(a.state(), crate::icons::State::Thinking);
         a.apply(Event::TurnEnd);
         assert_eq!(a.state(), crate::icons::State::Idle);
+    }
+
+    #[test]
+    fn a_reply_is_read_off_the_stream_and_nothing_else_is() {
+        // `reply` carries the trimmed spoken form, which exists nowhere else
+        // — `assistant_reply` composes it. It was parsed into no event and
+        // dropped, so the panel could say the assistant was speaking and
+        // never what it said.
+        assert_eq!(
+            reply_text(r#"{"type":"reply","text":"T two is in verify"}"#).as_deref(),
+            Some("T two is in verify")
+        );
+        // Not any other event's text.
+        assert_eq!(reply_text(r#"{"type":"text.done","text":"a heading"}"#), None);
+        assert_eq!(reply_text(r#"{"type":"notice","text":"hi"}"#), None);
+        // An empty reply is nothing to show, rather than a line to blank.
+        assert_eq!(reply_text(r#"{"type":"reply","text":"   "}"#), None);
+    }
+
+    #[test]
+    fn a_stale_card_is_cleared_when_the_stream_is_lost() {
+        // The sequence that stranded the overlay: a card up, the console
+        // restarted under it, and nothing left that could ever say the card
+        // had gone — over an always-on-top window that had no close button.
+        //
+        // The console denies an unanswered approval on its own timeout, so a
+        // stream we can no longer read means the question is no longer ours
+        // to display.
+        let mut a = Assistant::default();
+        a.apply(Event::TurnStart);
+        a.apply(Event::ApprovalNeeded);
+        assert!(a.needs_approval(), "precondition: a card is up");
+        // What the reconnect loop is now allowed to do about it.
+        a.apply(Event::ApprovalResolved);
+        assert!(!a.needs_approval(), "a lost stream must not leave a card up");
+    }
+
+    #[test]
+    fn a_card_is_remembered_by_tool_and_key_then_forgotten() {
+        // The key is the half that matters: without it, Allow and Deny on the
+        // panel could only ever be a picture of two buttons.
+        note_approval(r#"{"type":"approval.request","key":"abc123","tool":"Bash"}"#);
+        assert_eq!(crate::tray_paint::pending_key(), "abc123");
+        note_approval(r#"{"type":"approval.decided","key":"abc123"}"#);
+        assert_eq!(crate::tray_paint::pending_key(), "",
+                   "an answered card must not leave a key to re-answer with");
     }
 
     #[test]

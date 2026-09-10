@@ -10,8 +10,14 @@
      stale if the shell stops talking to it.
 
      It is a separate file rather than a route in the app because it is a
-     different surface with a different lifetime: 360x120, no chrome, no
-     router, and it must paint in the time between a click and a word. -->
+     different surface with a different lifetime: small, no chrome, no
+     router, and it must paint in the time between a click and a word.
+
+     It has controls now, and they are still not console calls. Every button
+     EMITS a Tauri event and the native shell does the work — so the page
+     keeps the property that made it safe to leave always-on-top over
+     whatever you are working in: no token, no fetch, nothing here that can
+     reach the console at all. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -78,20 +84,56 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   #text.empty { color: var(--ink-dim); font-style: italic; }
+
+  /* The close button. The panel is always-on-top and has no title bar, so
+     without this there is no way to get rid of it at all — reported as "the
+     pop up does not go away", and it was exactly that. */
+  #x {
+    all: unset; cursor: pointer; flex: none;
+    width: 18px; height: 18px; margin: -2px -4px -2px 0;
+    display: grid; place-items: center;
+    border-radius: 4px; color: var(--ink-dim);
+    font-size: 13px; line-height: 1;
+  }
+  #x:hover { background: var(--line); color: var(--ink); }
+
+  /* Buttons only appear when there is something to press. An empty row would
+     make the panel taller for no reason on every ordinary take. */
+  /* In the TOP row, beside the state label. Two reasons, both found by
+     looking at it: a fourth row overflows the 104px window, and giving the
+     buttons the meter's row hid the level meter during listening — which is
+     the one thing this panel exists to show. */
+  #acts { display: none; gap: 5px; margin-left: auto; }
+  body.has-acts #acts { display: flex; }
+  /* The hint and the buttons compete for the same space, and the buttons say
+     it better: "Send now" needs no caption reading "click the tray to send". */
+  body.has-acts #hint { display: none; }
+  #acts button {
+    all: unset; cursor: pointer;
+    padding: 2px 8px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--line);
+    color: var(--ink); font-size: 11.5px; font-weight: 600;
+  }
+  #acts button:hover { filter: brightness(1.18); }
+  #acts button.allow { background: var(--speaking); color: #fff; border-color: transparent; }
+  #acts button.deny { background: var(--listening); color: #fff; border-color: transparent; }
   body.state-listening #dot { background: var(--listening); }
   body.state-armed    #dot { background: var(--listening); }
   body.state-thinking #dot { background: var(--thinking); }
   body.state-speaking #dot { background: var(--speaking); }
+  body.state-approval #dot { background: var(--thinking); }
   /* Only listening needs a meter; the others would show a dead row of bars. */
   body:not(.state-listening):not(.state-armed) #meter { visibility: hidden; }
 </style>
 </head>
 <body class="state-idle">
-<div id="panel">
-  <div id="top">
+<div id="panel" data-tauri-drag-region>
+  <div id="top" data-tauri-drag-region>
     <span id="dot"></span>
     <span id="state">Idle</span>
     <span id="hint"></span>
+    <div id="acts"></div>
+    <button id="x" type="button" title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <div id="meter"></div>
   <div id="text" class="empty">…</div>
@@ -115,6 +157,7 @@
     armed: "Hands-free",
     thinking: "Working",
     speaking: "Speaking",
+    approval: "Needs you",
     muted: "Idle",
   };
 
@@ -131,6 +174,61 @@
     }
   }
 
+  /* Tell the shell what was pressed.
+
+     An EMIT, not a fetch. The page has no token and must never get one — it
+     is always-on-top over whatever you are working in, and a credential in
+     it would be a bad trade for a level meter. The `hud` window already
+     holds `core:event:default` in the shell's capability file, so this needs
+     no new permission either. What happens next is `hud_actions` in
+     `desktop/src-tauri/src/main.rs`. */
+  function act(action, extra) {
+    var payload = { action: action };
+    if (extra) for (var k in extra) payload[k] = extra[k];
+    try {
+      window.__TAURI__.event.emit("hud-action", payload);
+    } catch (e) {
+      /* Opened in a plain browser rather than the shell — nothing to tell.
+         Better inert than throwing on every click. */
+    }
+  }
+
+  /* Buttons are rebuilt per state rather than shown and hidden, because what
+     the panel offers changes completely: a permission card needs two
+     answers, a reply being spoken needs one interruption. */
+  var acts = document.getElementById("acts");
+  function paintActs(rows) {
+    acts.textContent = "";
+    (rows || []).forEach(function (row) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = row[0];
+      if (row[2]) b.className = row[2];
+      b.addEventListener("click", function () { act(row[1]); });
+      acts.appendChild(b);
+    });
+    document.body.classList.toggle("has-acts", !!(rows && rows.length));
+  }
+
+  var ACTS = {
+    /* Answerable HERE on purpose. The panel is a window on this machine's
+       screen, which is exactly what a desk-only tool requires — and reading
+       "open the window" while a turn waits is how a card times out. */
+    approval: [["Allow", "allow", "allow"], ["Deny", "deny", "deny"]],
+    listening: [["Send now", "send"]],
+    speaking: [["Stop", "stop"]],
+  };
+
+  document.getElementById("x").addEventListener("click", function () {
+    act("dismiss");
+  });
+  /* Esc, because a panel with no title bar is a panel your hands cannot
+     find. Works whenever the overlay has focus; the ✕ covers the rest, since
+     the window deliberately does not take focus from what you are typing. */
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") act("dismiss");
+  });
+
   /* The only entry point. Every field is optional: the shell sends what
      changed, and anything absent is left alone rather than blanked — a
      transcript should not vanish because the next push was about the level. */
@@ -141,6 +239,7 @@
         document.body.className = "state-" + next.state;
         document.getElementById("state").textContent =
           LABEL[next.state] || next.state;
+        paintActs(ACTS[next.state]);
       }
       if (typeof next.level === "number") paintLevel(next.level);
       if (typeof next.hint === "string") {
@@ -155,6 +254,7 @@
   };
 
   paintLevel(0);
+  paintActs(null);
 })();
 </script>
 </body>

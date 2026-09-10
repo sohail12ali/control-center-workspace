@@ -203,7 +203,10 @@ class TestAssistantRoutes:
             ("POST", "assistant.say"), ("GET", "assistant.stream"),
             ("GET", "assistant.memory_get"), ("POST", "assistant.memory_post"),
             ("GET", "assistant.settings_get"),
-            ("POST", "assistant.settings_post")}
+            ("POST", "assistant.settings_post"),
+            # T-015: the voice overlay's Allow/Deny. The Assistant answers a
+            # card on its own chat, so the caller needs no chat id.
+            ("POST", "assistant.approve")}
 
 
 class TestPaletteAssets:

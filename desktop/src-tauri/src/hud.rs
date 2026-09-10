@@ -143,6 +143,43 @@ pub fn show(app: &AppHandle, console_url: &str, state: State, hint: &str) {
     if matches!(state, State::Listening | State::Armed) {
         start_pump(app.clone());
     }
+    arm_watchdog(app.clone());
+}
+
+/// Show the panel with a permission card up.
+///
+/// A state of its own, rather than one of `icons::State`. Those describe what
+/// the ICON can say in five pixels, and "a human is being asked" is not one of
+/// them — `ApprovalNeeded` folds into `Thinking` there, which is right for a
+/// coloured dot in a corner and wrong for a panel that can carry two buttons.
+/// The panel is allowed a bigger vocabulary because it has the room.
+pub fn approval(app: &AppHandle, console_url: &str, tool: &str) {
+    if !ensure(app, console_url) {
+        return;
+    }
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    place(&window);
+    let _ = window.show();
+    let _ = window.set_always_on_top(true);
+    PUMPING.store(false, Ordering::SeqCst);
+    push(
+        app,
+        &format!(
+            "{{\"state\":\"approval\",\"hint\":{},\"text\":{}}}",
+            json_string("allow or deny"),
+            json_string(&if tool.is_empty() {
+                "waiting for you to allow or deny".to_string()
+            } else {
+                format!("{tool} wants to run")
+            })
+        ),
+    );
+    // A card that nobody answers is denied on the console's own timeout, so
+    // the panel must not be the thing that outlives the question. Restarted
+    // here because a card can arrive while an earlier watchdog is pending.
+    arm_watchdog(app.clone());
 }
 
 /// What was heard, or what is being said back.
@@ -155,6 +192,66 @@ pub fn state(app: &AppHandle, state: State) {
     if !matches!(state, State::Listening | State::Armed) {
         PUMPING.store(false, Ordering::SeqCst);
     }
+    // A state change is the definition of "something happened", so it retires
+    // whichever watchdog was counting down and starts a fresh one.
+    arm_watchdog(app.clone());
+}
+
+/// Hide the panel now, at the user's request.
+///
+/// The ✕ and Esc both land here. Deliberately unconditional and immediate: a
+/// dismissal that waited for the state machine to agree would be the same bug
+/// in a politer form, and the panel is a read-out — nothing is lost by
+/// closing it, because everything it shows is also in the chat.
+pub fn dismiss(app: &AppHandle) {
+    PUMPING.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window(LABEL) {
+        if let Err(e) = window.hide() {
+            log::warn!("hud: dismiss could not hide the panel: {e}");
+        }
+    }
+}
+
+/// Longest the panel may stay up with nothing new to say.
+///
+/// The backstop that turns every remaining stuck-state bug into a cosmetic
+/// one. The panel used to hide only on three events, and one of them was
+/// missing: an approval that resolved published nothing to hide it, and a
+/// dropped event stream cleared a stale "Working" but never a stale card. So
+/// an always-on-top window could sit over your work indefinitely, with no
+/// close button, until the shell was killed.
+///
+/// Two minutes because it has to be longer than a slow turn — hiding the
+/// panel while a model is still thinking would be worse than leaving it — and
+/// far shorter than "forever".
+const WATCHDOG: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Bumped on every state change; the watchdog only fires if it is unchanged.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Hide the panel if nothing has changed by the time `WATCHDOG` elapses.
+///
+/// A generation counter rather than a timestamp, so "did anything happen"
+/// needs no clock arithmetic and no lock: the thread reads the number it was
+/// born with, and if it still matches, nothing has moved since.
+fn arm_watchdog(app: AppHandle) {
+    let mine = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = std::thread::Builder::new()
+        .name("hud-watchdog".into())
+        .spawn(move || {
+            std::thread::sleep(WATCHDOG);
+            if GENERATION.load(Ordering::SeqCst) != mine {
+                return; // something happened; a newer watchdog owns this
+            }
+            log::warn!(
+                "hud: nothing changed for {}s — hiding the panel rather than \
+                 leaving it over the screen",
+                WATCHDOG.as_secs()
+            );
+            if let Some(window) = app.get_webview_window(LABEL) {
+                let _ = window.hide();
+            }
+        });
 }
 
 /// Hide after `linger`, so a reply can be read before the panel goes.
