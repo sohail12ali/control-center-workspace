@@ -94,5 +94,79 @@ artifact: progress
 - **Next:** VERIFY — drive the live tray menu with T-002's Win32 helper, then
   close T-002.
 
+## 2026-09-10 — local models for BOTH roles, and what that actually costs
+
+Asked to extend the change to the work role: "use local LLMs for work too, not just
+talking."
+
+- **Done:** `work_backend` gained a chain it never had. It was a single id set by hand and
+  `delegate` refused outright when empty, which in practice pinned work to whichever CLI
+  was chosen once — so a machine with two local runtimes installed sent every task to a
+  hosted coding agent. `resolve_work_backend` + `WORK_FIRST` (local first) now resolve it,
+  and `delegate` reports what it passed over.
+- **Done:** `work_ready` — a stricter bar than talking, because the two roles want
+  different things. Tool calling is not optional for work, and `WORK_MIN_CONTEXT` (16k) is
+  the room needed to hold a file, an edit, a command's output and a test log at once. A
+  model that fails either is still used for TALKING.
+- **Done:** `backend_chain` setting. Naming ids restricts both roles to them, which is how
+  "never a CLI" is said without a second boolean to mean it — and it closes the
+  "settings-driven chain" delta the approved plan asked for and the first pass left as a
+  constant.
+- **Found and fixed (real bug, mine):** `delegate` now builds the backend registry, which
+  can raise on an incomplete checkout — and that verb is documented to always return a
+  shape a model can read out. Also made a malformed backend row a *skip* rather than
+  fatal: one bad `agents.toml` row aborted resolution instead of the chain reaching the
+  next candidate.
+- **Found (pre-existing, in a test):** `test_an_unknown_work_backend_is_refused` wrote
+  `id = "claude"` with no `command`, and `Backend` defaults the command to the id — so on
+  a machine with the real claude CLI on PATH the row was "installed" and the test was
+  measuring this laptop rather than the code. Now names a command that cannot exist.
+
+### The blocker, found by looking at the machine rather than the code
+
+`console/.cache/agents/providers.json` pointed `lm-studio` at `192.168.1.14:1234`, a LAN
+box that is switched off — while LM Studio was installed **on this machine** with seven
+models on disk. That single override is why local was never reachable. Repointed at
+`127.0.0.1:1234` through `provider_overrides.update`, and both roles unpinned from
+`claude`.
+
+### Made honest: loaded context, not advertised context
+
+`model_catalog.capabilities` reported `max_context_length` — what the weights support.
+Qwen3-4B says 262144; LM Studio had it **loaded at 8192**, and only the loaded figure
+constrains a turn. So the preflight passed a model that would silently truncate. It now
+reads `loaded_context_length` / `loaded_instances[].config.context_length` and keeps
+`max_context` alongside for reference. Watching the check flip from PASS to a correct
+refusal on the same model, purely because the real number arrived, is the evidence that
+matters here.
+
+### Measured, end to end, on the local model
+
+Loaded `qwen3-4b-thinking` at 32k and delegated a real tool-using task through the running
+console (not in-process — a short-lived script kills the daemon turn thread, which cost me
+one confusing dead run):
+
+| Run | Model | Result | duration | ttft | tokens in/out |
+|-----|-------|--------|----------|------|---------------|
+| work | qwen3-4b-thinking | correct (`read_file`) | **201.4s** | 200.4s | 9436 / 1080 |
+| work | nemotron-3-nano-4b | correct (`list_files`+`read_file`) | **120.7s** | 120.1s | 15063 / 178 |
+| talk | nemotron-3-nano-4b | correct — named T-015, Verify, 5 todos, no blockers | **171.2s** | 163.6s | 16809 / 687 |
+
+All three answers were right. **All three are two to three minutes.** The cause is not the
+model: a turn is 2-3 sequential tool rounds, each re-processing a 5-7k-token prompt
+(7393-char system prompt plus 26 tool definitions ≈ 2500 tokens) on a box with 15.4 GB RAM
+and a 2 GB-VRAM Intel Arc iGPU, which processes prompt at roughly 100 tokens/second.
+
+For comparison, from the same telemetry file: `claude` answered comparable questions in
+2.4-6.6s typically. **So local-first on this hardware is slower than what was there
+before, for talking.** That is stated rather than buried — it is the opposite of the
+ticket's original goal, and which trade to take is the user's call, not a default's.
+
+- **Also demonstrated live**, which last pass could not be: the removed warm-up turn
+  (`/api/assistant/say` accepted in 0.1s on a brand-new chat, no queue behind a greeting)
+  and the first non-zero `duration_ms`/`ttft_ms` telemetry rows this repo has ever had for
+  an API turn — every previous `lm-studio`/`ollama` row reads `duration=0`.
+- **Evidence:** 1210 python tests pass (+10).
+
 ## Links
 - [[T-015-summary]] · [[T-015-analysis]] · [[T-015-requirements]] · [[T-015-decision-log]] · [[T-015-plan]] · [[T-015-progress]] · [[T-015-verification]]

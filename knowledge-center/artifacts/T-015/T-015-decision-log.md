@@ -8,7 +8,11 @@ artifact: decision-log
 ## openrouter-ahead-of-the-clis
 **Decision:** `assistant_config.LOCAL_FIRST` becomes
 `("ollama", "lm-studio", "openrouter", "claude", "cursor-agent")` — a hosted API row now
-outranks a coding CLI for the TALK role. `work_backend` is untouched.  
+outranks a coding CLI for the TALK role.
+
+*Superseded in part, same day:* this entry originally said "`work_backend` is untouched",
+which was true when it was written and is not now — see
+[[#work-resolves-local-first-too]]. The work role got the same treatment on request.  
 **Rationale:** the old order put `claude` third, so a machine with no usable local model
 held every conversation through the Claude Code CLI. `knowledge-center/telemetry/2026-09.jsonl`
 prices that: 2.4s on a good turn, 307s on a bad one, to answer a question about ticket
@@ -126,6 +130,66 @@ cosmetic instead of blocking. 120s because it must be longer than a slow turn (h
 panel while a model is thinking would be worse) and far shorter than forever.  
 **Impact:** a generation counter bumped on every state change, so "did anything happen"
 needs no clock arithmetic and no lock.
+
+## work-resolves-local-first-too
+**Decision:** `work_backend = ""` means resolve at use time through `WORK_FIRST`
+(local-first), the way `backend` already did. `delegate` resolves through the chain and
+reports what it passed over.  
+**Rationale:** the work role had no chain at all — one id, set by hand, and `delegate`
+refused outright when it was empty. In practice that pinned work to whichever CLI was
+chosen once, which is how a machine with Ollama AND LM Studio installed sent every task to
+a hosted coding agent.  
+**Impact:** what has NOT changed is the refusal that matters: `delegate` still never runs
+the task on the talk model. If nothing in the chain is ready it says so and names what it
+tried.
+
+## work-has-a-higher-bar-than-talking
+**Decision:** `work_ready` = `talk_ready` plus tool calling (not optional) and
+`WORK_MIN_CONTEXT` of 16k. A model that fails either is still used for talking.  
+**Rationale:** the two roles want different things, which is the whole premise of T-014's
+split. A model that cannot call a tool can hold a conversation but cannot change a line of
+code. A work turn carries a file, an edit, a command's output and often a test log; below
+about 16k that stops fitting, and a model that has forgotten the start of its own task
+reads as one that will not follow instructions.  
+**Impact:** judged separately per role, so a small local model can be the talk model while
+work goes elsewhere — which is the useful outcome on modest hardware.
+
+## loaded-context-not-advertised-context
+**Decision:** `model_catalog.capabilities` reports the context the runtime actually LOADED
+(`loaded_context_length`, or `loaded_instances[].config.context_length`), keeping
+`max_context` alongside.  
+**Rationale:** it reported `max_context_length` — what the weights support. Qwen3-4B says
+262144; LM Studio had it loaded at **8192**. Only the loaded figure constrains a turn, so
+the preflight was passing a model that would silently truncate a file plus a diff plus a
+test log. Caught by loading a real model and watching the check say PASS when the honest
+answer was no.  
+**Impact:** the same model went from passing to a correct refusal purely because the real
+number arrived. The refusal names the shortfall and says it is still fine for talking.
+
+## backend_chain-rather-than-a-local-only-boolean
+**Decision:** one setting, `backend_chain` — comma-separated ids, ordered, applying to both
+roles. Empty means the built-in local-first order.  
+**Rationale:** "never use a CLI" needed saying, and a boolean to mean it would have been a
+second thing that can disagree with the order. Naming the backends you accept says it
+directly, and a role with none of them available then FAILS and reports what it tried
+rather than falling through to something you did not want. Which of those two you want —
+strict, or always-working — is a genuine preference that no default can settle.  
+**Impact:** also closes the approved plan's "settings-driven ordered chain", which the
+first pass implemented as a constant and recorded as a delta.
+
+## local-is-now-possible-and-slow-and-both-are-said
+**Decision:** ship local-first for both roles as asked, and record the measured cost
+prominently rather than in a footnote.  
+**Rationale:** local now demonstrably works — three real turns, all correct answers, tools
+called properly. It is also **121-201 seconds per turn** on this hardware, against 2.4-6.6s
+for the CLI it replaced. The cause is not the model: a turn is 2-3 sequential tool rounds,
+each re-processing a 5-7k-token prompt (7393-char system prompt + 26 tool definitions) on a
+box with a 2 GB-VRAM iGPU that processes prompt at roughly 100 tokens/second.  
+**Impact:** the request was honoured and the trade is now a number instead of a guess. The
+useful lever is not a different 4B model — it is either a hosted talk model
+(`OPENROUTER_API_KEY`) or a smaller injected prompt, and the second is its own ticket. If
+LM Studio is closed the chain degrades to the next candidate with a stated reason, so
+nothing breaks.
 
 ## Links
 - [[T-015-summary]] · [[T-015-analysis]] · [[T-015-requirements]] · [[T-015-decision-log]] · [[T-015-plan]] · [[T-015-progress]] · [[T-015-verification]]

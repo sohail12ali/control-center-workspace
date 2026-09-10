@@ -374,10 +374,35 @@ def capabilities(repo_root, backend_id, opener=None):
             caps = m.get("capabilities") or {}
             if not mid or not isinstance(caps, dict):
                 continue
+            # Two different context numbers, and the difference decides
+            # whether a model can actually be given a task.
+            #
+            # `max_context_length` is what the model SUPPORTS — Qwen3-4B says
+            # 262144. `loaded_context_length` is what the runtime actually
+            # loaded it with, which for that same model defaults to 8192. Only
+            # the second one constrains a turn: a 4B loaded at 8k will truncate
+            # a file plus a diff plus a test log no matter what the weights are
+            # capable of. Reporting the capability alone made a preflight that
+            # read plausible and passed a model that would silently forget the
+            # start of its own task.
+            #
+            # `/api/v1/models` carries the loaded figure per instance;
+            # `/api/v0/models` carries it as a flat field. Both are read, the
+            # instance one first, and `context` remains the honest answer to
+            # "how much room is there right now".
+            loaded_ctx = m.get("loaded_context_length")
+            for instance in (m.get("loaded_instances") or []):
+                if isinstance(instance, dict):
+                    conf = instance.get("config") or {}
+                    if isinstance(conf, dict) and conf.get("context_length"):
+                        loaded_ctx = conf["context_length"]
+                        break
             out[mid] = {
                 "tool_use": bool(caps.get("trained_for_tool_use")),
                 "vision": bool(caps.get("vision")),
-                "context": m.get("max_context_length"),
+                "context": loaded_ctx or m.get("max_context_length"),
+                "max_context": m.get("max_context_length"),
+                "loaded_context": loaded_ctx,
                 "params": m.get("params_string") or "",
             }
         if out:

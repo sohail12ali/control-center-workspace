@@ -45,10 +45,29 @@ OVERRIDE_REL = os.path.join("console", ".cache", "assistant", "settings.json")
 #: was the whole reason a laptop with no usable local model ended up holding
 #: its conversations through the Claude Code CLI: a talk model answering
 #: "what's open?" was paying for a coding agent's whole harness, measured at
-#: 2-300 seconds a turn in `knowledge-center/telemetry/`. A CLI is a fine
-#: place to send WORK — that is what `work_backend` is for — and a poor place
-#: to send a sentence.
+#: 2-300 seconds a turn in `knowledge-center/telemetry/`.
 LOCAL_FIRST = ("ollama", "lm-studio", "openrouter", "claude", "cursor-agent")
+
+#: Preference order for the WORK role — code changes, builds, test runs.
+#:
+#: Local first here too, which it was not: `work_backend` had no chain at all.
+#: It was a single id that had to be set by hand, and `delegate` refused
+#: outright when it was empty, so in practice it was pinned to whichever CLI
+#: someone had picked once. Same order as talking, for the same reason — a
+#: model on this machine is free, private and offline — and the difference
+#: between the two roles is not the order but the PREFLIGHT: see `work_ready`.
+WORK_FIRST = ("ollama", "lm-studio", "openrouter", "claude", "cursor-agent")
+
+#: Smallest context a model may have and still be sent real work.
+#:
+#: A work turn holds a file, an edit to it, a command's output and often a test
+#: log. 16k is the point below which that stops fitting and the model starts
+#: forgetting the beginning of its own task — which reads as a model that
+#: cannot follow instructions rather than one that ran out of room.
+#:
+#: Only enforced when the server actually reports a context length. Silence
+#: gets the benefit of the doubt, the same way tool support does.
+WORK_MIN_CONTEXT = 16_384
 
 #: Every key the Assistant reads, with the value used when neither the
 #: committed file nor the override supplies one. This dict IS the schema:
@@ -74,6 +93,18 @@ DEFAULTS = {
     # tool says so rather than quietly running the task on the talk model.
     "work_backend": "",
     "work_model": "",
+
+    # Which backends may be chosen, in order, when a role's backend is not
+    # pinned. Comma-separated ids; empty means the built-in order
+    # (`LOCAL_FIRST` / `WORK_FIRST`, both local-first).
+    #
+    # This is how you say "never a CLI" without a second setting to mean it:
+    # `backend_chain = "ollama,lm-studio"` and nothing else is reachable, so a
+    # role with no local model available FAILS and says what it tried, rather
+    # than quietly falling through to a coding CLI. Which of those two you
+    # want is a real preference and not something a default can settle — the
+    # default keeps working, this makes it strict.
+    "backend_chain": "",
 
     # -- how a reply sounds (T-013) -------------------------------------------
     # Which neural voice reads replies, by name, matching a file in
@@ -141,7 +172,7 @@ WRITABLE = frozenset({
     "reply_chars", "ticket_prefix", "tray_click_action",
     "listen_max_seconds", "listen_silence_ms", "stt_model",
     "speak_voice", "speak_rate_percent",
-    "work_backend", "work_model",
+    "work_backend", "work_model", "backend_chain",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
@@ -230,6 +261,125 @@ def talk_ready(repo_root, backend):
     return True, ""
 
 
+def work_ready(repo_root, backend):
+    """Can this backend be trusted with real WORK? Returns (ok, reason).
+
+    Everything `talk_ready` asks, plus the two things that only matter once a
+    model is editing files and running commands:
+
+    **Tools are not optional.** A model that cannot call one can still hold a
+    conversation; it cannot change a line of code. For talking, a server that
+    reports nothing about tool support gets the benefit of the doubt — here it
+    still does, because Ollama reports no capabilities at all and refusing on
+    silence would rule it out permanently. What changes is that a model
+    explicitly declaring no tool support is refused for work even where
+    talking would have tolerated it.
+
+    **Room to work.** `WORK_MIN_CONTEXT`. A work turn carries a file, an edit,
+    a command's output and often a test log; below about 16k that stops
+    fitting, and a model that has forgotten the start of its own task looks
+    like one that will not follow instructions.
+
+    Neither check applies to a CLI or a keyed provider — a coding CLI has
+    tools by construction, and a hosted provider reports no residency.
+    """
+    ok, why = talk_ready(repo_root, backend)
+    if not ok:
+        return False, why
+    if backend.auth != "none":
+        return True, ""
+
+    resident = model_catalog.loaded(repo_root, backend.id)
+    caps = model_catalog.capabilities(repo_root, backend.id)
+    if not resident or not caps:
+        # Nothing reported. `talk_ready` already established the server is up
+        # and has something loaded; anything more specific would be a guess.
+        return True, ""
+
+    for model in sorted(resident):
+        fact = caps.get(model)
+        if fact is None:
+            return True, ""  # loaded but undescribed — give it the benefit
+        if not fact.get("tool_use", True):
+            continue
+        context = fact.get("context")
+        if isinstance(context, int) and context < WORK_MIN_CONTEXT:
+            continue
+        return True, ""
+
+    return False, (
+        "%s has %s loaded, which is not up to being sent work — it needs tool "
+        "calling and at least %dk of context. It is fine for talking."
+        % (backend.label, ", ".join(sorted(resident)),
+           WORK_MIN_CONTEXT // 1024))
+
+
+def _chain(repo_root, default_order):
+    """The ordered candidate list for a role.
+
+    `backend_chain` in settings overrides the built-in order when set, which
+    is how "never a CLI" is expressed: name only the backends you will accept
+    and the rest are unreachable, so a role with nothing available fails and
+    says what it tried instead of falling through to something you did not
+    want. Unknown ids are kept rather than dropped — they simply never match a
+    registry entry, and `resolve` reports them as such.
+    """
+    raw = (settings(repo_root).get("backend_chain") or "").strip()
+    if not raw:
+        return list(default_order)
+    named = [part.strip() for part in raw.split(",") if part.strip()]
+    return named or list(default_order)
+
+
+def resolve_work_backend(repo_root, registry, requested="", report=None):
+    """Which backend a delegated task should run on.
+
+    Same shape as `resolve_backend` and deliberately so, because `work_backend`
+    used to have no chain at all: it was one id that had to be set by hand, and
+    `delegate` refused outright when it was empty. In practice that pinned it
+    to whichever CLI was chosen once — which is how a machine with two local
+    runtimes installed sent every task to a hosted coding agent.
+
+    The order is local-first (`WORK_FIRST`), and the bar is `work_ready`.
+    """
+    rejected = report if report is not None else []
+    stored = settings(repo_root).get("work_backend", "")
+
+    def ready(bid):
+        backend = registry.get(bid)
+        if backend is None:
+            rejected.append((bid, "not a backend in console/config/agents.toml"))
+            return False
+        try:
+            ok, why = work_ready(repo_root, backend)
+        except Exception as exc:  # noqa: BLE001
+            # A malformed row, or a provider that raised while being asked
+            # about itself. Skip it and say so — one bad backend must not stop
+            # the chain reaching the next, which is what happened when this
+            # was first written: an agents.toml row missing `session_args`
+            # aborted resolution instead of being passed over.
+            rejected.append((bid, "%s: %s" % (type(exc).__name__, exc)))
+            return False
+        if not ok:
+            rejected.append((bid, why))
+        return ok
+
+    for candidate in (requested, stored):
+        if candidate and ready(candidate):
+            return candidate
+    seen = set()
+    for candidate in _chain(repo_root, WORK_FIRST):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if ready(candidate):
+            return candidate
+    raise ValueError(
+        "no backend is ready to be sent work. Tried: %s. Load a tool-capable "
+        "model in a local runtime, or pin one in Settings > Assistant (Work)."
+        % ("; ".join("%s (%s)" % (b, why) for b, why in rejected) or "nothing"))
+
+
 def resolve_backend(repo_root, registry, requested="", report=None):
     """Which backend a brand-new Assistant chat should use.
 
@@ -260,7 +410,12 @@ def resolve_backend(repo_root, registry, requested="", report=None):
         backend = registry.get(bid)
         if backend is None:
             return False
-        ok, why = talk_ready(repo_root, backend)
+        try:
+            ok, why = talk_ready(repo_root, backend)
+        except Exception as exc:  # noqa: BLE001
+            # Skipped, not fatal — see `resolve_work_backend.ready`.
+            rejected.append((bid, "%s: %s" % (type(exc).__name__, exc)))
+            return False
         if not ok:
             rejected.append((bid, why))
         return ok
@@ -269,7 +424,15 @@ def resolve_backend(repo_root, registry, requested="", report=None):
         if candidate and ready(candidate):
             return candidate
     seen = set()
-    for candidate in list(LOCAL_FIRST) + sorted(registry):
+    # `backend_chain` when set, else the built-in order plus anything else the
+    # registry has. The trailing sweep is deliberate for TALKING: a machine
+    # with only some third CLI configured should still be able to hold a
+    # conversation. It is skipped once a chain is named, because naming one is
+    # how you say "these and nothing else".
+    named = _chain(repo_root, LOCAL_FIRST)
+    order = named if (settings(repo_root).get("backend_chain") or "").strip() \
+        else named + sorted(registry)
+    for candidate in order:
         if candidate in seen:
             continue
         seen.add(candidate)

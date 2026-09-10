@@ -148,18 +148,32 @@ def delegate(repo_root, ticket=None, task=""):
         return {"ok": False, "error": "say what to delegate"}
 
     settings = assistant_config.settings(repo_root)
-    backend_id = (settings.get("work_backend") or "").strip()
-    if not backend_id:
+    # Resolved through the local-first work chain rather than read as a single
+    # pinned id. It used to refuse outright when `work_backend` was empty,
+    # which in practice meant it stayed pinned to whichever CLI someone chose
+    # once — so a machine with two local runtimes installed sent every task to
+    # a hosted coding agent. An explicit pin still wins; empty now means
+    # "pick the best local one that is actually ready".
+    skipped = []
+    try:
+        # `registry` reads the workspace's console config, so it can raise on
+        # an incomplete checkout — which this verb must never do: every path
+        # is documented to return a shape a model can read out, not an
+        # exception. Building the registry only happened here once resolution
+        # became a chain, so this guard is new with it.
+        registry = agent_backends.registry(repo_root)
+        backend_id = assistant_config.resolve_work_backend(
+            repo_root, registry, report=skipped)
+    except (ValueError, OSError) as exc:
+        # Still never the talk model. A 4B chat model quietly attempting a
+        # refactor is the worst outcome available, and it was the first thing
+        # this verb was written to refuse.
         return {"ok": False, "error":
-                "no work backend is set — choose one in Settings > Assistant "
-                "(Work), or set work_backend. I have not run this on the talk "
-                "model."}
+                "%s I have not run this on the talk model." % exc}
     try:
         backend = agent_backends.get(repo_root, backend_id)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    if not backend.installed:
-        return {"ok": False, "error": backend.unavailable_reason}
 
     # A chat whose approval card can never be raised is a chat that hangs on
     # its first gated tool. That happens when this verb runs somewhere with no
@@ -189,9 +203,15 @@ def delegate(repo_root, ticket=None, task=""):
     if pointer and pointer.get("sid"):
         assistant_reply.watch_delegate(repo_root, snap["id"], pointer["sid"], task)
 
-    return {"ok": True, "chat": snap["id"], "backend": backend_id,
-            "model": snap.get("model") or "(backend default)",
-            "status": "started — the result will be reported back here"}
+    answer = {"ok": True, "chat": snap["id"], "backend": backend_id,
+              "model": snap.get("model") or "(backend default)",
+              "status": "started — the result will be reported back here"}
+    if skipped:
+        # Which local runtime was passed over, and why. Without this, work
+        # landing on a hosted agent when a local one was meant to take it is
+        # invisible — the same silent-fallback problem the talk chain had.
+        answer["passed_over"] = ["%s (%s)" % (b, why) for b, why in skipped]
+    return answer
 
 
 # -- desktop (T-005) --------------------------------------------------------

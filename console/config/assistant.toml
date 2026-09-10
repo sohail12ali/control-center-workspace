@@ -37,10 +37,36 @@ mode = "default"
 # other way round. The talk model hands a task over with `console_delegate`,
 # and this is what picks it up.
 #
-# Empty means there is nowhere to delegate to, and the tool says so rather than
-# silently running the task on the talk model.
+# Empty now means RESOLVE AT USE TIME, local-first, exactly as `backend` does
+# above — it used to mean "nowhere to delegate to", which made this a single id
+# you had to set by hand, and in practice pinned work to whichever CLI was
+# chosen once. A machine with two local runtimes installed still sent every
+# task to a hosted coding agent.
+#
+# The bar for being sent work is higher than for talking (see `work_ready` in
+# `console/server/assistant_config.py`): tool calling is not optional, and a
+# model needs about 16k of context to hold a file, an edit, a command's output
+# and a test log at once. A local model that fails those is still used for
+# TALKING — the roles are judged separately, which is the point of having two.
+#
+# What has NOT changed: `delegate` never runs the task on the talk model. If
+# nothing in the chain is ready it says so and names what it tried. A 4B chat
+# model quietly attempting a refactor is the worst outcome available.
 work_backend = ""
 work_model = ""
+
+# Which backends may be chosen, in order, when a role above is not pinned.
+# Comma-separated ids; empty means the built-in local-first order.
+#
+# This is how you say "never a CLI" without a second setting to mean it:
+#
+#     backend_chain = "ollama,lm-studio"
+#
+# and nothing else is reachable, so a role with no local model available FAILS
+# and reports what it tried rather than quietly falling through to a coding
+# CLI. Which of those you want is a real preference, not something a default
+# can settle — so the default keeps working and this makes it strict.
+backend_chain = ""
 
 # Model ids that can actually look at a screenshot. When one of these matches,
 # a capture is sent to the model as pixels; when none does, the model is told

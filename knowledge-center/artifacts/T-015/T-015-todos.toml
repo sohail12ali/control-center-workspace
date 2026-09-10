@@ -1,8 +1,8 @@
 [meta]
 ticket = "T-015"
 tracker = "todos"
-updated = "2026-09-10T14:37:05Z"
-seq = 5
+updated = "2026-09-10T15:33:17Z"
+seq = 6
 
 [[items]]
 id = "TD-1"
@@ -60,6 +60,19 @@ drop_reason = ""
 id = "TD-5"
 status = "open"
 text = "Run the generated tray menu on Linux/libappindicator and macOS. Only Windows was driven. On Linux a left-click never reaches the app, so Listening > Short take is the only form the click-to-talk gesture has."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-09-10"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-6"
+status = "open"
+text = "Shrink the injected prompt for the talk role. Measured on local: 7393-char system prompt plus 26 tool definitions (~2500 tokens) means every turn re-processes 5-7k tokens per round, which on a 2GB-VRAM iGPU is ~150s before the first token. Offering fewer tools for conversation, or a smaller tickets digest, is the lever that would make local talking usable."
 type = "task"
 priority = "medium"
 captured_by = "agent"

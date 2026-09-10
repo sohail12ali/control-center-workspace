@@ -106,22 +106,40 @@ class TestDelegateRefusals:
         out = verb_handlers.delegate(str(tmp_path), task="   ")
         assert out["ok"] is False and "what to delegate" in out["error"]
 
-    def test_no_work_backend_is_refused_and_says_it_did_not_run_it(self, tmp_path):
+    def test_nothing_ready_is_refused_and_says_it_did_not_run_it(self, tmp_path):
+        """An empty `work_backend` no longer refuses on its own — it resolves
+        through the local-first work chain. What still refuses is having
+        nothing in that chain that is ready, and the refusal keeps the promise
+        that matters: the task did not quietly run on the talk model."""
         out = verb_handlers.delegate(str(tmp_path), task="fix the failing test")
         assert out["ok"] is False
-        assert "work backend" in out["error"]
         assert "not run this on the talk model" in out["error"]
 
-    def test_an_unknown_work_backend_is_refused(self, tmp_path):
+    def test_a_pin_that_is_not_a_backend_falls_through_and_is_named(self, tmp_path):
+        """An unknown pin no longer refuses on its own — it is passed over and
+        the chain carries on, which is the point of having a chain.
+
+        The row here names a command that cannot exist, deliberately. The
+        version of this test before the chain wrote `id = "claude"` with no
+        `command`, and `Backend` defaults the command to the id — so on a
+        machine with the real claude CLI on PATH the row was "installed" and
+        the test was quietly measuring this laptop rather than the code.
+        """
         cfg = tmp_path / "console" / "config"
         cfg.mkdir(parents=True)
         (cfg / "agents.toml").write_text(
-            '[[backend]]\nid = "claude"\ntransport = "stream_json"\n', encoding="utf-8")
+            '[[backend]]\nid = "claude"\ncommand = "no-such-binary-xyzzy"\n'
+            'transport = "stream_json"\nsession_args = ["-p"]\n', encoding="utf-8")
         assistant_config.update(str(tmp_path), {"work_backend": "nope"})
         from server import agent_backends
         agent_backends.forget_config()
         out = verb_handlers.delegate(str(tmp_path), task="do a thing")
-        assert out["ok"] is False and "nope" in out["error"]
+        assert out["ok"] is False
+        assert "not run this on the talk model" in out["error"]
+        # Both the id that does not exist and the row that cannot run are
+        # named, so "nothing is ready" is an answerable statement.
+        assert "nope" in out["error"]
+        assert "claude" in out["error"]
 
 
     def test_delegating_with_no_server_behind_it_is_refused(self, tmp_path):

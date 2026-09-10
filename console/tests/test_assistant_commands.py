@@ -512,6 +512,140 @@ class TestBackendResolution:
         assert assistant_config.resolve_backend(str(tmp_path), reg) == "claude"
 
 
+class TestWorkGoesLocalFirstToo:
+    """`work_backend` had no chain: it was one id set by hand, and `delegate`
+    refused outright when empty. In practice that pinned work to whichever CLI
+    was chosen once — so a machine with two local runtimes installed sent every
+    task to a hosted coding agent."""
+
+    def _local(self, resident, caps, monkeypatch):
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: resident)
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities",
+                            lambda *a, **kw: caps)
+
+    def test_a_local_runtime_is_preferred_over_a_cli(self, tmp_path, monkeypatch):
+        self._local({"qwen3:8b"}, {"qwen3:8b": {"tool_use": True,
+                                                "context": 32768}}, monkeypatch)
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "ollama": _FakeBackend(True, auth="none", bid="ollama")}
+        assert assistant_config.resolve_work_backend(
+            str(tmp_path), reg) == "ollama"
+
+    def test_a_pinned_work_backend_still_wins(self, tmp_path, monkeypatch):
+        """An explicit choice is an explicit choice."""
+        self._local({"qwen3:8b"}, {}, monkeypatch)
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "ollama": _FakeBackend(True, auth="none", bid="ollama")}
+        assistant_config.update(str(tmp_path), {"work_backend": "claude"})
+        assert assistant_config.resolve_work_backend(
+            str(tmp_path), reg) == "claude"
+
+    def test_a_model_that_cannot_call_tools_is_not_sent_work(self, tmp_path,
+                                                             monkeypatch):
+        """It can still talk. It cannot change a line of code."""
+        self._local({"deepseek-coder"},
+                    {"deepseek-coder": {"tool_use": False, "context": 32768}},
+                    monkeypatch)
+        backend = _FakeBackend(True, auth="none", bid="ollama", label="Ollama")
+        ok, why = assistant_config.work_ready(str(tmp_path), backend)
+        assert not ok and "tool calling" in why
+
+    def test_a_model_with_no_room_to_work_is_not_sent_work(self, tmp_path,
+                                                           monkeypatch):
+        """A work turn carries a file, an edit, a command's output and often a
+        test log. Below ~16k that stops fitting, and a model that has forgotten
+        the start of its own task reads as one that will not follow
+        instructions."""
+        self._local({"tiny-2k"}, {"tiny-2k": {"tool_use": True,
+                                              "context": 4096}}, monkeypatch)
+        backend = _FakeBackend(True, auth="none", bid="lm-studio",
+                               label="LM Studio")
+        ok, why = assistant_config.work_ready(str(tmp_path), backend)
+        assert not ok
+        assert "16k of context" in why
+        # And it is explicitly still fine for the other role.
+        assert "fine for talking" in why
+        talk_ok, _ = assistant_config.talk_ready(str(tmp_path), backend)
+        assert talk_ok
+
+    def test_one_capable_resident_model_is_enough(self, tmp_path, monkeypatch):
+        """LM Studio can hold several; the question is whether ANY of them can
+        do the job, not whether all of them can."""
+        self._local({"tiny-2k", "qwen3-4b"},
+                    {"tiny-2k": {"tool_use": True, "context": 4096},
+                     "qwen3-4b": {"tool_use": True, "context": 262144}},
+                    monkeypatch)
+        backend = _FakeBackend(True, auth="none", bid="lm-studio")
+        assert assistant_config.work_ready(str(tmp_path), backend) == (True, "")
+
+    def test_a_runtime_that_describes_nothing_gets_the_benefit(self, tmp_path,
+                                                               monkeypatch):
+        """Ollama reports no capabilities at all. Refusing on silence would
+        rule it out permanently, which is not the intent."""
+        self._local({"qwen3:8b"}, {}, monkeypatch)
+        backend = _FakeBackend(True, auth="none", bid="ollama")
+        assert assistant_config.work_ready(str(tmp_path), backend) == (True, "")
+
+    def test_a_broken_row_is_skipped_rather_than_fatal(self, tmp_path,
+                                                       monkeypatch):
+        """One malformed backend must not stop the chain reaching the next."""
+        class Exploding:
+            id = "boom"
+            label = "Boom"
+            auth = ""
+
+            @property
+            def installed(self):
+                raise ValueError("no session_args")
+
+        reg = {"boom": Exploding(), "claude": _FakeBackend(True, bid="claude")}
+        # Named in the chain, or it would never be asked about — which is
+        # itself the behaviour: the chain only consults ids it is given.
+        assistant_config.update(str(tmp_path), {"backend_chain": "boom,claude"})
+        skipped = []
+        assert assistant_config.resolve_work_backend(
+            str(tmp_path), reg, report=skipped) == "claude"
+        assert skipped and "no session_args" in skipped[0][1]
+
+
+class TestTheChainCanBeMadeStrict:
+    """`backend_chain` is how "never a CLI" is said without a second setting
+    to mean it: name the backends you accept, and a role with none of them
+    available FAILS and reports what it tried."""
+
+    def test_a_named_chain_excludes_everything_else(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: set())
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities",
+                            lambda *a, **kw: {})
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "ollama": _FakeBackend(True, auth="none", bid="ollama",
+                                      label="Ollama")}
+        assistant_config.update(str(tmp_path), {"backend_chain": "ollama"})
+        # Ollama is up but empty, and claude is deliberately unreachable.
+        for resolve in (assistant_config.resolve_backend,
+                        assistant_config.resolve_work_backend):
+            with pytest.raises(ValueError) as caught:
+                resolve(str(tmp_path), reg)
+            assert "no model loaded" in str(caught.value)
+
+    def test_a_named_chain_is_honoured_in_its_own_order(self, tmp_path):
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "cursor-agent": _FakeBackend(True, bid="cursor-agent")}
+        assistant_config.update(str(tmp_path),
+                                {"backend_chain": "cursor-agent,claude"})
+        assert assistant_config.resolve_backend(
+            str(tmp_path), reg) == "cursor-agent"
+
+    def test_an_empty_chain_falls_back_to_the_builtin_order(self, tmp_path):
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "openrouter": _FakeBackend(True, bid="openrouter")}
+        assistant_config.update(str(tmp_path), {"backend_chain": "   "})
+        assert assistant_config.resolve_backend(
+            str(tmp_path), reg) == "openrouter"
+
+
 class TestTalkReadyPreflight:
     """Reachable is not usable.
 
