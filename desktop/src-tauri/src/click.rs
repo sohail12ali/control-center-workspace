@@ -47,9 +47,22 @@ pub enum Action {
 /// a question addressed to a human, and no amount of talking at the tray
 /// answers it. Sending a take into a chat that is blocked on a card would put
 /// words behind a modal nobody has read yet.
-pub fn action(state: State, needs_approval: bool, setting: &str) -> Action {
+pub fn action(state: State, needs_approval: bool, hands_free: bool, setting: &str) -> Action {
     if needs_approval {
         return Action::ShowWindow;
+    }
+    // While hands-free holds the microphone, the icon is a switch for THAT.
+    // It used to fall through to the state machine, where an open take reads
+    // as `Listening` — so every click during a hands-free session did
+    // "send now", which from the outside looks like clicking does nothing.
+    // Speaking still wins, because barge-in is the one thing you want a click
+    // to do while it talks.
+    if hands_free && setting != "show" {
+        return if state == State::Speaking {
+            Action::StopSpeaking
+        } else {
+            Action::ToggleHandsFree
+        };
     }
     match setting {
         "show" => Action::ShowWindow,
@@ -84,8 +97,13 @@ pub fn act(app: &tauri::AppHandle) {
         None => (State::Idle, false),
     };
     let setting = setting_for(app);
-    let action = action(state, needs_approval, &setting);
-    log::info!("tray: click in {} -> {action:?}", state.as_str());
+    let hands_free = crate::hands_free::running();
+    let action = action(state, needs_approval, hands_free, &setting);
+    log::info!(
+        "tray: click in {}{} -> {action:?}",
+        state.as_str(),
+        if hands_free { " (hands-free)" } else { "" }
+    );
     match action {
         Action::Talk => crate::begin_listening(app),
         Action::SendNow => {
@@ -132,7 +150,7 @@ mod tests {
             (State::Speaking, Action::StopSpeaking),
             (State::Thinking, Action::ShowWindow),
         ] {
-            assert_eq!(action(state, false, "listen"), want, "{:?}", state);
+            assert_eq!(action(state, false, false, "listen"), want, "{:?}", state);
         }
     }
 
@@ -141,7 +159,7 @@ mod tests {
         // Words said at a tray cannot answer a question on screen.
         for setting in ["listen", "show", "hands_free"] {
             for state in [State::Idle, State::Listening, State::Speaking, State::Armed] {
-                assert_eq!(action(state, true, setting), Action::ShowWindow,
+                assert_eq!(action(state, true, false, setting), Action::ShowWindow,
                            "{setting} / {state:?}");
             }
         }
@@ -150,21 +168,44 @@ mod tests {
     #[test]
     fn show_mode_always_opens_the_window() {
         for state in [State::Idle, State::Listening, State::Speaking, State::Thinking] {
-            assert_eq!(action(state, false, "show"), Action::ShowWindow);
+            assert_eq!(action(state, false, false, "show"), Action::ShowWindow);
         }
     }
 
     #[test]
     fn hands_free_mode_arms_but_still_lets_you_shut_it_up() {
-        assert_eq!(action(State::Idle, false, "hands_free"), Action::ToggleHandsFree);
-        assert_eq!(action(State::Armed, false, "hands_free"), Action::ToggleHandsFree);
-        assert_eq!(action(State::Speaking, false, "hands_free"), Action::StopSpeaking);
+        assert_eq!(action(State::Idle, false, false, "hands_free"), Action::ToggleHandsFree);
+        assert_eq!(action(State::Armed, false, false, "hands_free"), Action::ToggleHandsFree);
+        assert_eq!(action(State::Speaking, false, false, "hands_free"), Action::StopSpeaking);
+    }
+
+    #[test]
+    fn while_hands_free_is_on_a_click_turns_it_off() {
+        // Reported as "hands-free is listening but not working": every click
+        // during a session logged `click in listening -> SendNow`, because a
+        // take in progress reads as Listening. Clicking the icon that is
+        // showing you an armed microphone should switch that microphone off.
+        for state in [State::Armed, State::Listening, State::Idle, State::Thinking] {
+            assert_eq!(action(state, false, true, "listen"), Action::ToggleHandsFree,
+                       "{state:?}");
+        }
+    }
+
+    #[test]
+    fn barge_in_still_wins_while_hands_free_is_on() {
+        assert_eq!(action(State::Speaking, false, true, "listen"), Action::StopSpeaking);
+    }
+
+    #[test]
+    fn show_mode_is_still_show_even_hands_free() {
+        // Someone who set the click to "show the window" means it.
+        assert_eq!(action(State::Armed, false, true, "show"), Action::ShowWindow);
     }
 
     #[test]
     fn an_unrecognised_setting_falls_back_to_the_default_behaviour() {
         // A typo that reached the shell must not leave the icon inert.
-        assert_eq!(action(State::Idle, false, "nonsense"), Action::Talk);
-        assert_eq!(action(State::Listening, false, ""), Action::SendNow);
+        assert_eq!(action(State::Idle, false, false, "nonsense"), Action::Talk);
+        assert_eq!(action(State::Listening, false, false, ""), Action::SendNow);
     }
 }

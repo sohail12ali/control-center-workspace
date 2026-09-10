@@ -13,7 +13,8 @@
 //! direction to be wrong in.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// How long to wait on loopback before giving up and using defaults. Generous
 /// for a local socket, short enough that a click never feels stuck.
@@ -72,6 +73,8 @@ pub fn set_bool(console_url: &str, key: &str, value: bool) {
     if let Err(e) = post(console_url, &format!("{{\"{key}\": {value}}}")) {
         log::warn!("settings: could not store {key}={value} ({e})");
     }
+    // Whatever we just stored must not be read back stale from the cache.
+    forget();
 }
 
 fn post(console_url: &str, body: &str) -> Result<(), String> {
@@ -109,14 +112,52 @@ fn post(console_url: &str, body: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How long a fetched settings object is reused.
+///
+/// Short enough that a change on the Settings tab lands on the next thing you
+/// say; long enough that a hands-free loop does not pay for a request between
+/// every take. It pays for that in dead air, not just latency: the microphone
+/// is open while the loop waits, and the audio arriving in that window is
+/// discarded when the next take clears the buffer.
+///
+/// Measured, which is why this exists: the console usually answers in 10-40ms
+/// but stalls for ~3 seconds roughly one request in fifteen, and hands-free
+/// was asking once per take.
+///
+/// Longer than a take, which is the number that matters and the reason this
+/// is not 5 seconds. At 5s the cache expired DURING every 12-second take, so
+/// the next one re-fetched and hands-free paid the stall exactly as often as
+/// it had before the cache existed — `listen: step settings 3024ms`, still
+/// there in the log after the first attempt at this.
+const CACHE_FOR: Duration = Duration::from_secs(30);
+
+static CACHE: Mutex<Option<(Instant, serde_json::Value)>> = Mutex::new(None);
+
+/// Drop the cached settings, so the next read is fresh.
+pub fn forget() {
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 /// The merged settings, or an empty object when the console cannot be asked.
 ///
 /// For a caller that needs several keys at once: one request, then read from
 /// the result with `u64_at`/`str_at`. Three `*_or` calls in a row would be
 /// three round trips for one answer.
 pub fn all(console_url: &str) -> serde_json::Value {
+    {
+        let hit = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, value)) = hit.as_ref() {
+            if at.elapsed() < CACHE_FOR {
+                return value.clone();
+            }
+        }
+    }
     match fetch(console_url) {
-        Ok(v) => v,
+        Ok(v) => {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((Instant::now(), v.clone()));
+            v
+        }
         Err(e) => {
             log::debug!("settings: unavailable ({e}); using defaults");
             serde_json::Value::Null

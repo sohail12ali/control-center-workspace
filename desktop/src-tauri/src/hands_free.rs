@@ -246,9 +246,15 @@ fn run(
 
         let policy_for_gate = policy.clone();
         match listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
-            should_send(text, &policy_for_gate)
+            let addressed = should_send(text, &policy_for_gate);
+            if !addressed {
+                log::info!("hands-free: {}", why_not(text, &policy_for_gate));
+            }
+            addressed
         }) {
             Ok(sent) => log::info!("hands-free: sent {sent:?}"),
+            // `listen` now says when a take was heard and dropped, so the
+            // quiet cases below stay quiet without hands-free looking dead.
             Err(reason) => {
                 // "nothing heard" is the normal outcome of a quiet room and
                 // must not be logged as a problem or slow the loop down.
@@ -295,6 +301,37 @@ pub fn should_send(transcript: &str, policy: &Policy) -> bool {
     !policy.require_wake || is_addressed(transcript, &policy.wake_word)
 }
 
+/// Why the gate said no — in the one bit that is worth knowing and safe to
+/// write down.
+///
+/// The transcript of unaddressed speech never goes in the log, and that rule
+/// is not negotiable. But "it heard you and dropped you" leaves the user with
+/// two very different problems that look identical: they forgot the wake
+/// word, or they said it and the recogniser heard something else. The first
+/// is fixed by repeating yourself, the second only by changing the wake word
+/// — and nothing in the log distinguished them.
+///
+/// So this reports whether the wake word occurred ANYWHERE in what was heard.
+/// One bit about the utterance, and the one that tells you which problem you
+/// have. Found the hard way: `console` came back from a live over-the-air
+/// take as a word that was not `console`, twice, and the log could only say
+/// "5 words".
+fn why_not(text: &str, policy: &Policy) -> String {
+    let wake = policy.wake_word.trim().to_lowercase();
+    let present = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == wake);
+    if present {
+        format!("not addressed: {wake:?} was in there, but not at the start")
+    } else {
+        format!(
+            "not addressed: no {wake:?} in what was heard - if you did say it, \
+             the recogniser wrote down a different word"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +344,11 @@ mod tests {
             "hey console take a screenshot",
             "OK console, status ticket two",
             "  console  status  ",
+            // Verbatim from the recogniser, punctuation and all — this is
+            // the exact string a live take produced, so the shape of real
+            // whisper output is pinned rather than imagined.
+            "Hey console, take a screenshot.",
+            "Console, what is open?",
         ] {
             assert!(is_addressed(said, "console"), "{said:?}");
         }
@@ -331,6 +373,21 @@ mod tests {
     fn the_wake_word_must_be_a_whole_word() {
         assert!(!is_addressed("consoles are great", "console"));
         assert!(is_addressed("console: status", "console"));
+    }
+
+    #[test]
+    fn the_reason_says_which_of_the_two_problems_it_was() {
+        let p = Policy::default();
+        // Said it, in the wrong place.
+        assert!(why_not("I was telling Sam about the console", &p)
+                .contains("not at the start"));
+        // Did not say it — or said it and was misheard, which from here is
+        // the same observation and the same advice.
+        let missed = why_not("hey council, take a screenshot", &p);
+        assert!(missed.contains("different word"), "{missed}");
+        // And under no circumstances does the reason quote the speech.
+        assert!(!missed.contains("screenshot"), "{missed}");
+        assert!(!missed.contains("council"), "{missed}");
     }
 
     #[test]

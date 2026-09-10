@@ -57,14 +57,25 @@ const SPEECH_OFF: f32 = 0.35;
 /// This is the fix for the defect that made every take run to the cap: on a
 /// microphone with a high noise floor — an array mic in a room with a fan —
 /// the detector scores background noise above `SPEECH_OFF` forever, so the
-/// silence that ends a take never arrives. Measuring the room first and
-/// moving the thresholds above whatever it is doing costs 300ms once per
-/// take, which is cheaper than the 20 seconds it used to cost every time.
+/// silence that ends a take never arrives. Measuring the room and moving the
+/// thresholds above whatever it is doing is what ends takes at all.
 ///
 /// Strictly shorter than `MIN_SPEECH`, so calibration can never be the reason
-/// a take was rejected as too short — 200ms is twelve frames, plenty for a
-/// mean, and it keeps that inequality true rather than merely equal.
-const CALIBRATE: Duration = Duration::from_millis(200);
+/// a take was rejected as too short — 100ms is six frames, and it keeps that
+/// inequality true rather than merely equal.
+///
+/// It used to be 200ms, and — more importantly — those frames were the ONLY
+/// measurement: their mean became the floor for the whole take. That carried
+/// an assumption which is false exactly where it matters, that a take begins
+/// in silence. Hands-free restarts takes back to back, so one routinely
+/// begins mid-sentence; the floor was then measured from someone's voice, the
+/// speech threshold went above it, and the rest of the sentence read as
+/// silence. The take ran to its cap and reported hearing nothing.
+///
+/// So these frames only SEED the floor now. From there it follows the
+/// quietest audio in the take (see `push`), which is true whether the take
+/// opened on a silent room or on a word already in progress.
+const CALIBRATE: Duration = Duration::from_millis(100);
 
 /// How far above the measured floor a frame has to be to count as speech, in
 /// score and in loudness. Both are required: a neural VAD scores steady hum
@@ -83,13 +94,23 @@ const RMS_MARGIN: f32 = 2.2;
 /// click.
 const SPEECH_RUN: usize = 3;
 
-/// The noise floor keeps moving during the take, at this rate per frame.
+/// How fast the floor is allowed to RISE, per frame, once seeded.
 ///
-/// A floor measured once at the start describes the room as it was 200ms ago.
-/// Rooms change — a fan cycles, someone starts typing — and a stale floor is
-/// how a take ends up waiting for a silence that, by its own definition,
-/// already happened.
-const FLOOR_DRIFT: f32 = 0.02;
+/// Falling is instant and rising is slow, and that asymmetry is the whole
+/// trick. A floor measured once at the start describes the room as it was
+/// 100ms ago; rooms change, so it has to move. But if it moved UP as readily
+/// as down, a loud voice would drag it up with it and the speaker would talk
+/// themselves back under their own threshold. Rising slowly tracks a fan that
+/// starts mid-take; falling instantly finds the true floor in the first gap
+/// between two syllables.
+///
+/// Deliberately slower than any utterance — the time constant is longer than
+/// `DEFAULT_MAX_TAKE`, so within one take this is very nearly "the minimum
+/// seen". A room that genuinely gets louder is therefore tracked across
+/// takes rather than within one, and the failure it can cause meanwhile is
+/// a take that runs to the cap: bounded, and far better than the speaker
+/// going inaudible halfway through a sentence.
+const FLOOR_RISE: f32 = 0.0005;
 
 pub type AudioResult<T> = Result<T, String>;
 
@@ -209,7 +230,21 @@ pub struct Endpointer {
     samples: usize,
     /// Consecutive speech-looking frames, for `SPEECH_RUN`.
     run: usize,
+    /// The loudest frame seen. Diagnostic only, and worth the four bytes: it
+    /// is what separates "the room was quiet" from "the microphone heard
+    /// nothing at all", and those two send you to completely different
+    /// places — one is a threshold, the other is a device.
+    peak: f32,
     trailing_silence: Duration,
+}
+
+/// Move a floor toward an observation: straight down, slowly up.
+fn drift_toward(floor: f32, observed: f32) -> f32 {
+    if observed < floor {
+        observed
+    } else {
+        floor + (observed - floor) * FLOOR_RISE
+    }
 }
 
 impl Default for Endpointer {
@@ -230,6 +265,7 @@ impl Endpointer {
             floor_rms: 0.0,
             samples: 0,
             run: 0,
+            peak: 0.0,
             trailing_silence,
         }
     }
@@ -246,17 +282,26 @@ impl Endpointer {
 
     /// Feed one frame. Returns true when the take should end.
     pub fn push(&mut self, score: f32, loudness: f32) -> bool {
-        // Measure the room first. Nothing counts as speech and nothing counts
-        // as silence while this runs, so a noisy start cannot end a take
-        // before it has begun.
+        self.samples += 1;
+        if loudness > self.peak {
+            self.peak = loudness;
+        }
+        // Seed from the first few frames. Nothing counts as speech and
+        // nothing counts as silence while this runs, so a noisy start cannot
+        // end a take before it has begun.
         if self.calibrating > 0 {
             self.calibrating -= 1;
-            self.samples += 1;
             let n = self.samples as f32;
             self.floor_score += (score - self.floor_score) / n;
             self.floor_rms += (loudness - self.floor_rms) / n;
             return false;
         }
+        // From here the floor is the QUIETEST thing in the take, not the
+        // first thing in it: down instantly, up slowly. A take that opened
+        // mid-word corrects itself at the first gap between syllables
+        // instead of spending the whole utterance deaf.
+        self.floor_rms = drift_toward(self.floor_rms, loudness);
+        self.floor_score = drift_toward(self.floor_score, score);
 
         let (on, off, min_rms) = self.thresholds();
         // Both signals have to agree. The score alone was the old rule, and a
@@ -277,10 +322,6 @@ impl Endpointer {
             if score < off || loudness < min_rms {
                 self.silence_frames += 1;
             }
-            // Let the floor follow the room while nobody is talking, so a
-            // fan that starts mid-take does not become "speech".
-            self.floor_score += (score - self.floor_score) * FLOOR_DRIFT;
-            self.floor_rms += (loudness - self.floor_rms) * FLOOR_DRIFT;
         }
         // Only after real speech: leading silence must not end a take before
         // the user has said anything.
@@ -295,6 +336,13 @@ impl Endpointer {
 
     pub fn heard_speech(&self) -> bool {
         self.speech_frames as f32 * frame_ms() >= MIN_SPEECH.as_millis() as f32
+    }
+
+    /// The loudest frame seen, and how many frames looked like speech. For
+    /// the one log line that can tell a threshold problem from a dead
+    /// microphone without recording anybody.
+    pub fn observed(&self) -> (f32, usize) {
+        (self.peak, self.speech_frames)
     }
 }
 
@@ -499,8 +547,13 @@ impl Mic {
 
     set_level(0.0);
     let (on, off, min_rms) = endpointer.thresholds();
+    let (peak, speech_frames) = endpointer.observed();
+    // Logged for EVERY take, including the ones that heard nothing — those
+    // are the ones you need it for. A peak near zero is a microphone
+    // problem; a healthy peak with no speech frames is a threshold problem.
     log::debug!(
-        "audio: room floor gave thresholds on {on:.2} off {off:.2} rms {min_rms:.4}"
+        "audio: thresholds on {on:.2} off {off:.2} rms {min_rms:.4}; \
+         loudest frame {peak:.4}, {speech_frames} speech frames"
     );
     let samples = collected.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if !endpointer.heard_speech() {
@@ -719,6 +772,52 @@ mod tests {
         let (on_n, _, rms_n) = noisy.thresholds();
         assert!(on_n > SPEECH_ON, "a noisy room has to raise the bar");
         assert!(rms_n > 0.0, "and give the energy gate something to compare to");
+    }
+
+    #[test]
+    fn a_take_that_opens_mid_sentence_still_hears_the_rest_of_it() {
+        // Reported as "hands-free is listening but not working", and it was
+        // exactly this. Hands-free restarts takes back to back, so a take
+        // routinely opens while the user is already mid-word. The floor was
+        // measured from the first 200ms, i.e. from their VOICE, the
+        // thresholds went above it, and every remaining frame of the
+        // sentence read as silence — the take ran to its cap and reported
+        // hearing nothing at all.
+        let mut ep = Endpointer::default();
+        // Note what is missing: no quiet room first.
+        assert!(!feed_loud(&mut ep, 0.95, 0.09, 40));
+        // One gap between two syllables is all it takes to find the floor.
+        feed_loud(&mut ep, 0.05, 0.001, 2);
+        assert!(!feed_loud(&mut ep, 0.95, 0.09, 30), "they carried on");
+        assert!(ep.heard_speech(), "the rest of the sentence was audible");
+        assert!(feed_loud(&mut ep, 0.05, 0.001, 60), "and it ends when they stop");
+    }
+
+    #[test]
+    fn a_long_sentence_cannot_raise_the_floor_over_the_speaker() {
+        // The other side of the same rule. The floor has to move up for a
+        // room that gets noisier, but if it moved up as readily as it moves
+        // down, someone holding forth for a few seconds would drag their own
+        // threshold up past their own voice and go inaudible mid-sentence —
+        // trading the old bug for a subtler one.
+        let mut ep = Endpointer::default();
+        quiet_room(&mut ep);
+        feed_loud(&mut ep, 0.95, 0.09, 400); // ~6.4 seconds, unbroken
+        let (on, _, min_rms) = ep.thresholds();
+        assert!(min_rms < 0.09, "the speaker's own voice must stay above the gate");
+        assert!(on < 0.95, "and above the score threshold");
+        assert!(ep.heard_speech(), "all of which was heard");
+    }
+
+    #[test]
+    fn the_floor_finds_the_quiet_even_when_the_take_opens_loud() {
+        let mut ep = Endpointer::default();
+        feed_loud(&mut ep, 0.9, 0.2, 20); // opens on a shout
+        let (_, _, loud_gate) = ep.thresholds();
+        feed_loud(&mut ep, 0.02, 0.001, 4); // then the room, briefly
+        let (_, _, quiet_gate) = ep.thresholds();
+        assert!(quiet_gate < loud_gate / 10.0,
+                "the floor follows the quietest audio, not the first audio");
     }
 
     #[test]

@@ -389,7 +389,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 let quitting = window
                     .try_state::<Mutex<ShellState>>()
                     .and_then(|s| s.inner().lock().ok().map(|g| g.quitting))
@@ -401,6 +401,13 @@ fn main() {
                 }
             }
             tauri::WindowEvent::Destroyed => {
+                // Only the MAIN window ending means the shell is going away.
+                // This used to fire for any window, and the overlay is a
+                // window — so closing the HUD would have stopped the console
+                // sidecar out from under a shell that was still running.
+                if window.label() != "main" {
+                    return;
+                }
                 if let Some(state) = window.try_state::<Mutex<ShellState>>() {
                     if let Ok(s) = state.inner().lock() {
                         stop_owned(&s);

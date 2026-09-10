@@ -94,9 +94,20 @@ pub fn request_quit(app: &AppHandle) {
             s.quitting = true;
         }
     }
+    // Close the overlay first. It is a second window, and that turned out to
+    // matter: Tauri ends the process when the LAST window closes, so once the
+    // HUD existed, closing `main` stopped the sidecar and left the shell
+    // running with a dead console behind it — every feature broken, and no
+    // way to quit. Reported as "Exit is not working", and it was.
+    if let Some(hud) = app.get_webview_window(crate::hud::LABEL) {
+        warn_on_err("request_quit hud close()", hud.close());
+    }
     if let Some(w) = app.get_webview_window("main") {
         warn_on_err("request_quit close()", w.close());
     }
+    // And say so outright rather than relying on window bookkeeping to imply
+    // it. `exit` runs the exit hooks, so the sidecar still gets stopped.
+    app.exit(0);
 }
 
 pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {

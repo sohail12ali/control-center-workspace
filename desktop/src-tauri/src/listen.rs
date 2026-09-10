@@ -177,7 +177,10 @@ where
     // one reader for the whole shell. Asked for once per take rather than
     // cached, so changing them on the Settings tab takes effect on the next
     // thing you say instead of the next time you launch.
+    log::debug!("listen: step watcher {}ms", step.elapsed().as_millis());
+    let step = std::time::Instant::now();
     let settings = console_settings::all(console_url);
+    log::debug!("listen: step settings {}ms", step.elapsed().as_millis());
     let limits = audio::Limits {
         max_take: std::time::Duration::from_secs(console_settings::u64_at(
             &settings, "listen_max_seconds", audio::DEFAULT_MAX_TAKE.as_secs(),
@@ -246,7 +249,16 @@ where
     // unaddressed speech is heard, transcribed on this machine, and dropped,
     // rather than travelling anywhere to be judged.
     if !gate(&text) {
-        log::debug!("listen: not addressed to the assistant, discarded");
+        // Say that something was heard and dropped — but never WHAT. The
+        // transcript of unaddressed speech does not leave this machine, and a
+        // log file on it is still leaving the moment it is written.
+        //
+        // Silence here is what made hands-free look broken: it heard, it
+        // discarded, and nothing anywhere said so, which is identical to a
+        // dead microphone from the outside.
+        log::info!("listen: heard {} words, not addressed - discarded",
+                   text.split_whitespace().count());
+        crate::tray_paint::said("heard you - say the wake word first");
         note(assistant, Event::Cancel);
         return Err("not addressed".into());
     }
