@@ -15,11 +15,11 @@ artifact: verification
 | 4 | Backend resolution does not pay for probes it does not need | **PASS — measured** | Cold probe cache, stored choice `claude`: **8ms**, asking about zero other candidates. The previous behaviour (`installed` for every row up front): **3092ms** on this same machine. |
 | 5 | The chain states why it passed a candidate over, never falls silently | **PASS — live** | With the stored choice cleared, on this machine: ollama *"nothing is listening on 127.0.0.1:11434"*, lm-studio *"192.168.1.14:1234 did not answer within 1.5s"*, openrouter *"OPENROUTER_API_KEY is not set"*. Plus `TestTalkReadyPreflight` for reachable-but-toolless and reachable-but-empty. |
 | 6 | The tray menu shows every available row, unavailable ones disabled with a reason | **PASS — live** | Win32 drive of the release build: **15 rows** at root (13 items + 2 separators) where T-002 last recorded 10. `Dictate`, `Saved prompts` and `Watch` render disabled carrying their `reason_unavailable`. Submenus read: Listening → Off / Short take / Hands-free; Clipboard → Copy last reply / Send clipboard…. Startup log: `tray: 18 rows — …` with 3 marked `(unavailable)`. |
-| 7 | Every wired row acts; gated rows never act from the menu | **PASS (gated: PASS by construction)** | Drove `Clipboard ▸ Copy last reply` on the live menu; console audit recorded `assistant.say tray {'command': 'copy_last'} handled`. Drove `Quit`: process gone, sidecar port 8790 closed. The three gated rows are routed by *reading* `never_one_click` from the registry, so they open the window — pinned by `the_gated_capture_and_clipboard_rows_refuse_one_click` and the Python counterpart. |
+| 7 | Every wired row acts; gated rows never act from the menu | **PASS — both halves driven** | Drove `Clipboard ▸ Copy last reply` on the live menu; console audit recorded `assistant.say tray {'command': 'copy_last'} handled`. Drove `Quit`: process gone, sidecar port 8790 closed. The three gated rows are routed by *reading* `never_one_click` from the registry. Driven: minimised the main window, clicked `Region` (gated, `never_one_click`) — the window came back and **zero captures were taken**. Also pinned by `the_gated_capture_and_clipboard_rows_refuse_one_click` and its Python counterpart. |
 | 8 | A tray click responds with the console stopped | **PASS** | `click.rs` reads through the 30s cache (`console_settings::all` + `str_at`) and `string_or` — the only cache-bypassing reader, and the tray's only caller — is deleted. With no console the loopback connect is refused immediately; the read falls back to `"listen"`. |
 | 9 | The fast path is measurable | **PASS** | `ApiSession` stamps a real `duration_ms` (was a hardcoded `0`) plus a new `ttft_ms`, both threaded through `telemetry.FIELDS` and `agent_session`'s recorder. |
-| 10 | No event sequence strands the overlay; ✕ / Esc / drag work | **PASS** | `ApprovalResolved` now hides (it mapped to `{}`); a lost stream clears a stale card (`a_stale_card_is_cleared_when_the_stream_is_lost`); a 120s watchdog re-armed per state change is the backstop. In-browser drive: ✕ → `dismiss`, Esc → `dismiss`, and `data-tauri-drag-region` present on both `#panel` and `#top`. |
-| 11 | A card is answerable from the overlay | **PASS (wiring); live card drive NOT done** | Allow → `{"action":"allow"}`, Deny → `{"action":"deny"}`, Stop → `{"action":"stop"}` all emitted, verified in the browser. Key capture: `a_card_is_remembered_by_tool_and_key_then_forgotten`. Route: `TestAnsweringACardOnTheAssistantsOwnChat`. Not driven against a real gated tool call — see *Not verified*. |
+| 10 | No event sequence strands the overlay; ✕ / drag work | **PASS for ✕ — Esc FAILED, see below** | Driven in the REAL shell: HUD visible mid-turn, clicked ✕, `hud: dismiss` in the shell log and the window hidden while the turn was still running (so not `hide_soon`). `ApprovalResolved` now hides (it mapped to `{}`); a lost stream clears a stale card (`a_stale_card_is_cleared_when_the_stream_is_lost`); a 120s watchdog re-armed per state change is the backstop. `data-tauri-drag-region` present on `#panel` and `#top`. |
+| 11 | A card is answerable from the overlay | **PASS — driven live** | Asked the Assistant to run a shell command on the local model; `run_command` raised a real card (key `fdb6f1668c77`). Clicked **Deny** on the always-on-top panel: `hud: deny` then `hud: deny sent` in the shell log, `approval.decided decision=deny` on the stream, and the model received `Denied: A human denied this run_command call.` Nothing was executed. Deny rather than Allow on purpose — it exercises the identical emit → `console_api::approve` → `REGISTRY.decide` path and runs no command. |
 | 12 | T-002 closed | **PASS** | See *T-002* below. |
 
 ## Test Results
@@ -96,6 +96,27 @@ Its `ticket-scripts/tray-menu-lib.ps1` is what made criteria 6 and 7 verifiable 
 the tray is invisible to UI Automation, and that helper's `MN_GETHMENU` route reads and
 clicks it exactly. It was written to be reused and it was.
 
+## Corrections to this document
+
+**Criterion 10 was marked PASS for Esc and that was wrong.** The browser drive proved the
+page's `keydown` handler fires and emits `dismiss` — it did not prove a keydown ever
+reaches the page. In the real shell it never does: the overlay is built `.focused(false)`
+with `skip_taskbar(true)` so it cannot steal the caret from whatever you are typing in,
+and clicking its body does not focus it either because the whole panel is a
+`data-tauri-drag-region`, so a press there begins a window drag. Driven and confirmed:
+the panel is never the foreground window, and Esc produces nothing either before or after
+clicking it.
+
+Fixed by removing the claim rather than the code — the ✕ tooltip said "Close (Esc)",
+which is a control advertising a shortcut that cannot work, and that is worse than not
+offering it: it sends you hunting for a broken key instead of the button beside it. The
+listener is kept (one line, correct wherever the page does have focus) and is simply no
+longer advertised.
+
+The general lesson, worth more than the fix: **testing a page in a browser tests the page,
+not the shell.** Every other overlay claim in criterion 10 and 11 was re-driven inside the
+real Tauri window before being called PASS.
+
 ## Not verified — stated plainly
 
 1. **Criterion 2, the latency number.** Needs `OPENROUTER_API_KEY` in the workspace
@@ -105,11 +126,14 @@ clicks it exactly. It was written to be reused and it was.
    speed win is configured, not yet demonstrated.** Once the key is set, the numbers to
    read are `duration_ms` and `ttft_ms` in `knowledge-center/telemetry/2026-09.jsonl`,
    which AC 9 put there.
-2. **Criterion 11 against a real card.** The emit path, the key capture and the route are
-   each tested, but no live gated tool call was driven end to end through the overlay's
-   Allow button. It needs a chat that calls a gated tool while the shell is running.
-3. **T-002 row 8**, as above.
-4. **macOS and Linux.** Only Windows was built and driven here. The overlay's
+2. **The Allow button specifically.** Deny was driven end to end against a real card;
+   Allow shares the identical path and differs only in the string sent, but it was not
+   pressed — approving a shell command to prove a button works is the wrong trade.
+3. **The 120s watchdog firing.** Every state change re-arms it, and a turn ending hides
+   the panel via `hide_soon` first, so isolating it needs a frozen stream. Its logic is
+   unit-covered; the timer itself has not been watched expire.
+4. **T-002 row 8**, as above.
+5. **macOS and Linux.** Only Windows was built and driven here. The overlay's
    transparency is already per-platform in `hud.rs`, and CI builds all three — but the
    generated menu has not run on libappindicator, where the registry's own note says a
    left-click never reaches the app and the `Listening ▸ Short take` row is the only form

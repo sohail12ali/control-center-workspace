@@ -133,7 +133,7 @@
     <span id="state">Idle</span>
     <span id="hint"></span>
     <div id="acts"></div>
-    <button id="x" type="button" title="Close (Esc)" aria-label="Close">✕</button>
+    <button id="x" type="button" title="Close" aria-label="Close">✕</button>
   </div>
   <div id="meter"></div>
   <div id="text" class="empty">…</div>
@@ -222,9 +222,23 @@
   document.getElementById("x").addEventListener("click", function () {
     act("dismiss");
   });
-  /* Esc, because a panel with no title bar is a panel your hands cannot
-     find. Works whenever the overlay has focus; the ✕ covers the rest, since
-     the window deliberately does not take focus from what you are typing. */
+  /* Esc, for the case where this page has focus — which in the desktop shell
+     is NEVER, and that is deliberate.
+     ## Why it is kept anyway, and why the button no longer advertises it
+     The overlay window is built `.focused(false)` with `skip_taskbar(true)`
+     (`desktop/src-tauri/src/hud.rs`), because it floats over whatever you are
+     typing in and must not steal the caret. Clicking its body does not focus
+     it either: the whole panel is a `data-tauri-drag-region`, so a press
+     there starts a window drag rather than an activation.
+     So a keydown never arrives, and Esc never fires. Driven and confirmed in
+     the real shell: the panel is not the foreground window, and Esc produces
+     nothing before or after clicking it. The ✕ said "Close (Esc)" and that
+     was a control describing a shortcut that could not work — worse than not
+     offering it, because it sends you hunting for a broken key instead of the
+     button right beside it.
+     The listener stays because it costs one line and is correct wherever this
+     page DOES have focus — opened in a browser, or a future surface that
+     takes focus on purpose. It is simply no longer claimed in the UI. */
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") act("dismiss");
   });
