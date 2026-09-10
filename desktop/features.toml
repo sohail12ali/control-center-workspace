@@ -19,6 +19,11 @@
 #   parent             submenu owner id (optional)
 #   reason_unavailable shown when available=false (same honesty as voice.js)
 #   hotkey             empty = unbound; Settings stores desktop.hotkey.{id}
+#   check              optional, default false. The row is a STATE and carries a
+#                      tick, not a command. Declared here rather than inferred
+#                      from the id, because the tray is now built from this file
+#                      (desktop/src-tauri/src/features.rs) and a menu item's
+#                      shape is part of what the row means.
 
 [meta]
 schema_version = 1
@@ -155,6 +160,10 @@ skeleton = false
 never_one_click = false
 reason_unavailable = ""
 hotkey = ""
+# A state you are IN, and the tick is how you can tell the microphone is open
+# without waiting for the icon to change. It follows the outcome of the toggle,
+# never the click — a ticked box over a closed mic is the one state to avoid.
+check = true
 
 [[features]]
 id = "dictate"
@@ -369,6 +378,9 @@ skeleton = true
 never_one_click = false
 reason_unavailable = ""
 hotkey = ""
+# A state, not a command: the tick is how you can tell whether a reply will be
+# read aloud without waiting for one.
+check = true
 
 [[features]]
 id = "dnd"

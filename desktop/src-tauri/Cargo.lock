@@ -925,6 +925,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
  "tiny_http",
+ "toml 0.8.2",
  "url",
  "windows 0.61.3",
  "windows-sys 0.59.0",

@@ -181,20 +181,10 @@ pub fn str_at(settings: &serde_json::Value, key: &str, fallback: &str) -> String
         .to_string()
 }
 
-/// One string setting, with a fallback used for every failure — unreachable
-/// console, missing key, wrong type, or a blank value.
-pub fn string_or(console_url: &str, key: &str, fallback: &str) -> String {
-    match fetch(console_url) {
-        Ok(v) => v
-            .get(key)
-            .and_then(|x| x.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(fallback)
-            .to_string(),
-        Err(e) => {
-            log::debug!("settings: {key} unavailable ({e}); using {fallback:?}");
-            fallback.to_string()
-        }
-    }
-}
+// `string_or` used to live here: one key, one fresh `fetch`, no cache. It was
+// removed rather than fixed, because "fetch a single key" is the shape of the
+// bug. Its only caller was `click.rs`, on the tray's UI thread, on every
+// click — so the one convenience function in this module was also the one
+// path that could freeze the menu for the length of a request. A caller that
+// wants one key now uses `all()` + `str_at`, which shares the cache with
+// everything else and cannot accidentally opt out of it.

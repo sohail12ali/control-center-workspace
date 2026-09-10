@@ -13,6 +13,11 @@ tauri-build = { version = "2", features = [] }
 log = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `desktop/features.toml` is the registry the tray is BUILT from, not merely
+# described by — see `features.rs`. Parsed from an `include_str!`, so this adds
+# a compile-time dependency and no runtime file access: a shell that starts is
+# a shell whose registry parsed.
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 # `image-png` lets `tauri::image::Image::from_bytes` decode the tray-state
 # PNGs embedded with `include_bytes!`; without it the icons cannot be built
 # at runtime and the tray is stuck on its one bundled icon.

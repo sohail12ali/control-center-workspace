@@ -119,12 +119,24 @@ pub fn act(app: &tauri::AppHandle) {
     }
 }
 
-/// The configured meaning of a click, asked fresh each time.
+/// The configured meaning of a click.
 ///
-/// Fresh rather than cached: settings are changed on the Settings tab in the
-/// same app, and a cached value would mean the change did not take effect
-/// until a restart, which nothing in the UI would tell you. The read is one
-/// loopback request.
+/// Through the CACHED reader, which is the whole point. This used to call
+/// `console_settings::string_or`, which fetched every time and so bypassed the
+/// cache the rest of the shell shares — a blocking HTTP round trip on the
+/// tray's UI thread, on every single click.
+///
+/// That was not theoretical. `GET /api/assistant/settings` reported which
+/// backends were installed, and computing that probed every provider at 1.5s
+/// each, including a LAN address that was switched off. So a click could hang
+/// the menu for about three seconds, which from the outside is a tray that
+/// does not work. The endpoint no longer probes (T-015) and the answer is
+/// cached for thirty seconds, warmed by the startup thread that reads the
+/// mute state — so by the time anyone can click, this costs a lock.
+///
+/// Still not a stored copy: settings are changed on the Settings tab in the
+/// same app, and `set_bool` drops the cache, so a change takes effect on the
+/// next click rather than the next launch.
 fn setting_for(app: &tauri::AppHandle) -> String {
     let url = app
         .try_state::<std::sync::Mutex<crate::ShellState>>()
@@ -133,7 +145,8 @@ fn setting_for(app: &tauri::AppHandle) -> String {
     if url.is_empty() {
         return "listen".into();
     }
-    crate::console_settings::string_or(&url, "tray_click_action", "listen")
+    let settings = crate::console_settings::all(&url);
+    crate::console_settings::str_at(&settings, "tray_click_action", "listen")
 }
 
 #[cfg(test)]

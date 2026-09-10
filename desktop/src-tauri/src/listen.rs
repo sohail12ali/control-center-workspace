@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::tray_state::{Assistant, Event};
 use crate::console_settings;
+use crate::console_api;
 use crate::{audio, stt, tts};
 
 /// Guards against two takes at once. An `AtomicBool` rather than the state
@@ -271,7 +272,7 @@ where
     // Handing it to the console is what makes a spoken command and a typed
     // one the same thing.
     let sending = std::time::Instant::now();
-    say(console_url, &text)?;
+    console_api::say(console_url, &text, "voice")?;
     crate::cue::play(crate::cue::Cue::Sent);
     // One line, whole take, in the order the user experiences it. `checks` is
     // the part before the microphone is even asked to open — the part nobody
@@ -288,79 +289,6 @@ where
     Ok(text)
 }
 
-/// POST the transcript to the assistant, exactly as the palette would.
-fn say(console_url: &str, text: &str) -> ListenResult<()> {
-    use std::io::{BufRead, BufReader, Write};
-    let (host, port) = split_host_port(console_url)
-        .ok_or_else(|| format!("cannot parse the console url {console_url}"))?;
-    let body = format!(
-        "{{\"text\":{},\"source\":\"voice\"}}",
-        json_string(text)
-    );
-    let mut stream = std::net::TcpStream::connect((host.as_str(), port))
-        .map_err(|e| format!("cannot reach the console: {e}"))?;
-    let head = format!(
-        "POST /api/assistant/say HTTP/1.1\r\nHost: {host}:{port}\r\n\
-         Content-Type: application/json\r\nX-Console-Request: 1\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream
-        .write_all(head.as_bytes())
-        .and_then(|()| stream.write_all(body.as_bytes()))
-        .map_err(|e| format!("cannot send the transcript: {e}"))?;
-    let mut status = String::new();
-    BufReader::new(stream)
-        .read_line(&mut status)
-        .map_err(|e| format!("no answer from the console: {e}"))?;
-    if !accepted(&status) {
-        return Err(format!("the console said {}", status.trim()));
-    }
-    Ok(())
-}
-
-/// Did the console accept the transcript?
-///
-/// Any 2xx, not 200 alone. The first message of a brand-new chat is answered
-/// `201 Created` — found by a live hands-free run, where a perfectly delivered
-/// sentence was logged as a failure because it had created the chat it landed
-/// in.
-fn accepted(status_line: &str) -> bool {
-    status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .map(|code| (200..300).contains(&code))
-        .unwrap_or(false)
-}
-
-/// Minimal JSON string escaping. The transcript is model-adjacent text from a
-/// speech engine; a stray quote in it must not produce a malformed body.
-fn json_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-fn split_host_port(url: &str) -> Option<(String, u16)> {
-    let rest = url.strip_prefix("http://")?;
-    let authority = rest.split('/').next()?;
-    let (host, port) = authority.rsplit_once(':')?;
-    Some((host.to_string(), port.parse().ok()?))
-}
-
 /// Tell the tray what just happened.
 ///
 /// Through `tray_paint` rather than straight into the state machine: this used
@@ -371,61 +299,8 @@ fn note(assistant: &Arc<Mutex<Assistant>>, event: Event) {
 }
 
 #[cfg(test)]
-mod status_tests {
-    use super::accepted;
-
-    #[test]
-    fn any_2xx_means_the_console_took_it() {
-        // 201 is not hypothetical: it is what the console answers when the
-        // transcript starts a new chat, which is the ordinary case for the
-        // first thing you say after launching.
-        for line in ["HTTP/1.0 200 OK", "HTTP/1.1 201 Created", "HTTP/1.0 204 No Content"] {
-            assert!(accepted(line), "{line:?}");
-        }
-    }
-
-    #[test]
-    fn anything_else_is_a_failure_worth_reporting() {
-        for line in ["HTTP/1.0 400 Bad Request", "HTTP/1.1 500 Internal Server Error",
-                     "HTTP/1.0 302 Found", "garbage", ""] {
-            assert!(!accepted(line), "{line:?}");
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_transcript_with_quotes_cannot_break_the_body() {
-        // The transcript comes from a speech engine listening to a room, so
-        // it is not trusted input.
-        assert_eq!(json_string(r#"say "hello""#), r#""say \"hello\"""#);
-        assert_eq!(json_string("back\\slash"), r#""back\\slash""#);
-        assert_eq!(json_string("two\nlines"), r#""two\nlines""#);
-    }
-
-    #[test]
-    fn control_characters_are_escaped_not_emitted() {
-        // Escaped as JSON requires, not dropped: a raw control byte
-        // inside a string is what would make the request body malformed.
-        assert_eq!(json_string("bell\u{7}"), r#""bell\u0007""#);
-    }
-
-    #[test]
-    fn ordinary_words_pass_through() {
-        assert_eq!(json_string("status ticket two"), r#""status ticket two""#);
-    }
-
-    #[test]
-    fn the_console_url_splits() {
-        assert_eq!(
-            split_host_port("http://127.0.0.1:8790"),
-            Some(("127.0.0.1".to_string(), 8790))
-        );
-        assert_eq!(split_host_port("nonsense"), None);
-    }
 
     #[test]
     fn the_hint_explains_whichever_half_is_missing() {
