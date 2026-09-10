@@ -62,8 +62,23 @@ def server_port():
 
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
            persona="", title="", server_port=0, ticket="",
-           system_append="", extra=""):
-    """Start a chat and send its opening message."""
+           system_append="", extra="", open=True):
+    """Start a chat and, by default, send its opening message.
+
+    `open=False` starts the session and stops there — no message, no turn.
+
+    That exists because a caller who has a real first message does not want a
+    synthetic one in front of it. The Assistant used to open every chat with
+    "Hello.", so the first thing you actually said queued behind a complete
+    turn spent answering a greeting: a process spawn plus a turn on a CLI
+    backend, and up to `max_tool_rounds` on an API one. The opening message
+    was never load-bearing — it was the only way to start a session, and now
+    it is not.
+
+    With no message to prepend to, a backend that has no system-prompt flag
+    gets its injected text parked on the session instead, for the first real
+    `send` to carry. See `BaseSession._pending_system_prefix`.
+    """
     backend = agent_backends.get(repo_root, backend_id)
     if not backend.installed:
         # The backend knows why it is unusable, and "not on PATH" is simply
@@ -73,7 +88,7 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         raise ValueError("%s Pick another backend, or fix that."
                          % backend.unavailable_reason)
     text = (prompt or "").strip()
-    if not text:
+    if not text and open:
         raise ValueError("an opening message is required")
 
     sid = uuid.uuid4().hex[:12]
@@ -96,7 +111,7 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
 
     sess = agent_session.build(
         sid, backend, repo_root, log_path=log_path,
-        title=title or text[:80], model=model, mode=mode,
+        title=title or text[:80] or "(new chat)", model=model, mode=mode,
         skill=skill, persona=persona, on_exit=_on_exit,
         settings_path=settings_path, ticket=ticket,
         system_append=system_append, extra=extra)
@@ -105,12 +120,18 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         _sessions[sid] = sess
     sess.start()
 
+    # No flag to carry the injected system text, so a message has to. Only the
+    # first one — everything after it is a normal continuation of the same
+    # conversation, which already has the text.
+    needs_prefix = bool(system_append) and not backend.supports_system_append_flag
+    if not open:
+        if needs_prefix:
+            sess.defer_system_prefix(system_append)
+        return sess.snapshot()
+
     wire = backend.compose_prompt(text, skill=skill, persona=persona,
                                   repo_root=repo_root)
-    if system_append and not backend.supports_system_append_flag:
-        # No flag to carry it, so the first turn's prompt has to. Only the
-        # opening message needs this — everything after it is a normal
-        # continuation of the same conversation, which already has the text.
+    if needs_prefix:
         wire = system_append + "\n\n" + wire
     sess.send(wire, mode="auto", display=text)
     return sess.snapshot()

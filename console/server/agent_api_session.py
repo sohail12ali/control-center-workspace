@@ -58,6 +58,7 @@ round cap was timid for the second.
 
 import json
 import threading
+import time
 
 from . import agent_approvals
 from . import agent_tools
@@ -179,6 +180,18 @@ class ApiSession(BaseSession):
         reported_cost = 0.0
         cost_reported = False
         stop_reason = ""
+        # Both measured here rather than taken from the provider, which does
+        # not report either. `duration_ms` used to be published as a hardcoded
+        # 0, so every API-backed turn was invisible in telemetry and the whole
+        # point of this transport — that it is fast — could not be shown.
+        #
+        # Time to first token is the second number because it is the one that
+        # decides whether the assistant FEELS fast. A turn that streams its
+        # first word in 400ms and finishes in four seconds reads as quick; one
+        # that says nothing for three seconds and then finishes in the same
+        # four does not, and a duration alone cannot tell them apart.
+        began = time.monotonic()
+        first_token_at = [None]
 
         try:
             while True:
@@ -200,6 +213,8 @@ class ApiSession(BaseSession):
                 text_block = [None]
 
                 def on_text(chunk, holder=text_block):
+                    if first_token_at[0] is None:
+                        first_token_at[0] = time.monotonic()
                     if holder[0] is None:
                         holder[0] = self._next_block()
                         self.stream.publish({"type": "text.start",
@@ -273,8 +288,13 @@ class ApiSession(BaseSession):
             "input_tokens": total_in,
             "output_tokens": total_out,
             "num_turns": 1,
-            "duration_ms": 0,
+            "duration_ms": int((time.monotonic() - began) * 1000),
         }
+        # Omitted rather than sent as 0 when nothing streamed: a turn that only
+        # called tools has no first token, and reporting that as "0ms to first
+        # token" would put the best possible number on the worst case.
+        if first_token_at[0] is not None:
+            end["ttft_ms"] = int((first_token_at[0] - began) * 1000)
         # Publish BEFORE observing, for the same reason the CLI path does:
         # `_observe` reacts to turn.end by draining the queue, and draining
         # publishes the next turn.start. Observing first would open the next

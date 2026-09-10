@@ -93,6 +93,18 @@ class BaseSession:
         # no existing chat changes at all.
         self.system_append = system_append
         self.extra = extra
+        #: System text that still has to ride on the FIRST message, because
+        #: this backend has no flag to carry it.
+        #:
+        #: `agent_manager.create` used to prepend it to the opening message it
+        #: sent itself. A session opened with no message (`open=False`) has no
+        #: such message, so the text would simply be lost — and losing a
+        #: persona silently is the worst available outcome. Parked here and
+        #: consumed by the first `send`, wherever that call comes from: the
+        #: assistant feature talks to `send` directly rather than through
+        #: `agent_manager.send`, so a fix in either caller alone would leave
+        #: the other one broken.
+        self._pending_system_prefix = ""
 
         self.proc = None
         self.native_session_id = ""
@@ -114,6 +126,15 @@ class BaseSession:
         self._ctl = 0
         self._log_fh = None
         self._stopping = False
+
+    def defer_system_prefix(self, text):
+        """Have the first `send` carry `text` ahead of the message.
+
+        For a session opened with no message on a backend that has no
+        system-prompt flag of its own — see `_pending_system_prefix`.
+        """
+        with self._state_lock:
+            self._pending_system_prefix = text or ""
 
     # -- transport seam ------------------------------------------------------
     def start(self):
@@ -187,6 +208,13 @@ class BaseSession:
                 self._busy = True
 
         shown = (display or "").strip() or text
+        # Claimed under the state lock above, so two concurrent first sends
+        # cannot both prepend it. Only the WIRE gets it; `shown` stays what the
+        # user actually typed, which is the same split `display` already makes.
+        with self._state_lock:
+            prefix, self._pending_system_prefix = self._pending_system_prefix, ""
+        if prefix:
+            text = prefix + "\n\n" + text
         extra = {"wire": text} if shown != text else {}
         if not busy:
             self.stream.publish({"type": "turn.start", "text": shown, "steered": False, **extra})
@@ -324,6 +352,7 @@ class BaseSession:
                 output_tokens=turn_out,
                 cost_usd=float(reported) if reported else None,
                 duration_ms=ev.get("duration_ms") or 0,
+                ttft_ms=ev.get("ttft_ms") or 0,
                 is_error=bool(ev.get("is_error")),
             )
         except Exception:  # noqa: BLE001

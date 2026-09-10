@@ -428,8 +428,24 @@ class TestHandsFreeSettings:
 
 
 class _FakeBackend:
-    def __init__(self, installed):
+    """Enough of `agent_backends.Backend` for resolution to run.
+
+    `auth` matters as much as `installed` now: it is what decides whether a
+    row is asked the two preflight questions (is a model loaded, does it do
+    tools). `"key"` is the default here so the existing cases keep testing
+    what they were written to test — plain ordering — and the preflight cases
+    below opt in with `auth="none"`.
+    """
+
+    def __init__(self, installed, auth="key", label="", bid=""):
         self.installed = installed
+        self.auth = auth
+        self.id = bid
+        self.label = label or bid or "a backend"
+
+    @property
+    def unavailable_reason(self):
+        return "" if self.installed else "%s is not available" % self.label
 
 
 class TestBackendResolution:
@@ -456,6 +472,133 @@ class TestBackendResolution:
         assert assistant_config.resolve_backend(str(tmp_path), reg) == "claude"
 
     def test_nothing_installed_says_so_plainly(self, tmp_path):
-        reg = {"claude": _FakeBackend(False)}
-        with pytest.raises(ValueError, match="no enabled\\+installed backend"):
+        reg = {"claude": _FakeBackend(False, bid="claude")}
+        with pytest.raises(ValueError, match="no backend can hold a conversation"):
             assistant_config.resolve_backend(str(tmp_path), reg)
+
+    def test_the_failure_names_every_candidate_and_why(self, tmp_path):
+        """"Nothing works" is not a diagnosis. The message has to carry the
+        reason each one was passed over, or the next step is reading source."""
+        reg = {"claude": _FakeBackend(False, bid="claude", label="Claude Code"),
+               "ollama": _FakeBackend(False, bid="ollama", label="Ollama")}
+        with pytest.raises(ValueError) as caught:
+            assistant_config.resolve_backend(str(tmp_path), reg)
+        message = str(caught.value)
+        assert "Claude Code is not available" in message
+        assert "Ollama is not available" in message
+
+    def test_openrouter_is_preferred_over_a_cli(self, tmp_path):
+        """The default-order fix. A conversation should not go through a
+        coding CLI when a hosted API row is available: measured at 2-300s a
+        turn on `claude` versus about a second on a small hosted model."""
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "openrouter": _FakeBackend(True, bid="openrouter")}
+        assert assistant_config.resolve_backend(str(tmp_path), reg) == "openrouter"
+
+    def test_a_skipped_candidate_reports_why(self, tmp_path):
+        reg = {"claude": _FakeBackend(True, bid="claude"),
+               "ollama": _FakeBackend(False, bid="ollama", label="Ollama")}
+        skipped = []
+        chosen = assistant_config.resolve_backend(str(tmp_path), reg,
+                                                  report=skipped)
+        assert chosen == "claude"
+        assert skipped == [("ollama", "Ollama is not available")]
+
+    def test_a_backend_not_in_the_registry_is_not_chosen(self, tmp_path):
+        """A stored choice can name a backend that has since been deleted from
+        agents.toml. That must fall through, not raise a KeyError."""
+        reg = {"claude": _FakeBackend(True, bid="claude")}
+        assistant_config.update(str(tmp_path), {"backend": "gone"})
+        assert assistant_config.resolve_backend(str(tmp_path), reg) == "claude"
+
+
+class TestTalkReadyPreflight:
+    """Reachable is not usable.
+
+    Every case here is a real failure from `console/.cache/agent-chats/`: a
+    server answering with nothing loaded, and a resident model that cannot
+    call a tool. Both got past the old `installed` check and then failed
+    mid-turn, which reads as a broken assistant rather than a bad pick.
+    """
+
+    def test_a_keyed_provider_is_not_interrogated(self, tmp_path, monkeypatch):
+        """No residency to report and tools by construction — so no requests.
+        This is also what keeps OpenRouter off the two extra round trips."""
+        def boom(*a, **kw):
+            raise AssertionError("a keyed provider must not be probed")
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded", boom)
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities", boom)
+        ok, why = assistant_config.talk_ready(
+            str(tmp_path), _FakeBackend(True, auth="key", bid="openrouter"))
+        assert (ok, why) == (True, "")
+
+    def test_a_running_server_with_nothing_loaded_is_skipped(self, tmp_path,
+                                                             monkeypatch):
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: set())
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities",
+                            lambda *a, **kw: {})
+        ok, why = assistant_config.talk_ready(
+            str(tmp_path),
+            _FakeBackend(True, auth="none", bid="lm-studio", label="LM Studio"))
+        assert not ok
+        assert "no model loaded" in why
+
+    def test_a_resident_model_without_tools_is_skipped(self, tmp_path,
+                                                       monkeypatch):
+        """`deepseek-coder` — reachable, loaded, and "does not support tools",
+        which makes every verb the Assistant has unreachable."""
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: {"deepseek-coder"})
+        monkeypatch.setattr(
+            assistant_config.model_catalog, "capabilities",
+            lambda *a, **kw: {"deepseek-coder": {"tool_use": False}})
+        ok, why = assistant_config.talk_ready(
+            str(tmp_path),
+            _FakeBackend(True, auth="none", bid="ollama", label="Ollama"))
+        assert not ok
+        assert "tool calling" in why
+
+    def test_a_resident_tool_capable_model_is_ready(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: {"qwen3:4b"})
+        monkeypatch.setattr(
+            assistant_config.model_catalog, "capabilities",
+            lambda *a, **kw: {"qwen3:4b": {"tool_use": True}})
+        ok, why = assistant_config.talk_ready(
+            str(tmp_path), _FakeBackend(True, auth="none", bid="ollama"))
+        assert (ok, why) == (True, "")
+
+    def test_a_server_that_reports_nothing_gets_the_benefit_of_the_doubt(
+            self, tmp_path, monkeypatch):
+        """`None` is "cannot say", not "nothing loaded" — and the tool flag is
+        documented as a hint. Refusing on silence would rule out every
+        runtime that does not publish a residency endpoint."""
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: None)
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities",
+                            lambda *a, **kw: {})
+        ok, why = assistant_config.talk_ready(
+            str(tmp_path), _FakeBackend(True, auth="none", bid="ollama"))
+        assert (ok, why) == (True, "")
+
+    def test_the_chain_falls_past_a_dead_local_to_a_hosted_one(self, tmp_path,
+                                                               monkeypatch):
+        """The whole point, end to end: Ollama running but empty, LM Studio
+        unreachable, and the answer is OpenRouter rather than a silent CLI."""
+        monkeypatch.setattr(assistant_config.model_catalog, "loaded",
+                            lambda *a, **kw: set())
+        monkeypatch.setattr(assistant_config.model_catalog, "capabilities",
+                            lambda *a, **kw: {})
+        reg = {
+            "ollama": _FakeBackend(True, auth="none", bid="ollama",
+                                   label="Ollama"),
+            "lm-studio": _FakeBackend(False, auth="none", bid="lm-studio",
+                                      label="LM Studio"),
+            "openrouter": _FakeBackend(True, auth="key", bid="openrouter"),
+            "claude": _FakeBackend(True, bid="claude"),
+        }
+        skipped = []
+        assert assistant_config.resolve_backend(
+            str(tmp_path), reg, report=skipped) == "openrouter"
+        assert [b for b, _why in skipped] == ["ollama", "lm-studio"]

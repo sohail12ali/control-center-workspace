@@ -1131,10 +1131,35 @@
         .catch(function (err) { C.toast(err.message, "err"); load(); });
     }
 
+    /* Which backends the role pickers may offer.
+
+       Two requests rather than one, because the answers cost different
+       things. `/api/assistant/settings` is on the desktop shell's hot path and
+       is now guaranteed not to touch the network; asking which providers are
+       reachable means probing them, so it lives on `/api/agents/backends`
+       where the cost is expected. The pickers paint as soon as the settings
+       land and gain their options a moment later. */
     var installed = [];
+    function loadInstalled() {
+      return C.get("/api/agents/backends")
+        .then(function (d) {
+          installed = (d.backends || [])
+            .filter(function (b) { return b.installed; })
+            .map(function (b) { return b.id; })
+            .sort();
+          return installed;
+        })
+        // A failure here costs the picker its options, not the panel. The
+        // settings themselves are already on screen and still saveable.
+        .catch(function () { return installed; });
+    }
+
     function load() {
       C.get("/api/assistant/settings")
-        .then(function (d) { installed = d.installed || []; paint(d); })
+        .then(function (d) {
+          paint(d);
+          loadInstalled().then(function () { paint(d); });
+        })
         .catch(function (err) {
           C.clear(body);
           // A 404 is not a fault: the assistant plugin can be switched off.

@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-from server import agent_backends, agent_manager, agent_session, assistant
+from server import (agent_backends, agent_events, agent_manager,
+                    agent_session, assistant)
 from server.features import assistant_feature
 
 
@@ -30,9 +31,13 @@ class FakeSession:
         self.kw = kw
         self.sent = []
         self.id = "fake-sid"
+        self.deferred = ""
 
     def start(self):
         pass
+
+    def defer_system_prefix(self, text):
+        self.deferred = text
 
     def send(self, wire, mode="auto", display=""):
         self.sent.append((wire, mode, display))
@@ -120,6 +125,103 @@ class TestSystemAppendDispatch:
         agent_manager.create(repo, "cursor-agent", "hello")
         sess = stub_build["sess"]
         assert sess.sent[0][0] == "hello"
+
+
+class TestOpeningWithNoMessage:
+    """`open=False` — start a session and send nothing.
+
+    The Assistant used to open every chat with "Hello.", so the first thing
+    you actually said queued behind a whole turn spent answering a greeting.
+    On a CLI backend that is a process spawn plus a turn; on an API one it can
+    be up to `max_tool_rounds`.
+    """
+
+    def test_no_message_is_sent(self, repo, monkeypatch, stub_build):
+        backend = _claude_backend(monkeypatch)
+        monkeypatch.setattr(agent_backends, "get", lambda root, bid: backend)
+        agent_manager.create(repo, "claude", "", open=False)
+        assert stub_build["sess"].sent == []
+
+    def test_an_empty_prompt_is_only_allowed_when_not_opening(
+            self, repo, monkeypatch, stub_build):
+        """The old guard still stands for the ordinary path: a caller that
+        means to send something and passes nothing has made a mistake."""
+        backend = _claude_backend(monkeypatch)
+        monkeypatch.setattr(agent_backends, "get", lambda root, bid: backend)
+        with pytest.raises(ValueError, match="opening message is required"):
+            agent_manager.create(repo, "claude", "")
+
+    def test_a_flagless_backend_parks_its_persona_for_the_first_send(
+            self, repo, monkeypatch, stub_build):
+        """The regression this guards: with no opening message to prepend to,
+        a backend that has no system-prompt flag would simply LOSE the
+        injected persona. Losing it silently is the worst outcome available —
+        the assistant would answer as a stranger and nothing would say why."""
+        backend = _cursor_agent_backend(monkeypatch)
+        monkeypatch.setattr(agent_backends, "get", lambda root, bid: backend)
+        agent_manager.create(repo, "cursor-agent", "", open=False,
+                             system_append="PERSONA TEXT")
+        assert stub_build["sess"].deferred == "PERSONA TEXT"
+
+    def test_a_backend_with_a_flag_parks_nothing(
+            self, repo, monkeypatch, stub_build):
+        backend = _claude_backend(monkeypatch)
+        monkeypatch.setattr(agent_backends, "get", lambda root, bid: backend)
+        agent_manager.create(repo, "claude", "", open=False,
+                             system_append="PERSONA TEXT")
+        sess = stub_build["sess"]
+        assert sess.deferred == ""
+        assert sess.kw.get("system_append") == "PERSONA TEXT"
+
+    def test_the_chat_still_gets_a_title(self, repo, monkeypatch, stub_build):
+        """The title used to be derived from the opening message. With no
+        message there is nothing to derive it from, and an untitled chat is
+        unfindable in the Agents tab."""
+        backend = _claude_backend(monkeypatch)
+        monkeypatch.setattr(agent_backends, "get", lambda root, bid: backend)
+        agent_manager.create(repo, "claude", "", open=False)
+        assert stub_build["sess"].kw.get("title")
+
+
+class TestTheDeferredPrefixRidesTheFirstSend:
+    """Consumed in `BaseSession.send`, which is the one place every caller
+    goes through. The assistant feature calls `send` directly rather than via
+    `agent_manager.send`, so a fix in either caller alone would leave the
+    other one dropping the persona."""
+
+    def _session(self, monkeypatch):
+        backend = _cursor_agent_backend(monkeypatch)
+        sess = agent_session.TurnSession(
+            "sid", backend, ".", agent_events.Stream("sid"), title="t")
+        # `_deliver` spawns a process; the prefix decision happens before it.
+        monkeypatch.setattr(sess, "_deliver", lambda text: None)
+        return sess
+
+    def test_the_first_message_carries_it_and_the_second_does_not(
+            self, monkeypatch):
+        sess = self._session(monkeypatch)
+        sess.defer_system_prefix("PERSONA TEXT")
+        sent = []
+        monkeypatch.setattr(sess, "_deliver", lambda text: sent.append(text))
+        sess.send("first")
+        sess._busy = False  # a turn ended
+        sess.send("second")
+        assert sent[0].startswith("PERSONA TEXT")
+        assert sent[0].endswith("first")
+        assert sent[1] == "second"
+
+    def test_what_the_user_typed_is_what_the_transcript_shows(self,
+                                                              monkeypatch):
+        """The prefix belongs on the wire, not in the chat window — the same
+        split `display` already makes for a resolved `#file` token."""
+        sess = self._session(monkeypatch)
+        sess.defer_system_prefix("PERSONA TEXT")
+        seen = []
+        monkeypatch.setattr(sess.stream, "publish", lambda ev: seen.append(ev))
+        sess.send("what is open?")
+        start = [e for e in seen if e.get("type") == "turn.start"][0]
+        assert start["text"] == "what is open?"
+        assert start["wire"].startswith("PERSONA TEXT")
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +502,40 @@ class TestTheChatGetsTheSettings:
         assert started["mode"] == "default", (
             "the Assistant must not silently run in the backend's default mode")
         assert started["model"] == "qwen3:8b"
+
+
+class TestSettingsReadTouchesNoNetwork:
+    """The tray-freeze regression, pinned.
+
+    `GET /api/assistant/settings` is on the desktop shell's hot path: it is
+    read for every take, and it used to be read on every tray click. It also
+    used to report `installed`, and computing that asked every backend row
+    whether it was available — a 1.5s network probe per API row
+    (`agent_backends.PROBE_TIMEOUT`), including at a LAN address that was
+    switched off. The measured result was a ~3s stall one call in fifteen, and
+    a click landing in that window looked like a dead menu.
+    """
+
+    def test_no_probe_is_ever_initiated(self, routes, repo, monkeypatch):
+        def boom(*a, **kw):
+            raise AssertionError(
+                "the settings read probed the network; that is the stall")
+        monkeypatch.setattr(agent_backends, "_probe", boom)
+        answer = routes[("GET", "assistant.settings_get")](Req())
+        assert answer["settings"]["ticket_prefix"] == "T-"
+
+    def test_availability_is_not_this_endpoint_s_job(self, routes, repo):
+        """It lives on `/api/agents/backends`, which the Settings tab already
+        polls and where being slow is the honest cost of asking."""
+        answer = routes[("GET", "assistant.settings_get")](Req())
+        assert "installed" not in answer
+
+    def test_a_write_still_validates_the_backend_strictly(self, routes, repo):
+        """A POST is not a hot path, and refusing a backend that is not there
+        matters more than a millisecond."""
+        with pytest.raises(ValueError, match="not enabled and installed"):
+            routes[("POST", "assistant.settings_post")](
+                Req({"backend": "not-a-backend"}))
 
 
 class TestNewChatStartsOne:

@@ -68,15 +68,18 @@ STREAM_EVENT_TYPES = frozenset({
 })
 
 
-def _pick_backend(repo_root, requested=""):
+def _pick_backend(repo_root, requested="", report=None):
     """Which backend a brand-new Assistant chat should use.
 
     Order and rationale live once, in `assistant_config.resolve_backend`:
     an explicit request, then the stored choice, then local-first. This stays
     as a one-line seam so the call sites below read the same as before.
+
+    `report` collects `(backend_id, reason)` for every candidate passed over,
+    which is what turns "it is slow again" into an answerable question.
     """
     return assistant_config.resolve_backend(
-        repo_root, agent_backends.registry(repo_root), requested)
+        repo_root, agent_backends.registry(repo_root), requested, report=report)
 
 
 def _cap_section(text, cap, label):
@@ -226,8 +229,17 @@ def apply(ctx):
                 # continuity that is not there.
                 print("assistant: starting a new chat (%s)" % e)
 
-        backend_id = _pick_backend(repo_root, backend_hint)
+        skipped = []
+        backend_id = _pick_backend(repo_root, backend_hint, report=skipped)
         backend = agent_backends.get(repo_root, backend_id)
+        if skipped:
+            # Said out loud, once, at the moment it happens. A fallback that
+            # announces itself is a configuration note; a silent one is how a
+            # laptop ends up holding every conversation through a coding CLI
+            # for three days without anyone knowing why it got slow.
+            print("assistant: using %s; passed over %s" % (
+                backend_id,
+                "; ".join("%s (%s)" % (b, why) for b, why in skipped)))
         # Mode and model come from the Assistant's own settings. Without
         # them the chat inherited the BACKEND's defaults, and for claude that
         # is `plan` — the one mode `assistant.toml` explicitly rejects, since
@@ -236,8 +248,13 @@ def apply(ctx):
         # which is what made "use ollama" unable to work at all: an
         # OpenAI-compatible endpoint needs to be told which model.
         settings = assistant_config.settings(repo_root)
+        # `open=False`: no opening message. It used to send "Hello.", which
+        # cost a whole turn before the thing you actually said — a process
+        # spawn and a turn on a CLI backend, up to `max_tool_rounds` on an API
+        # one — and then your message queued behind it. The caller's own
+        # `sess.send` is now the first turn.
         snap = agent_manager.create(
-            repo_root, backend_id, "Hello.", title="Assistant",
+            repo_root, backend_id, "", title="Assistant", open=False,
             mode=settings.get("mode", ""), model=settings.get("model", ""),
             **_session_kwargs(repo_root, backend))
         assistant.write_session(repo_root, sid=snap["id"], backend=backend_id,
@@ -442,11 +459,25 @@ def apply(ctx):
 
     # -- settings (C7 service half; the Settings-tab control is T-006) -------
     def settings_get(req):
+        """The merged settings, and nothing that needs a socket.
+
+        `installed` used to be here, and computing it asked every backend row
+        whether it was available — which for an API row is a 1.5s network
+        probe (`agent_backends.PROBE_TIMEOUT`), including at a LAN address
+        that was switched off. This endpoint is on the hot path: the desktop
+        shell reads it for every take and, until T-015, on every tray click.
+        So it stalled for about three seconds one call in fifteen, and a tray
+        click landing in that window looked like a menu that had died.
+
+        Availability now comes from `GET /api/agents/backends`, which answers
+        the same question, is already polled by the Settings tab, and is
+        expected to be slow because being slow is the honest cost of asking.
+        Validation on the way IN is unaffected — `settings_post` below still
+        checks a chosen backend strictly, because a write is not a hot path
+        and refusing a bad one matters more there than a millisecond.
+        """
         return {"settings": assistant_config.settings(repo_root),
-                "writable": sorted(assistant_config.WRITABLE),
-                "installed": sorted(
-                    bid for bid, b in agent_backends.registry(repo_root).items()
-                    if b.installed)}
+                "writable": sorted(assistant_config.WRITABLE)}
 
     def settings_post(req):
         installed = [bid for bid, b in

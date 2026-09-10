@@ -31,6 +31,7 @@ only Ollama and on one with only Claude, without either being named here.
 import json
 import os
 
+from . import model_catalog
 from . import tomlio
 
 CONFIG_REL = os.path.join("console", "config", "assistant.toml")
@@ -39,7 +40,15 @@ OVERRIDE_REL = os.path.join("console", ".cache", "assistant", "settings.json")
 #: Preference order when no backend has been chosen. Local first, per the
 #: locked "local-first default" decision in the desktop-assistant design —
 #: a private model before a hosted one, every time, unless asked otherwise.
-LOCAL_FIRST = ("ollama", "lm-studio", "claude", "openrouter", "cursor-agent")
+#:
+#: `openrouter` sits AHEAD of the CLIs, which it did not use to. That ordering
+#: was the whole reason a laptop with no usable local model ended up holding
+#: its conversations through the Claude Code CLI: a talk model answering
+#: "what's open?" was paying for a coding agent's whole harness, measured at
+#: 2-300 seconds a turn in `knowledge-center/telemetry/`. A CLI is a fine
+#: place to send WORK — that is what `work_backend` is for — and a poor place
+#: to send a sentence.
+LOCAL_FIRST = ("ollama", "lm-studio", "openrouter", "claude", "cursor-agent")
 
 #: Every key the Assistant reads, with the value used when neither the
 #: committed file nor the override supplies one. This dict IS the schema:
@@ -170,25 +179,106 @@ def settings(repo_root):
     return merged
 
 
-def resolve_backend(repo_root, registry, requested=""):
+def talk_ready(repo_root, backend):
+    """Can this backend actually hold a conversation? Returns (ok, reason).
+
+    `installed` is not enough, and assuming it was is what made the local path
+    look broken. For an API row `installed` means only "something answered at
+    that address", and all three of these got past it before failing mid-turn,
+    with the failure showing up as a dead assistant rather than as a bad pick:
+
+      * `qwen3:8b` selected on a box with 4.7 GiB free — "model requires more
+        system memory (5.5 GiB) than is available"
+      * `deepseek-coder` selected and then "does not support tools", so every
+        verb the Assistant has was unreachable
+      * a reachable LM Studio with nothing loaded, where picking a model means
+        waiting out a load
+
+    So a local runtime is asked the two questions that decide it: is a model
+    resident, and does it claim tool training. Both come from the server's own
+    answer via `model_catalog`, and a provider that reports neither is given
+    the benefit of the doubt — `capabilities` is documented as a hint, and
+    `muse-glimmer` calls tools correctly while declaring it cannot.
+
+    Only a keyless API row is asked — `auth = "none"` is exactly the class of
+    "a model runtime you run yourself", and it is the right test rather than
+    `is_local`: an LM Studio reached over the LAN is still a box that swaps
+    models one at a time, and `is_local` calls it hosted because the host is
+    not 127.0.0.1. A CLI has tools by construction, and a keyed provider has
+    no residency to report, so both skip these two requests entirely.
+    """
+    if not backend.installed:
+        return False, backend.unavailable_reason
+    if backend.auth != "none":
+        return True, ""
+
+    resident = model_catalog.loaded(repo_root, backend.id)
+    if resident is not None and not resident:
+        return False, ("%s is running but has no model loaded — load one, or "
+                       "pull one with `ollama pull`" % backend.label)
+
+    caps = model_catalog.capabilities(repo_root, backend.id)
+    if caps and resident:
+        # Only judge what is ACTUALLY loaded: a catalogue full of tool-capable
+        # models is no help when the resident one is not among them.
+        tool_capable = [m for m in resident
+                        if caps.get(m, {}).get("tool_use", True)]
+        if not tool_capable:
+            return False, ("%s has %s loaded, which does not support tool "
+                           "calling — the Assistant's verbs would all fail"
+                           % (backend.label, ", ".join(sorted(resident))))
+    return True, ""
+
+
+def resolve_backend(repo_root, registry, requested="", report=None):
     """Which backend a brand-new Assistant chat should use.
 
-    Order: an explicit request, then the stored choice, then the first
-    enabled+installed backend in `LOCAL_FIRST`, then whatever else is
-    installed. Raises only when nothing at all is usable, which is a real
-    setup problem and worth saying out loud.
+    Order: an explicit request, then the stored choice, then the first backend
+    in `LOCAL_FIRST` that is ready to talk, then anything else that is.
+    Raises only when nothing at all is usable, which is a real setup problem
+    and worth saying out loud.
+
+    Two things this deliberately does NOT do any more:
+
+    **It does not ask every backend whether it is installed.** It used to
+    build that list up front, which meant a stored choice of `claude` — one
+    `shutil.which` away — still paid a 1.5s network probe for every API row,
+    including a LAN box that was switched off. That is the ~3s stall the tray
+    was measured hanging on, because `GET /api/assistant/settings` came
+    through here. Candidates are now asked one at a time, in order, and the
+    common case answers before any socket is opened.
+
+    **It does not treat "reachable" as "usable".** See `talk_ready`.
+
+    `report` is an optional list; every rejected candidate appends
+    `(id, reason)` to it. The caller surfaces those, because "why am I on this
+    backend" is the question a silent fallback makes unanswerable.
     """
-    installed = [bid for bid, b in registry.items() if b.installed]
+    rejected = report if report is not None else []
+
+    def ready(bid):
+        backend = registry.get(bid)
+        if backend is None:
+            return False
+        ok, why = talk_ready(repo_root, backend)
+        if not ok:
+            rejected.append((bid, why))
+        return ok
+
     for candidate in (requested, settings(repo_root).get("backend", "")):
-        if candidate and candidate in installed:
+        if candidate and ready(candidate):
             return candidate
-    for candidate in LOCAL_FIRST:
-        if candidate in installed:
+    seen = set()
+    for candidate in list(LOCAL_FIRST) + sorted(registry):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if ready(candidate):
             return candidate
-    if installed:
-        return installed[0]
-    raise ValueError("no enabled+installed backend is configured — set one up "
-                     "in console/config/agents.toml first")
+    raise ValueError(
+        "no backend can hold a conversation right now. Tried: %s. Set one up "
+        "in console/config/agents.toml, or fix one of these."
+        % ("; ".join("%s (%s)" % (b, why) for b, why in rejected) or "nothing"))
 
 
 def _coerce(key, value):

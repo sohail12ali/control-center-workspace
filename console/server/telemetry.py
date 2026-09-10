@@ -48,9 +48,13 @@ _pricing_cache = {}
 
 #: Every field a record carries. Kept explicit so a reader can rely on the
 #: shape and an aggregate can never silently drop a column.
+#:
+#: `ttft_ms` is 0 for a turn that never streamed text — a tools-only round, or
+#: a backend whose events do not carry it. Zero here means "not measured", not
+#: "instant"; a reader averaging it should skip the zeros.
 FIELDS = ("ts", "session", "backend", "model", "mode", "ticket", "skill",
           "persona", "input_tokens", "output_tokens", "cost_usd",
-          "cost_source", "duration_ms", "is_error")
+          "cost_source", "duration_ms", "ttft_ms", "is_error")
 
 
 def telemetry_dir(repo_root):
@@ -114,8 +118,8 @@ def _month_path(repo_root, when):
 
 def record_turn(repo_root, *, session="", backend="", model="", mode="",
                 ticket="", skill="", persona="", input_tokens=0,
-                output_tokens=0, cost_usd=None, duration_ms=0, is_error=False,
-                when=None):
+                output_tokens=0, cost_usd=None, duration_ms=0, ttft_ms=0,
+                is_error=False, when=None):
     """Append one turn. Returns the record, or None if it could not be written.
 
     Never raises. This is called from a live session's reader thread while a
@@ -145,6 +149,7 @@ def record_turn(repo_root, *, session="", backend="", model="", mode="",
         "cost_usd": cost_usd,
         "cost_source": source,
         "duration_ms": int(duration_ms or 0),
+        "ttft_ms": int(ttft_ms or 0),
         "is_error": bool(is_error),
     }
     try:
