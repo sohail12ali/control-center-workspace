@@ -107,11 +107,39 @@ and clicking its body does not focus it either because the whole panel is a
 the panel is never the foreground window, and Esc produces nothing either before or after
 clicking it.
 
-Fixed by removing the claim rather than the code — the ✕ tooltip said "Close (Esc)",
-which is a control advertising a shortcut that cannot work, and that is worse than not
-offering it: it sends you hunting for a broken key instead of the button beside it. The
-listener is kept (one line, correct wherever the page does have focus) and is simply no
-longer advertised.
+First fixed by removing the claim rather than the code. Then fixed properly, on request:
+Esc is now a **global** shortcut, registered by `hud::reveal` and unregistered by
+`hud::conceal` — the only two functions that show or hide the window — so it is held for
+exactly as long as the panel is on screen. `hud_dismiss_shortcut` (default `"Escape"`)
+configures it; `""` switches it off; any string `Shortcut::from_str` accepts works, so a
+non-colliding chord is one setting away.
+
+**The cost, because it is real:** a global shortcut CONSUMES the key. While the panel is
+visible, Escape does not reach the editor you are typing in. That window is bounded by the
+panel's lifetime and nothing else — on a local model a turn runs two to three minutes, so
+it is not a brief window. If the shell dies the OS releases the registration, so nothing
+is stranded.
+
+**Verified:** the lifecycle, exactly. `hud: dismiss key held` on show and
+`hud: dismiss key released` on hide, in the live shell log, matching the panel appearing
+and disappearing. Raised from `debug` to `info` deliberately — whether this key is
+currently held is the one thing about the overlay that is invisible from outside and
+affects every other application, and having logged it at debug is what made a registration
+failure take an extra round of testing to see. Dispatch is unit-covered
+(`dismiss_key_tests`): the talk chord must not be read as a dismiss, because an
+unrecognised shortcut falls through to `begin_listening` and opens a microphone.
+
+**NOT verified: the keypress itself.** Synthetic keyboard input cannot trigger a global
+hotkey in this environment — proven by a control experiment rather than assumed, since the
+shell's existing, known-working push-to-talk chord (`Ctrl+Alt+Space`) also fails to fire
+through `SendInput`/`keybd_event`, while synthetic MOUSE input drives the tray and the
+panel's buttons perfectly. Injected keystrokes do not reach `RegisterHotKey` here. So
+pressing Esc needs a human, and it is listed under *Not verified* rather than claimed.
+
+Note this does not weaken the original finding. That rested on the window never being the
+foreground window — measured with `GetForegroundWindow`, before and after clicking the
+panel — and a window without focus cannot receive a keydown at all, whoever is pressing
+the key.
 
 The general lesson, worth more than the fix: **testing a page in a browser tests the page,
 not the shell.** Every other overlay claim in criterion 10 and 11 was re-driven inside the
@@ -129,11 +157,15 @@ real Tauri window before being called PASS.
 2. **The Allow button specifically.** Deny was driven end to end against a real card;
    Allow shares the identical path and differs only in the string sent, but it was not
    pressed — approving a shell command to prove a button works is the wrong trade.
-3. **The 120s watchdog firing.** Every state change re-arms it, and a turn ending hides
+3. **The Esc keypress.** Registered and released correctly (logged, live) and dispatched
+   correctly (unit-tested), but no synthetic keyboard input can trigger a global hotkey
+   here — the shell's own working chord fails the same way — so the press itself needs a
+   human. Press Escape while the panel is on screen.
+4. **The 120s watchdog firing.** Every state change re-arms it, and a turn ending hides
    the panel via `hide_soon` first, so isolating it needs a frozen stream. Its logic is
    unit-covered; the timer itself has not been watched expire.
-4. **T-002 row 8**, as above.
-5. **macOS and Linux.** Only Windows was built and driven here. The overlay's
+5. **T-002 row 8**, as above.
+6. **macOS and Linux.** Only Windows was built and driven here. The overlay's
    transparency is already per-platform in `hud.rs`, and CI builds all three — but the
    generated menu has not run on libappindicator, where the registry's own note says a
    left-click never reaches the app and the `Listening ▸ Short take` row is the only form

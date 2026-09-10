@@ -318,7 +318,8 @@ fn hud_actions(app: tauri::AppHandle, console_url: String) {
     });
 }
 
-fn register_hotkey(app: &tauri::AppHandle) {
+fn register_hotkey(app: &tauri::AppHandle, console_url: &str) {
+    use std::str::FromStr;
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
     let chord = if cfg!(target_os = "macos") {
@@ -327,16 +328,57 @@ fn register_hotkey(app: &tauri::AppHandle) {
         Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space)
     };
 
+    // The overlay's dismiss key. Parsed here because this function owns the
+    // plugin, but REGISTERED by `hud` only while the panel is on screen — a
+    // global shortcut consumes the key, and Escape must not be eaten from
+    // every other application for the whole time the shell is running.
+    //
+    // Read from the console rather than hardcoded, so it can be changed to a
+    // chord or switched off entirely with `hud_dismiss_shortcut = ""`.
+    let configured = if console_url.is_empty() {
+        "Escape".to_string()
+    } else {
+        let settings = console_settings::all(console_url);
+        console_settings::str_at(&settings, "hud_dismiss_shortcut", "Escape")
+    };
+    let dismiss = if configured.trim().is_empty() {
+        log::info!("hud: no dismiss shortcut configured; the panel's ✕ closes it");
+        None
+    } else {
+        match Shortcut::from_str(configured.trim()) {
+            Ok(s) => {
+                log::info!("hud: dismiss shortcut is {configured}, held only while the panel shows");
+                Some(s)
+            }
+            Err(e) => {
+                // A typo must not silently mean "no way to dismiss".
+                log::warn!(
+                    "hud: {configured:?} is not a shortcut I can parse ({e}); \
+                     falling back to Escape"
+                );
+                Shortcut::from_str("Escape").ok()
+            }
+        }
+    };
+    hud::set_dismiss_key(dismiss);
+
     let handle = app.clone();
     match app.plugin(
         tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(move |_app, _shortcut, event| {
+            .with_handler(move |_app, shortcut, event| {
+                if event.state() != ShortcutState::Pressed {
+                    return;
+                }
+                // One handler for every shortcut the shell registers, so it
+                // dispatches on which one fired.
+                if hud::is_dismiss_key(shortcut) {
+                    hud::dismiss(&handle);
+                    return;
+                }
                 // Fire on press only. Holding the chord and releasing it is
                 // handled by the take's own end-pointing, so a press is
                 // "start, or finish what is running".
-                if event.state() == ShortcutState::Pressed {
-                    begin_listening(&handle);
-                }
+                begin_listening(&handle);
             })
             .build(),
     ) {
@@ -455,7 +497,7 @@ fn main() {
             // the first reply, then quietly switches to the neural one.
             tts::configure(&root, "", 1.0);
 
-            register_hotkey(app.handle());
+            register_hotkey(app.handle(), &handle.url);
 
             // Started after the tray exists, so the first repaint has
             // something to paint. It owns its own reconnects: the stream 404s

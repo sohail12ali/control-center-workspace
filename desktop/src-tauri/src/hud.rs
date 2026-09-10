@@ -22,6 +22,7 @@
 //! rebuilding per take would put that cost back on every utterance.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -119,6 +120,111 @@ fn push(app: &AppHandle, json: &str) {
     }
 }
 
+/// The key that dismisses the panel, or `None` when the setting is blank.
+///
+/// ## Why a GLOBAL shortcut and not a key handler in the page
+///
+/// The page has one — `hud.html` listens for Escape — and it can never fire.
+/// This window is built `.focused(false)` with `skip_taskbar(true)` precisely
+/// so it cannot steal the caret from whatever you are typing in, and clicking
+/// its body does not focus it either because the panel is a drag region. So no
+/// keydown ever reaches it. That is not a bug to route around: it is the
+/// property that makes an always-on-top panel tolerable, and it means a
+/// dismiss key has to live OUTSIDE the page.
+///
+/// It was shipped as `title="Close (Esc)"` on the ✕ and did nothing at all,
+/// which is worse than offering no shortcut: it sends you hunting for a broken
+/// key instead of the button beside it.
+///
+/// ## The cost, stated where it is paid
+///
+/// A global shortcut CONSUMES the key. While this is registered, Escape does
+/// not reach the editor you are typing in. So it is held for exactly as long
+/// as the panel is on screen and not one moment longer — `reveal` takes it,
+/// `conceal` gives it back, and those are the only two functions that show or
+/// hide the window. `hud_dismiss_shortcut = ""` switches it off; a chord that
+/// collides with nothing is the other way out.
+static DISMISS_KEY: OnceLock<Option<tauri_plugin_global_shortcut::Shortcut>> = OnceLock::new();
+
+/// Whether the key is registered right now, so a second `reveal` does not
+/// register twice and a stray `conceal` does not unregister a key we never
+/// took. The plugin errors on both, and an error log per repaint would bury
+/// everything else.
+static HOLDING_KEY: AtomicBool = AtomicBool::new(false);
+
+/// Called once at setup, from `register_hotkey`, which owns the plugin.
+pub fn set_dismiss_key(shortcut: Option<tauri_plugin_global_shortcut::Shortcut>) {
+    let _ = DISMISS_KEY.set(shortcut);
+}
+
+/// Is `shortcut` the dismiss key? Asked by the plugin's one handler, which
+/// sees every shortcut the shell registers.
+pub fn is_dismiss_key(shortcut: &tauri_plugin_global_shortcut::Shortcut) -> bool {
+    DISMISS_KEY.get().and_then(|k| k.as_ref()) == Some(shortcut)
+}
+
+fn grab_dismiss_key(app: &AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let Some(Some(shortcut)) = DISMISS_KEY.get() else {
+        return;
+    };
+    if HOLDING_KEY.swap(true, Ordering::SeqCst) {
+        return; // already ours
+    }
+    match app.global_shortcut().register(*shortcut) {
+        // At info, not debug. Whether this key is currently held is the one
+        // thing about the overlay that is invisible from outside and affects
+        // every other application on the machine, so it belongs in the log at
+        // the level people actually read. Logging it at debug is what made a
+        // silent registration failure take a second round of testing to see.
+        Ok(()) => log::info!("hud: dismiss key held"),
+        Err(e) => {
+            // Another application owns it. Not fatal: the ✕ still closes the
+            // panel.
+            HOLDING_KEY.store(false, Ordering::SeqCst);
+            log::warn!("hud: could not take the dismiss key ({e}); use the ✕");
+        }
+    }
+}
+
+fn release_dismiss_key(app: &AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let Some(Some(shortcut)) = DISMISS_KEY.get() else {
+        return;
+    };
+    if !HOLDING_KEY.swap(false, Ordering::SeqCst) {
+        return; // never took it
+    }
+    match app.global_shortcut().unregister(*shortcut) {
+        Ok(()) => log::info!("hud: dismiss key released"),
+        Err(e) => log::warn!("hud: could not give the dismiss key back ({e})"),
+    }
+}
+
+/// Put the panel on screen, and take ownership of the dismiss key while it is.
+///
+/// Every reveal goes through here and every hide through `conceal`, so the
+/// global dismiss shortcut is held for exactly as long as the panel is
+/// visible. Registering it anywhere else would let the two drift, and a
+/// shortcut that outlives its panel is a key silently eaten from every other
+/// application.
+fn reveal(app: &AppHandle, window: &tauri::WebviewWindow) {
+    place(window);
+    let _ = window.show();
+    // Re-asserted on every show: another window going full-screen can push a
+    // topmost window behind it, and the panel is useless underneath.
+    let _ = window.set_always_on_top(true);
+    grab_dismiss_key(app);
+}
+
+/// Take the panel off screen, and give the dismiss key back.
+fn conceal(app: &AppHandle, window: &tauri::WebviewWindow) {
+    release_dismiss_key(app);
+    if let Err(e) = window.hide() {
+        log::warn!("hud: could not hide the panel: {e}");
+    }
+}
+
 /// Show the panel with a state, and start the meter if we are listening.
 pub fn show(app: &AppHandle, console_url: &str, state: State, hint: &str) {
     if !ensure(app, console_url) {
@@ -127,11 +233,7 @@ pub fn show(app: &AppHandle, console_url: &str, state: State, hint: &str) {
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
-    place(&window);
-    let _ = window.show();
-    // Re-asserted on every show: another window going full-screen can push a
-    // topmost window behind it, and the panel is useless underneath.
-    let _ = window.set_always_on_top(true);
+    reveal(app, &window);
     push(
         app,
         &format!(
@@ -160,9 +262,7 @@ pub fn approval(app: &AppHandle, console_url: &str, tool: &str) {
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
-    place(&window);
-    let _ = window.show();
-    let _ = window.set_always_on_top(true);
+    reveal(app, &window);
     PUMPING.store(false, Ordering::SeqCst);
     push(
         app,
@@ -206,9 +306,7 @@ pub fn state(app: &AppHandle, state: State) {
 pub fn dismiss(app: &AppHandle) {
     PUMPING.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
-        if let Err(e) = window.hide() {
-            log::warn!("hud: dismiss could not hide the panel: {e}");
-        }
+        conceal(app, &window);
     }
 }
 
@@ -249,7 +347,7 @@ fn arm_watchdog(app: AppHandle) {
                 WATCHDOG.as_secs()
             );
             if let Some(window) = app.get_webview_window(LABEL) {
-                let _ = window.hide();
+                conceal(&app, &window);
             }
         });
 }
@@ -268,7 +366,7 @@ pub fn hide_soon(app: &AppHandle, linger: std::time::Duration) {
                 return;
             }
             if let Some(window) = app.get_webview_window(LABEL) {
-                let _ = window.hide();
+                conceal(&app, &window);
             }
         });
 }
@@ -310,6 +408,43 @@ fn json_string(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod dismiss_key_tests {
+    use super::*;
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::Shortcut;
+
+    /// One test, not three, because `DISMISS_KEY` is a `OnceLock`: whichever
+    /// test set it first would decide the answer for the rest.
+    #[test]
+    fn the_dismiss_key_is_recognised_and_nothing_else_is() {
+        let escape = Shortcut::from_str("Escape").expect("Escape must parse");
+        set_dismiss_key(Some(escape));
+
+        assert!(is_dismiss_key(&escape), "the configured key must match");
+
+        // The plugin has ONE handler for every shortcut the shell registers,
+        // so this is what stops a push-to-talk press being read as a dismiss
+        // — and, worse, the other way round: an unrecognised shortcut falls
+        // through to `begin_listening`, which opens a microphone.
+        let talk = Shortcut::from_str("CmdOrControl+Alt+Space").expect("chord");
+        assert!(!is_dismiss_key(&talk), "the talk chord is not the dismiss key");
+    }
+
+    #[test]
+    fn a_shortcut_string_the_plugin_understands_round_trips() {
+        // What `hud_dismiss_shortcut` accepts is exactly what `Shortcut`
+        // parses, which is the reason the setting is free text rather than a
+        // hand-rolled key table.
+        for text in ["Escape", "CmdOrControl+Shift+Escape", "F8"] {
+            assert!(Shortcut::from_str(text).is_ok(), "{text} should parse");
+        }
+        // And a typo must be rejected rather than silently becoming something
+        // else — `register_hotkey` falls back to Escape and says so.
+        assert!(Shortcut::from_str("Excape").is_err());
+    }
 }
 
 #[cfg(test)]

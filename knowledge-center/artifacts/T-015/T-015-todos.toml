@@ -1,8 +1,8 @@
 [meta]
 ticket = "T-015"
 tracker = "todos"
-updated = "2026-09-10T15:52:19Z"
-seq = 7
+updated = "2026-09-10T16:24:35Z"
+seq = 8
 
 [[items]]
 id = "TD-1"
@@ -86,6 +86,19 @@ drop_reason = ""
 id = "TD-7"
 status = "open"
 text = "Esc on the voice overlay cannot work: the window is built .focused(false)/skip_taskbar(true) so it never takes the caret, and the whole panel is a drag region so clicking it does not focus either. Driven and confirmed in the real shell. The claim was removed from the UI. If a keyboard dismissal is genuinely wanted it needs a global shortcut (intrusive for Esc) or a non-drag focusable strip."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-09-10"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-8"
+status = "open"
+text = "Press Escape while the voice overlay is on screen and confirm it closes. Implemented as a global shortcut registered only while the panel shows (hud_dismiss_shortcut, default Escape); lifecycle is proven in the log and dispatch is unit-tested, but synthetic keyboard input cannot trigger a global hotkey on this machine - the shell's own Ctrl+Alt+Space fails the same way - so the keypress needs a human. If Escape being swallowed while the panel is up is annoying, set hud_dismiss_shortcut to a chord or to empty."
 type = "task"
 priority = "medium"
 captured_by = "agent"

@@ -116,6 +116,24 @@ DEFAULTS = {
     # would put "0.8 is faster" in a settings panel.
     "speak_rate_percent": 100,
 
+    # A key that dismisses the voice overlay, registered GLOBALLY and only
+    # while the overlay is on screen.
+    #
+    # It has to be global. The panel is built never to take keyboard focus —
+    # it floats over whatever you are typing in and must not steal the caret
+    # — so a key handler inside the page can never fire. That is not a
+    # limitation to work around, it is the reason the panel is safe to leave
+    # on top, so the key is registered outside the page instead.
+    #
+    # THE COST, because it is real: a global shortcut CONSUMES the key. While
+    # the overlay is visible, Escape does not reach the app you are typing in.
+    # That window is bounded by the panel's own lifetime (a take, a turn, a
+    # permission card) and by nothing else, so on a slow model it can be
+    # minutes. Set this to "" to switch it off and use the panel's ✕, or to a
+    # chord that collides with nothing — anything `Shortcut::from_str` accepts,
+    # e.g. "CmdOrCtrl+Shift+Escape".
+    "hud_dismiss_shortcut": "Escape",
+
     # -- the tray (T-009) ----------------------------------------------------
     # What ONE left-click on the tray icon does. "listen" is state-aware: talk
     # when idle, send the take you are in the middle of, stop a reply being
@@ -173,6 +191,7 @@ WRITABLE = frozenset({
     "listen_max_seconds", "listen_silence_ms", "stt_model",
     "speak_voice", "speak_rate_percent",
     "work_backend", "work_model", "backend_chain",
+    "hud_dismiss_shortcut",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
 })
