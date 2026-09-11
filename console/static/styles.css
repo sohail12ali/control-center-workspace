@@ -479,6 +479,120 @@ main#view.flush { padding: 0; }
 .panel > header .hico.ok { background: var(--ok-soft); color: var(--ok); }
 .panel > header .hico.info { background: var(--info-soft); color: var(--info); }
 
+/* ---- collapsible panels ----------------------------------------------
+   A settings page is a list of subjects, only one of which anyone is here
+   for. Folded, a panel is its header: the page becomes a menu you can see
+   whole, and the one you open is the only thing spending height. The state
+   is per-panel and remembered, so the page you come back to is the page you
+   left. */
+.panel.collapsible > header { cursor: pointer; user-select: none; }
+.panel.collapsible > header:hover { background: var(--surface-2); }
+.panel.collapsible > header:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+.panel > header .chev {
+  flex: none; display: grid; place-items: center; color: var(--ink-3);
+  transition: transform .16s var(--ease);
+}
+.panel > header .chev svg.ico { width: 14px; height: 14px; }
+.panel.collapsed > header { border-bottom: 0; }
+.panel.collapsed > header .chev { transform: rotate(-90deg); }
+.panel.collapsed > .body { display: none; }
+
+/* The ⓘ button: chrome until it is on, then it reads as pressed so the note
+   below is obviously something the reader asked for. */
+.helpbtn { color: var(--ink-3); }
+.helpbtn.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.helpnote {
+  margin: 0; padding: 8px 10px; font-size: 11.8px; line-height: 1.5;
+  color: var(--ink-2); background: var(--accent-soft);
+  border-left: 2px solid var(--accent-line); border-radius: var(--r-sm);
+}
+.helpnote code { font-size: 11px; }
+
+/* ---- a collapsible block inside a panel ------------------------------
+   Quieter than a panel on purpose: no surface of its own, just a rule and a
+   label, because nesting two card looks inside each other reads as two
+   unrelated things rather than as a part of one. */
+.group { border-top: 1px solid var(--line-soft); }
+.group:first-child { border-top: 0; }
+.group > header {
+  display: flex; align-items: center; gap: 7px; padding: 8px 2px;
+  cursor: pointer; user-select: none; color: var(--ink-2);
+}
+.group > header:hover { color: var(--ink); }
+.group > header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.group > header h4 {
+  flex: 1; min-width: 0; font-size: 11.5px; font-weight: 700;
+  letter-spacing: .02em;
+}
+.group > header > svg.ico { width: 13px; height: 13px; color: var(--ink-3); flex: none; }
+.group > .gbody { display: flex; flex-direction: column; gap: 8px; padding: 0 0 8px; }
+.group.collapsed > .gbody { display: none; }
+.group > header .chev { flex: none; display: grid; place-items: center; color: var(--ink-3); transition: transform .16s var(--ease); }
+.group > header .chev svg.ico { width: 13px; height: 13px; }
+.group.collapsed > header .chev { transform: rotate(-90deg); }
+
+/* ---- "what will actually answer" -------------------------------------
+   Reads as a readout, not a control: a tinted block with no switches in it,
+   above the pickers it explains. */
+.route {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--bg-sunk); border: 1px solid var(--line-soft);
+}
+.route .rrow { display: flex; align-items: flex-start; gap: 8px; }
+.route .rrow > svg.ico { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--ink-3); }
+.route .rrow.bad > svg.ico { color: var(--warn); }
+.route .rrow b { display: block; font-size: 12.5px; font-weight: 600; }
+.route .rrow span.muted { font-size: 11.5px; }
+.route .why { font-size: 11.5px; }
+.route .why summary { cursor: pointer; color: var(--ink-3); padding: 2px 0; }
+.route .why summary:hover { color: var(--ink-2); }
+.route .why .rows { margin-top: 4px; }
+
+/* ---- where the keys live ---------------------------------------------
+   A path you can select and copy, because the next thing you do with it is
+   open it in an editor. */
+.envfile {
+  margin-top: 10px; padding: 8px 10px;
+  border-top: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.envfile .row { gap: 6px; align-items: center; }
+.envfile svg.ico { width: 13px; height: 13px; color: var(--ink-3); }
+.envfile b { font-size: 12px; font-weight: 600; }
+.envfile .envpath {
+  font-size: 11.5px; word-break: break-all; user-select: all;
+  padding: 4px 6px; border-radius: var(--r-sm);
+  background: var(--bg-sunk); border: 1px solid var(--line-soft);
+}
+
+/* ---- the Settings jump bar -------------------------------------------
+   Sticky, because the reason to want it is that you are far down the page.
+   Each chip opens its section and scrolls to it — a fold that you then have
+   to find is not navigation. */
+.secnav {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 0 10px; margin-bottom: 2px; background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
+}
+.secnav .chips {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.secnav .btn { flex: none; }
+
+/* Narrow: the chips scroll sideways in one row rather than wrapping into a
+   sticky block that eats a third of the fold. Collapse/Expand all keep their
+   place at the end, because they are the two you want when the page is
+   taller than the screen — which is always, here. */
+@media (max-width: 720px) {
+  .secnav .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .secnav .chips::-webkit-scrollbar { display: none; }
+}
+
 /* `align-items:start` so a short panel keeps its own height instead of being
    stretched to the tallest in its row; the max-width stops content sprawling
    into unreadable line lengths on a wide monitor. */

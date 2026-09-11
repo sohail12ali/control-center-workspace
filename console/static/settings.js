@@ -79,15 +79,14 @@
     }
 
     return C.panel("Appearance", [
-      C.el("div", { class: "setrow", style: "border-bottom:0;padding-bottom:2px" }, [
-        C.el("div", { class: "settext" }, [
-          C.el("b", { text: "Theme" }),
-          C.el("span", { text: "System follows your OS. A pinned choice overrides it on this browser only." }),
-        ]),
-      ]),
-      C.el("div", { style: "padding:7px 4px 0" }, [seg]),
+      C.el("div", { style: "padding:2px 4px 0" }, [seg]),
       C.el("div", { style: "padding:10px 4px 2px" }, [swatches]),
-    ]);
+    ], null, {
+      icon: "layout",
+      collapse: { id: "set.appearance", open: true },
+      help: "System follows your OS. A pinned choice overrides it, on this "
+            + "browser only — nobody else sees it and no server state changes.",
+    });
   }
 
   function tabVisibility(manifest, repaint) {
@@ -130,18 +129,19 @@
       text: hidden.length ? hidden.length + " hidden" : "all shown" });
 
     return C.panel("Tabs", [
-      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Hide tabs you don't use. Stored in this browser (",
-        C.el("code", {}, ["localStorage"]),
-        "), applied immediately, and invisible to everyone else.",
-      ]),
       C.el("div", {}, rows),
       hidden.length
         ? C.el("div", { class: "row", style: "margin-top:9px" }, [
             C.el("button", { class: "btn sm", onclick: function () { setHidden([]); } }, ["Show all tabs"]),
           ])
         : null,
-    ], head);
+    ], head, {
+      icon: "columns",
+      collapse: { id: "set.tabs", open: false },
+      help: ["Hide tabs you don't use. Stored in this browser (",
+             C.el("code", {}, ["localStorage"]),
+             "), applied immediately, and invisible to everyone else."],
+    });
   }
 
   /* Agent CLIs — which backends the composer offers.
@@ -156,16 +156,25 @@
 
      A CLI that is not installed is shown, disabled, and says so, rather than
      hidden — "why is my CLI missing" is a worse question than "it says
-     cursor-agent is not on PATH". */
+     cursor-agent is not on PATH".
+
+     API backends are NOT listed here, however much agents.toml calls them all
+     backends. OpenRouter, Ollama and LM Studio have no binary: they are a URL
+     and a key, they are never "on PATH", and this panel was telling them to
+     install something that does not exist. They are the Model providers panel
+     below, which already knows how to say "the key is not set" and has the
+     switch that actually turns them on. One kind of thing per panel. */
   function agentBackends(repaint) {
     var body = C.el("div", {}, [C.skeleton(2)]);
+    var chip = C.el("span", { class: "chip zero", text: "all offered" });
 
     C.get("/api/agents/backends").then(function (d) {
-      var backends = d.backends || [];
+      var backends = (d.backends || []).filter(function (b) { return !b.is_api; });
       C.clear(body);
       if (!backends.length) {
-        body.appendChild(C.empty("No backends configured",
-          "Add a [[backend]] row to console/config/agents.toml.", "cpu"));
+        body.appendChild(C.empty("No CLIs configured",
+          "Add a [[backend]] row with a `command` to console/config/agents.toml.",
+          "cpu"));
         return;
       }
 
@@ -176,11 +185,18 @@
         repaint();
       }
 
-      // Refuse to leave zero usable backends: an empty composer with no
-      // explanation is the worst outcome of this switch.
+      // Refuse to leave zero usable CLIs: an empty composer with no
+      // explanation is the worst outcome of this switch. Counted over the
+      // CLIs shown here, not over every backend — an API provider switched on
+      // in the panel below is not a reason to let you strand this one.
       var usable = backends.filter(function (b) {
         return b.installed && off.indexOf(b.id) === -1;
       });
+      var hiddenHere = backends.filter(function (b) {
+        return off.indexOf(b.id) !== -1;
+      }).length;
+      chip.className = "chip" + (hiddenHere ? " warn" : " zero");
+      chip.textContent = hiddenHere ? hiddenHere + " hidden" : "all offered";
 
       backends.forEach(function (b) {
         var disabled = off.indexOf(b.id) !== -1;
@@ -213,7 +229,8 @@
           ]),
           !b.installed ? C.el("span", { class: "chip danger", text: "missing" }) : null,
           lastOne ? C.el("span", { class: "chip", title:
-            "The last usable CLI can't be switched off — the composer would have nothing to offer." },
+            "Your last usable CLI can't be switched off — the composer would "
+            + "be left with no process-backed agent to offer." },
             ["last one"]) : null,
           C.el("label", { class: "switch" }, [
             input, C.el("span", { class: "track" }), C.el("span", { class: "knob" }),
@@ -221,26 +238,32 @@
         ]));
       });
 
-      if (off.length) {
+      if (hiddenHere) {
         body.appendChild(C.el("div", { class: "row", style: "margin-top:9px" }, [
-          C.el("button", { class: "btn sm", onclick: function () { setOff([]); } }, ["Offer all CLIs"]),
+          C.el("button", { class: "btn sm", onclick: function () {
+            // Only the CLIs: a provider switched off in the panel below is a
+            // different decision and this button must not undo it.
+            var ids = backends.map(function (b) { return b.id; });
+            setOff(C.prefs.get("disabledBackends", []).filter(function (id) {
+              return ids.indexOf(id) === -1;
+            }));
+          } }, ["Offer all CLIs"]),
         ]));
       }
     }).catch(function (err) {
       C.clear(body).appendChild(C.errbox(err));
     });
 
-    var offNow = C.prefs.get("disabledBackends", []);
-    return C.panel("Agent CLIs", [
-      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Which CLIs the New-chat picker offers you. Stored in this browser — ",
-        "to change what the server offers everyone, edit ",
-        C.el("code", {}, ["console/config/agents.toml"]), ".",
-      ]),
-      body,
-    ], C.el("span", { class: "chip" + (offNow.length ? " warn" : " zero"),
-      text: offNow.length ? offNow.length + " hidden" : "all offered" }),
-      { icon: "cpu" });
+    return C.panel("Agent CLIs", [body], chip, {
+      icon: "cpu",
+      collapse: { id: "set.backends", open: false },
+      help: ["Command-line agents — a binary on PATH that the console "
+             + "runs as a process. Which ones the New-chat picker offers you "
+             + "is stored in this browser; to change what the server offers "
+             + "everyone, edit ",
+             C.el("code", {}, ["console/config/agents.toml"]),
+             ". Hosted and local API models are in Model providers, not here."],
+    });
   }
 
   /* Model providers — which model answers, and where it runs.
@@ -272,7 +295,9 @@
       C.post("/api/agents/providers", patch)
         .then(function (d) {
           C.toast("Saved", "ok");
-          paintRows(d.providers || []);
+          // Reload rather than repaint from the response: the POST answers
+          // with providers only, and painting from it would drop the footer.
+          load();
           if (done) done();
         })
         .catch(function (err) { C.toast(err.message, "err"); load(); });
@@ -298,7 +323,15 @@
                                 placeholder: "http://host:port/v1",
                                 "aria-label": "Base URL" });
       url.value = p.base_url || "";
-      var keyEnv = C.el("input", { type: "text", placeholder: "KEY_ENV_VAR (optional)",
+      // "KEY_ENV_VAR (optional)" was true and still misread: a text box next
+      // to a URL, on a row whose complaint is "the key is not set", reads as
+      // somewhere to paste a key. Pasting one there fails validation, which
+      // is correct and arrives too late to be kind.
+      var keyEnv = C.el("input", { type: "text",
+                                   placeholder: "OPENROUTER_API_KEY (a NAME, not the key)",
+                                   title: "The NAME of an environment variable. "
+                                          + "The key itself goes in the .env file "
+                                          + "named at the bottom of this panel.",
                                    "aria-label": "Key environment variable name" });
       keyEnv.value = p.key_env || "";
       var result = C.el("div", { class: "muted", style: "font-size:11.5px;flex-basis:100%" });
@@ -503,7 +536,35 @@
       ]);
     }
 
-    function paintRows(rows) {
+    /* Where the keys live, by absolute path.
+
+       Every "the key is not set" message pointed at "the workspace .env" and
+       none of them said where that was — on a machine where the file did not
+       exist yet, that is an instruction to edit something invisible. Names
+       only, never values: this is a web page. */
+    function envFooter(info) {
+      info = info || {};
+      var path = info.path || "";
+      var present = !!info.present;
+      var names = info.names || [];
+      return C.el("div", { class: "envfile" }, [
+        C.el("div", { class: "row" }, [
+          C.icon(present ? "file" : "alert"),
+          C.el("b", { text: present ? "Keys are read from" : "No key file yet — create" }),
+        ]),
+        C.el("code", { class: "envpath", text: path }),
+        C.el("div", { class: "muted", style: "font-size:11.5px" }, [
+          present
+            ? (names.length
+                ? "defines " + names.join(", ")
+                : "present, but defines nothing")
+            : "one KEY=value per line. It is gitignored, and read once when "
+              + "the console starts — add a key and restart.",
+        ]),
+      ]);
+    }
+
+    function paintRows(rows, envInfo) {
       C.clear(body);
       rows.forEach(function (p) {
         body.appendChild(row(p));
@@ -517,31 +578,31 @@
         body.appendChild(C.el("div", { class: "row", style: "margin-top:9px" }, [
           C.el("button", {
             class: "btn sm",
-            onclick: function () { adding = true; paintRows(rows); },
+            onclick: function () { adding = true; paintRows(rows, envInfo); },
           }, [C.icon("cpu"), "Add a provider"]),
         ]));
       }
+      body.appendChild(envFooter(envInfo));
     }
 
     function load() {
       C.get("/api/agents/providers")
-        .then(function (d) { paintRows(d.providers || []); })
+        .then(function (d) { paintRows(d.providers || [], d.env_file); })
         .catch(function (err) { C.clear(body).appendChild(C.errbox(err)); });
     }
     load();
 
-    return C.panel("Model providers", [
-      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Switch one on to use it in the composer and as the Assistant's "
-        + "backend. Stored for THIS machine in ",
-        C.el("code", {}, ["console/.cache/agents/providers.json"]),
-        " — the committed ", C.el("code", {}, ["agents.toml"]),
-        " keeps stating the defaults, comments and all. A key is named, never "
-        + "pasted: put its value in the workspace ",
-        C.el("code", {}, [".env"]), ".",
-      ]),
-      body,
-    ], null, { icon: "cpu" });
+    return C.panel("Model providers", [body], null, {
+      icon: "cpu",
+      collapse: { id: "set.providers", open: false },
+      help: ["Switch one on to use it in the composer and as the Assistant's "
+             + "backend. Stored for THIS machine in ",
+             C.el("code", {}, ["console/.cache/agents/providers.json"]),
+             " — the committed ", C.el("code", {}, ["agents.toml"]),
+             " keeps stating the defaults, comments and all. A key is named, "
+             + "never pasted: put its value in the workspace ",
+             C.el("code", {}, [".env"]), "."],
+    });
   }
 
   /* Composer — how the message box behaves. Browser-local, like the switches
@@ -565,21 +626,23 @@
     }
 
     return C.panel("Composer", [
-      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Type ", C.el("code", {}, ["/"]), " for a skill, ",
-        C.el("code", {}, ["@"]), " for an agent, ", C.el("code", {}, ["#"]),
-        " for a file. A trigger only opens the menu at the start of a word, so ",
-        C.el("code", {}, ["and/or"]), " and ", C.el("code", {}, ["#1234"]),
-        " are left alone — and a reference that names nothing real is sent as ",
-        "plain text rather than as an error.",
-      ]),
       toggle("pickSkills", true, "Skill menu (/)", "offers .claude/skills"),
       toggle("pickAgents", true, "Agent menu (@)", "offers .claude/agents"),
       toggle("pickFiles", true, "File menu (#)",
              "searches the workspace; never offers .env or other secrets"),
       toggle("chatListHidden", false, "Start with the chat list folded",
              "wide windows only — a narrow one always opens on the chat"),
-    ], null, { icon: "pencil" });
+    ], null, {
+      icon: "pencil",
+      collapse: { id: "set.composer", open: false },
+      help: ["Type ", C.el("code", {}, ["/"]), " for a skill, ",
+             C.el("code", {}, ["@"]), " for an agent, ", C.el("code", {}, ["#"]),
+             " for a file. A trigger only opens the menu at the start of a "
+             + "word, so ", C.el("code", {}, ["and/or"]), " and ",
+             C.el("code", {}, ["#1234"]),
+             " are left alone — and a reference that names nothing real "
+             + "is sent as plain text rather than as an error."],
+    });
   }
 
   /* Diagnostics — the server's own answer to "what is actually loaded".
@@ -617,16 +680,17 @@
       C.clear(body).appendChild(C.errbox(err));
     });
 
-    return C.panel("Loaded on the server", [
-      C.el("p", { class: "muted", style: "margin-bottom:8px" }, [
-        "This is what ", C.el("code", {}, ["console/config/plugins.toml"]),
-        " produced — committed, shared by everyone on this checkout, and not affected by anything above. ",
-        "Setting a plugin row to ", C.el("code", {}, ["enabled = false"]),
-        " means its module is never imported: the routes below disappear and the tab leaves the manifest, "
-        + "rather than merely being hidden.",
-      ]),
-      body,
-    ]);
+    return C.panel("Loaded on the server", [body], null, {
+      icon: "package",
+      collapse: { id: "set.diagnostics", open: false },
+      help: ["This is what ", C.el("code", {}, ["console/config/plugins.toml"]),
+             " produced — committed, shared by everyone on this checkout, "
+             + "and not affected by anything above. Setting a plugin row to ",
+             C.el("code", {}, ["enabled = false"]),
+             " means its module is never imported: the routes below disappear "
+             + "and the tab leaves the manifest, rather than merely being "
+             + "hidden."],
+    });
   }
 
   /* Machine state — worktrees and whether an approval can reach a phone.
@@ -684,7 +748,14 @@
       }
     });
 
-    return C.panel("This machine", [body], null, { icon: "wrench" });
+    return C.panel("This machine", [body], null, {
+      icon: "wrench",
+      collapse: { id: "set.machine", open: false },
+      help: "Worktrees and notification reach for THIS checkout — things "
+            + "you set up once and confirm months later. Read-only here on "
+            + "purpose: adding a worktree checks out a branch, and this page "
+            + "has no authentication of its own.",
+    });
   }
 
   /* Telegram — when it fires, and who may drive it.
@@ -851,7 +922,15 @@
     }
     load();
 
-    return C.panel("Telegram", [body], null, { icon: "send" });
+    return C.panel("Telegram", [body], null, {
+      icon: "send",
+      collapse: { id: "set.telegram", open: false },
+      help: "Where an agent's approval request goes when you are away from "
+            + "this machine. Settable here: what QUIETS the bot — which "
+            + "events fire, and quiet hours. Anything that WIDENS it — "
+            + "inbound, the allowlist, the credentials — is terminal-only, "
+            + "because this page has no authentication of its own.",
+    });
   }
 
   /* The Assistant — the only panel here that writes SERVER state.
@@ -1037,92 +1116,121 @@
       var s = d.settings || {};
       C.clear(body);
 
-      body.appendChild(roleRow(s, d, {
-        label: "Talk", backendKey: "backend", modelKey: "model", icon: "cpu",
-        autoLabel: "Auto — first installed, local first",
-        hint: "conversation, status, ticket lookups — a fast local model does "
-              + "this well",
+      /* Six subjects, not twenty settings in a column. Each one folds, and
+         which are open is remembered — the models you are switching between
+         this week stay open, the wake word you set once stays shut. */
+      body.appendChild(C.group("Models", [
+        effectiveRoute(),
+        roleRow(s, d, {
+          label: "Talk", backendKey: "backend", modelKey: "model", icon: "cpu",
+          autoLabel: "Auto — first installed, local first",
+          hint: "conversation, status, ticket lookups — a fast local model "
+                + "does this well",
+        }),
+        roleRow(s, d, {
+          label: "Work", backendKey: "work_backend", modelKey: "work_model",
+          icon: "wrench", autoLabel: "None — nothing to delegate to",
+          hint: "code, builds, test runs. The talk model hands these over with "
+                + "console_delegate rather than attempting them",
+        }),
+        choice(s, "mode", "Tool mode",
+          "plan refuses every write, so the Assistant could not create a "
+          + "ticket or remember anything",
+          [["default", "default — gated tools ask"], ["plan", "plan — read-only"]],
+          "sliders"),
+      ], {
+        id: "set.assistant.models", open: true, icon: "cpu",
+        help: "Two roles, because they want different models: Talk answers "
+              + "you, Work is what Talk hands code and builds to. The top of "
+              + "this section is what a message sent right now would actually "
+              + "reach — \"Auto\" is a search over what is running, not a "
+              + "fixed choice. A model with no tool training cannot run any of "
+              + "the Assistant's verbs.",
       }));
-      body.appendChild(roleRow(s, d, {
-        label: "Work", backendKey: "work_backend", modelKey: "work_model",
-        icon: "wrench", autoLabel: "None — nothing to delegate to",
-        hint: "code, builds, test runs. The talk model hands these over with "
-              + "console_delegate rather than attempting them",
-      }));
-      body.appendChild(choice(s, "mode", "Tool mode",
-        "plan refuses every write, so the Assistant could not create a ticket "
-        + "or remember anything",
-        [["default", "default — gated tools ask"], ["plan", "plan — read-only"]],
-        "sliders"));
-      body.appendChild(toggle(s, "speak", "Speak replies",
-        "read finished replies aloud — the same switch as Mute replies in the "
-        + "tray menu, which writes this one", "speaker"));
-      body.appendChild(field(s, "speak_voice", "Voice",
-        "a neural voice from desktop/tts (fetch one with "
-        + "desktop/get-piper.ps1). Blank uses whichever is installed; with "
-        + "none, the OS voice speaks — that is the robotic one",
-        "text", "speaker"));
-      body.appendChild(field(s, "speak_rate_percent", "Speaking speed",
-        "percent of the voice's natural pace, 50 to 200",
-        "number", "speaker"));
-      body.appendChild(field(s, "reply_chars", "Spoken length",
-        "characters read aloud; the full text always stays in the chat",
-        "number", "speaker"));
-      body.appendChild(field(s, "session_idle_minutes", "New chat after",
-        "minutes of silence before the next message starts a fresh chat",
-        "number", "clock"));
-      body.appendChild(field(s, "ticket_prefix", "Ticket prefix",
-        "how a spoken id is canonicalised — \"t dash two\" becomes T-002",
-        "text", "list"));
-      body.appendChild(field(s, "listen_max_seconds", "Take cap",
-        "seconds — the backstop if the detector never hears you stop",
-        "number", "clock"));
-      body.appendChild(field(s, "listen_silence_ms", "Ends after",
-        "milliseconds of quiet, so a pause to think does not cut you off",
-        "number", "mic"));
-      body.appendChild(field(s, "stt_model", "Speech model",
-        "base.en is accurate on ticket ids; tiny.en is faster and worse at "
-        + "exactly those. Fetch one with desktop/get-whisper.ps1 -Model",
-        "text", "brain"));
-      body.appendChild(choice(s, "tray_click_action", "Tray icon click",
-        CLICK_HINT[s.tray_click_action] || CLICK_HINT.listen,
-        CLICK_ACTIONS, "mic"));
 
-      body.appendChild(C.el("b", { style: "display:block;margin-top:12px",
-                                   text: "Hands-free" }));
-      body.appendChild(C.el("p", { class: "muted", style: "margin:2px 0 4px;font-size:11px" }, [
-        "An always-on microphone. Audio is transcribed on this machine and "
-        + "thrown away unless it is addressed, so leaving it on means the room "
-        + "is heard locally and forgotten — not sent anywhere.",
-      ]));
-      body.appendChild(toggle(s, "hands_free_require_wake", "Require the wake word",
-        s.hands_free_require_wake
-          ? "only what starts with the wake word is sent"
-          : "OFF — every utterance is sent, which is for headphones and an "
-            + "empty room", "mic"));
-      body.appendChild(field(s, "hands_free_wake_word", "Wake word",
-        "matched at the start of a sentence, as a whole word", "text", "mic"));
-      body.appendChild(toggle(s, "hands_free_listen_while_speaking",
-        "Keep listening while speaking",
-        s.hands_free_listen_while_speaking
-          ? "for headphones — on speakers it hears itself and answers"
-          : "off: it would otherwise answer its own voice", "speaker"));
-      body.appendChild(field(s, "hands_free_max_minutes", "Stops after",
-        "minutes, so a microphone left on by accident does not stay on",
-        "number", "clock"));
+      body.appendChild(C.group("Voice", [
+        toggle(s, "speak", "Speak replies",
+          "read finished replies aloud — the same switch as Mute replies in "
+          + "the tray menu, which writes this one", "speaker"),
+        field(s, "speak_voice", "Voice",
+          "a neural voice from desktop/tts (fetch one with "
+          + "desktop/get-piper.ps1). Blank uses whichever is installed; with "
+          + "none, the OS voice speaks — that is the robotic one",
+          "text", "speaker"),
+        field(s, "speak_rate_percent", "Speaking speed",
+          "percent of the voice's natural pace, 50 to 200", "number", "speaker"),
+        field(s, "reply_chars", "Spoken length",
+          "characters read aloud; the full text always stays in the chat",
+          "number", "speaker"),
+      ], { id: "set.assistant.voice", open: false, icon: "speaker" }));
+
+      body.appendChild(C.group("Listening", [
+        field(s, "listen_max_seconds", "Take cap",
+          "seconds — the backstop if the detector never hears you stop",
+          "number", "clock"),
+        field(s, "listen_silence_ms", "Ends after",
+          "milliseconds of quiet, so a pause to think does not cut you off",
+          "number", "mic"),
+        field(s, "stt_model", "Speech model",
+          "base.en is accurate on ticket ids; tiny.en is faster and worse at "
+          + "exactly those. Fetch one with desktop/get-whisper.ps1 -Model",
+          "text", "brain"),
+        choice(s, "tray_click_action", "Tray icon click",
+          CLICK_HINT[s.tray_click_action] || CLICK_HINT.listen,
+          CLICK_ACTIONS, "mic"),
+      ], {
+        id: "set.assistant.listening", open: false, icon: "mic",
+        help: "One spoken take: it records until you stop talking, or until "
+              + "the cap. Transcription happens on this machine.",
+      }));
+
+      body.appendChild(C.group("Hands-free", [
+        toggle(s, "hands_free_require_wake", "Require the wake word",
+          s.hands_free_require_wake
+            ? "only what starts with the wake word is sent"
+            : "OFF — every utterance is sent, which is for headphones and an "
+              + "empty room", "mic"),
+        field(s, "hands_free_wake_word", "Wake word",
+          "matched at the start of a sentence, as a whole word", "text", "mic"),
+        toggle(s, "hands_free_listen_while_speaking",
+          "Keep listening while speaking",
+          s.hands_free_listen_while_speaking
+            ? "for headphones — on speakers it hears itself and answers"
+            : "off: it would otherwise answer its own voice", "speaker"),
+        field(s, "hands_free_max_minutes", "Stops after",
+          "minutes, so a microphone left on by accident does not stay on",
+          "number", "clock"),
+      ], {
+        id: "set.assistant.handsfree", open: false, icon: "mic",
+        help: "An always-on microphone. Audio is transcribed on this machine "
+              + "and thrown away unless it is addressed, so leaving it on "
+              + "means the room is heard locally and forgotten — not sent "
+              + "anywhere.",
+      }));
+
+      body.appendChild(C.group("Chat", [
+        field(s, "session_idle_minutes", "New chat after",
+          "minutes of silence before the next message starts a fresh chat",
+          "number", "clock"),
+        field(s, "ticket_prefix", "Ticket prefix",
+          "how a spoken id is canonicalised — \"t dash two\" becomes T-002",
+          "text", "list"),
+      ], { id: "set.assistant.chat", open: false, icon: "clock" }));
 
       // Read-only: a capability statement about models, reviewed in the
       // committed file rather than set per machine.
-      body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-top:10px" },
-        [C.el("span", { class: "muted", style: "font-size:11px", text: "Vision models:" })].concat(
+      body.appendChild(C.group("Vision", [
+        C.el("div", { class: "row", style: "flex-wrap:wrap" },
           (s.vision_models || []).length
             ? s.vision_models.map(function (m) { return C.chip(m); })
-            : [C.chip("none — captures are read with OCR", "warn")])));
-      body.appendChild(C.el("p", { class: "muted", style: "margin:4px 0 0;font-size:11px" }, [
-        "Which model ids can actually look at a screenshot. Committed in ",
-        C.el("code", {}, ["console/config/assistant.toml"]),
-        " rather than set here, because it describes the models, not this machine.",
-      ]));
+            : [C.chip("none — captures are read with OCR", "warn")]),
+      ], {
+        id: "set.assistant.vision", open: false, icon: "scope",
+        help: ["Which model ids can actually look at a screenshot. Committed "
+               + "in ", C.el("code", {}, ["console/config/assistant.toml"]),
+               " rather than set here, because it describes the models, not "
+               + "this machine — so this list is read-only."],
+      }));
     }
 
     function save(patch) {
@@ -1174,16 +1282,105 @@
     }
     load();
 
-    return C.panel("Assistant", [
-      C.el("p", { class: "muted", style: "margin-bottom:4px" }, [
-        "Stored for THIS machine in ",
-        C.el("code", {}, ["console/.cache/assistant/settings.json"]),
-        " — not in the committed defaults, so your choice of backend never "
-        + "shows up in anyone else's diff. The native shell reads the same "
-        + "merged view.",
-      ]),
-      body,
-    ], null, { icon: "brain" });
+    return C.panel("Assistant", [body], null, {
+      icon: "brain",
+      collapse: { id: "set.assistant", open: false },
+      help: ["Stored for THIS machine in ",
+             C.el("code", {}, ["console/.cache/assistant/settings.json"]),
+             " — not in the committed defaults, so your choice of backend "
+             + "never shows up in anyone else's diff. The native shell reads "
+             + "the same merged view."],
+    });
+  }
+
+  /* "What will actually answer me" — the question the pickers below could
+     not answer.
+
+     Talk on "Auto" is not a setting, it is a SEARCH: resolve_backend tries the
+     local runtimes first and falls through to whatever is ready. Which one
+     that is depends on what is running this minute, so it cannot be shown as
+     a selected option in a dropdown — it has to be asked for, live. When the
+     local runtimes are off it lands on a CLI that takes seconds per spoken
+     turn, and until now nothing on this page said so.
+
+     Its own request because it is a slow one: every candidate is probed until
+     one answers. `/api/assistant/settings` is on the tray's hot path and is
+     guaranteed not to touch a socket, so this deliberately does not live
+     there. */
+  function effectiveRoute() {
+    var box = C.el("div", { class: "route" }, [
+      C.el("span", { class: "muted", text: "checking what will answer…" }),
+    ]);
+
+    function line(role, r) {
+      if (!r || !r.ready) {
+        return C.el("div", { class: "rrow bad" }, [
+          C.icon("alert"),
+          C.el("div", {}, [
+            C.el("b", { text: role + " — nothing is ready" }),
+            C.el("span", { class: "muted", text: (r && r.why) || "" }),
+          ]),
+        ]);
+      }
+      return C.el("div", { class: "rrow" }, [
+        C.icon(r.is_api ? "cpu" : "file"),
+        C.el("div", {}, [
+          C.el("b", {}, [
+            role + " → " + (r.label || r.backend),
+            C.el("span", { class: "chip", style: "margin-left:6px",
+                           text: r.pinned ? "pinned" : "auto" }),
+          ]),
+          C.el("span", { class: "muted", text: r.model
+            ? "model " + r.model
+            // Not a blank: no model flag is sent, so the backend picks. Saying
+            // "unknown" would imply we failed to look it up.
+            : "no model pinned — " + (r.label || r.backend) + " uses its own default" }),
+        ]),
+      ]);
+    }
+
+    function passed(rows) {
+      if (!rows || !rows.length) return null;
+      return C.el("details", { class: "why" }, [
+        C.el("summary", { text: rows.length + " passed over — why" }),
+        C.el("div", { class: "rows" }, rows.map(function (r) {
+          return C.el("div", { class: "lrow" }, [
+            C.el("span", { class: "mono", style: "font-size:11.5px", text: r.backend }),
+            C.el("span", { class: "ltext muted", style: "font-size:11.5px", text: r.why }),
+          ]);
+        })),
+      ]);
+    }
+
+    /* Re-asked on demand, because the answer changes without the page
+       changing: start a local runtime, or put a key in the workspace .env,
+       and the same settings resolve somewhere else entirely. Reloading the
+       tab to find out is a worse loop than a button. */
+    var again = C.el("button", { class: "btn sm", type: "button",
+      onclick: function () { load(); } }, ["Re-check"]);
+
+    function load() {
+      again.disabled = true;
+      C.get("/api/assistant/resolve").then(function (d) {
+        C.clear(box);
+        box.appendChild(line("Talk", d.talk));
+        box.appendChild(line("Work", d.work));
+        // One list, not two: the same candidates are tried for both roles and
+        // fail for the same reasons, so printing it twice is just noise.
+        box.appendChild(passed((d.talk && d.talk.rejected) || []));
+        box.appendChild(C.el("div", { class: "row" }, [again]));
+        again.disabled = false;
+      }).catch(function (err) {
+        C.clear(box);
+        box.appendChild(C.el("span", { class: "muted",
+          text: "could not work out what will answer: " + err.message }));
+        box.appendChild(C.el("div", { class: "row" }, [again]));
+        again.disabled = false;
+      });
+    }
+    load();
+
+    return box;
   }
 
   function storage(repaint) {
@@ -1242,6 +1439,49 @@
             C.el("span", { class: "muted", text: "Affects this browser only. No server data is touched." }),
           ])
         : null,
+    ], null, {
+      icon: "folder",
+      collapse: { id: "set.storage", open: false },
+      help: ["Every key this console has written to your browser's ",
+             C.el("code", {}, ["localStorage"]),
+             ", verbatim. Nothing here leaves this machine, and resetting it "
+             + "touches no server state — it puts the page back to defaults."],
+    });
+  }
+
+  /* The jump bar. Every panel on this page folds, so the page is a menu of
+     subjects — and a menu you have to scroll to read is not one. A chip opens
+     its panel and scrolls to it, because a fold you then have to find is not
+     navigation.
+
+     Built from the panels actually rendered, not from a list written twice:
+     the panels differ by whether Agents loaded and whether this is a static
+     export, and a hard-coded index would offer chips for things that are not
+     on the page. */
+  function jumpBar(host) {
+    var panels = [].slice.call(host.querySelectorAll("section.panel.collapsible"));
+
+    function setAll(open) {
+      panels.forEach(function (p) { if (p._setOpen) p._setOpen(open); });
+    }
+
+    var chips = panels.map(function (p) {
+      var title = p.querySelector("header h3");
+      return C.el("button", {
+        class: "btn sm", type: "button",
+        onclick: function () {
+          if (p._setOpen) p._setOpen(true);
+          p.scrollIntoView({ block: "start", behavior: "smooth" });
+        },
+      }, [title ? title.textContent : "Section"]);
+    });
+
+    return C.el("div", { class: "secnav" }, [
+      C.el("div", { class: "chips" }, chips),
+      C.el("button", { class: "btn sm", type: "button",
+        onclick: function () { setAll(false); } }, ["Collapse all"]),
+      C.el("button", { class: "btn sm", type: "button",
+        onclick: function () { setAll(true); } }, ["Expand all"]),
     ]);
   }
 
@@ -1264,11 +1504,15 @@
         kids.push(telegram(paint));
         kids.push(machine());
       }
-      h.appendChild(C.el("div", { class: "grid" }, kids));
-      h.appendChild(C.el("div", { style: "margin-top:12px" }, [storage(paint)]));
-      if (!C.IS_STATIC) {
-        h.appendChild(C.el("div", { style: "margin-top:12px" }, [diagnostics()]));
-      }
+      kids.push(storage(paint));
+      if (!C.IS_STATIC) kids.push(diagnostics());
+
+      // One grid for everything now that the tall panels fold: storage and
+      // diagnostics were full-width rows below because they were long, which
+      // stopped being true.
+      var grid = C.el("div", { class: "grid" }, kids);
+      h.appendChild(jumpBar(grid));
+      h.appendChild(grid);
     }
 
     paint();

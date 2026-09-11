@@ -212,8 +212,108 @@ window.Console = (function () {
       if (headExtra) append(head, headExtra);
     }
     var body = el("div", { class: "body" + (opts.flush ? " flush" : "") });
+    var note = opts.help && head ? helpNote(head, body, title) : null;
     append(body, Array.isArray(kids) ? kids : [kids]);
-    return el("section", { class: "panel" }, [head, body]);
+    if (note) note(opts.help);
+    var section = el("section", { class: "panel" }, [head, body]);
+    if (opts.collapse && head) collapsible(section, head, opts.collapse);
+    return section;
+  }
+
+  /* An ⓘ in the header that reveals one paragraph of "what is this and where
+     does it live". Hidden by default and pinned to the TOP of the body, so the
+     explanation is one click away instead of costing every reader the vertical
+     space it takes — which is what made the Settings page a scroll marathon.
+
+     Returns a function so the caller can insert the note after its own
+     children are appended and still have it come first. */
+  function helpNote(head, body, title) {
+    var note = el("p", { class: "helpnote", hidden: true });
+    var btn = el("button", {
+      class: "btn sm iconly helpbtn", type: "button",
+      title: "What " + (title || "this") + " does",
+      "aria-label": "What " + (title || "this") + " does",
+      "aria-expanded": "false",
+      onclick: function (e) {
+        e.stopPropagation();
+        note.hidden = !note.hidden;
+        btn.setAttribute("aria-expanded", note.hidden ? "false" : "true");
+        btn.classList.toggle("on", !note.hidden);
+        // Explaining a panel you cannot see would be a no-op.
+        var sec = body.parentNode;
+        if (!note.hidden && sec && sec.classList.contains("collapsed")) sec._setOpen(true);
+      },
+    }, [icon("info")]);
+    head.appendChild(btn);
+    return function (content) {
+      append(note, Array.isArray(content) ? content : [content]);
+      body.insertBefore(note, body.firstChild);
+    };
+  }
+
+  /* Open/closed, remembered per id across reloads.
+
+     One localStorage object rather than a key per panel: the Settings page
+     lists every `console.*` key it stores, and ten near-identical rows there
+     would be noise about the mechanism rather than about the settings. */
+  function collapsible(section, head, spec) {
+    var id = spec.id;
+    var open = prefs.get("panelOpen", {});
+    var isOpen = Object.prototype.hasOwnProperty.call(open, id)
+      ? !!open[id] : spec.open !== false;
+
+    var chev = el("span", { class: "chev" }, [icon("chevDown")]);
+    head.appendChild(chev);
+    section.classList.add("collapsible");
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+
+    function apply(next, persist) {
+      isOpen = next;
+      section.classList.toggle("collapsed", !isOpen);
+      head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      if (persist) {
+        var map = prefs.get("panelOpen", {});
+        map[id] = isOpen;
+        prefs.set("panelOpen", map);
+      }
+    }
+
+    // A click anywhere on the header toggles, EXCEPT on a control someone put
+    // there — a header "Show all tabs" button must not also fold the panel.
+    head.addEventListener("click", function (e) {
+      if (e.target.closest("button,input,select,a,label,textarea")) return;
+      apply(!isOpen, true);
+    });
+    head.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      apply(!isOpen, true);
+    });
+    chev.addEventListener("click", function () { apply(!isOpen, true); });
+
+    section.dataset.panelId = id;
+    section._setOpen = function (next) { apply(next, true); };
+    apply(isOpen, false);
+  }
+
+  /* A collapsible block INSIDE a panel — same contract as `panel`'s collapse,
+     one level quieter. Exists because the Assistant panel is twenty settings
+     in six unrelated subjects, and a panel that is either all of it or none of
+     it is not a useful choice. */
+  function group(title, kids, opts) {
+    opts = opts || {};
+    var head = el("header", {}, [
+      opts.icon ? icon(opts.icon) : null,
+      el("h4", { text: title }),
+    ]);
+    var body = el("div", { class: "gbody" });
+    var note = opts.help ? helpNote(head, body, title) : null;
+    append(body, Array.isArray(kids) ? kids : [kids]);
+    if (note) note(opts.help);
+    var box = el("section", { class: "group" }, [head, body]);
+    if (opts.id) collapsible(box, head, { id: opts.id, open: opts.open });
+    return box;
   }
 
   function empty(title, hint, iconName) {
@@ -602,7 +702,7 @@ window.Console = (function () {
     tab: tab, tabImpl: tabImpl, tabIds: tabIds,
     get: get, post: post,
     el: el, append: append, clear: clear, icon: icon,
-    panel: panel, empty: empty, errbox: errbox, skeleton: skeleton, chip: chip,
+    panel: panel, group: group, empty: empty, errbox: errbox, skeleton: skeleton, chip: chip,
     stat: stat, stats: stats,
     bars: bars, stack: stack, catClass: catClass, catVar: catVar,
     fmtNum: fmtNum, fmtAgo: fmtAgo, todayISO: todayISO,

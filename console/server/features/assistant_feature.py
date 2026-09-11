@@ -523,6 +523,57 @@ def apply(ctx):
                      detail=dict(req.body or {}))
         return {"settings": merged}
 
+    def resolve_get(req):
+        """Which backend and model a message sent RIGHT NOW would go to.
+
+        Deliberately not part of `settings_get`. That endpoint is on the tray's
+        hot path and is guaranteed not to touch a socket; answering this one
+        means probing every candidate until one is ready, which is exactly the
+        multi-second cost `settings_get` was changed to avoid. Two questions,
+        two endpoints, each paying its own price.
+
+        Why it exists at all: the Settings tab could show you that Talk was set
+        to "Auto" and which model you had pinned, and neither answers "what
+        will actually reply to me". Auto is a search whose result depends on
+        what is running this minute, and when the local runtimes are off it
+        lands on a CLI that takes seconds per turn — with nothing on screen
+        saying so. `rejected` is the other half: every candidate passed over,
+        with the reason, so "why is it slow" and "why is it not using my local
+        model" are answerable without reading a log.
+        """
+        registry = agent_backends.registry(repo_root)
+        cfg = assistant_config.settings(repo_root)
+
+        def one(resolver, pinned_backend, pinned_model):
+            report = []
+            try:
+                backend_id = resolver(repo_root, registry, report=report)
+            except ValueError as exc:
+                return {"ready": False, "why": str(exc),
+                        "rejected": [{"backend": b, "why": w} for b, w in report]}
+            backend = registry.get(backend_id)
+            return {
+                "ready": True,
+                "backend": backend_id,
+                "label": getattr(backend, "label", backend_id),
+                # Pinned means you chose it; otherwise the order in
+                # `resolve_backend` picked it and the UI should say so.
+                "pinned": bool(pinned_backend),
+                # An empty model is not unknown-therefore-hide-it: it means no
+                # model flag is sent and the backend uses its own default. The
+                # UI says that in words rather than showing a blank.
+                "model": pinned_model,
+                "is_api": bool(getattr(backend, "is_api", False)),
+                "rejected": [{"backend": b, "why": w} for b, w in report],
+            }
+
+        return {
+            "talk": one(assistant_config.resolve_backend,
+                        cfg.get("backend", ""), cfg.get("model", "")),
+            "work": one(assistant_config.resolve_work_backend,
+                        cfg.get("work_backend", ""), cfg.get("work_model", "")),
+        }
+
     ctx.get(r"^/api/assistant/session/?$", session, "assistant.session")
     ctx.post(r"^/api/assistant/new/?$", new, "assistant.new")
     ctx.post(r"^/api/assistant/say/?$", say, "assistant.say")
@@ -532,6 +583,7 @@ def apply(ctx):
     ctx.post(r"^/api/assistant/memory/?$", memory_post, "assistant.memory_post")
     ctx.get(r"^/api/assistant/settings/?$", settings_get, "assistant.settings_get")
     ctx.post(r"^/api/assistant/settings/?$", settings_post, "assistant.settings_post")
+    ctx.get(r"^/api/assistant/resolve/?$", resolve_get, "assistant.resolve_get")
 
 
 

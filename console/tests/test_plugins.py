@@ -204,6 +204,10 @@ class TestAssistantRoutes:
             ("GET", "assistant.memory_get"), ("POST", "assistant.memory_post"),
             ("GET", "assistant.settings_get"),
             ("POST", "assistant.settings_post"),
+            # Separate from settings_get on purpose: this one probes backends
+            # until one answers, and settings_get is guaranteed not to touch a
+            # socket because the tray reads it on its hot path.
+            ("GET", "assistant.resolve_get"),
             # T-015: the voice overlay's Allow/Deny. The Assistant answers a
             # card on its own chat, so the caller needs no chat id.
             ("POST", "assistant.approve")}

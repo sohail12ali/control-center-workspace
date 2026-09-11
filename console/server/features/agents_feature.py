@@ -7,7 +7,7 @@ hiding a button.
 """
 
 from .. import agent_approvals, agent_backends, agent_manager, audit
-from .. import provider_overrides
+from .. import dotenv, provider_overrides
 from .. import agents as agents_mod
 from .. import model_catalog, prompt_tokens
 from ..httpd import EventSource
@@ -71,8 +71,18 @@ def apply(ctx):
         Deliberately not `registry()`, which only yields what is enabled: a
         panel that lists only the providers you already turned on cannot be
         the place you turn one on.
+
+        `env_file` comes along because a provider that needs a key is useless
+        without one, and every message about that pointed at "the workspace
+        .env" without saying where that is — on a machine where the file did
+        not exist yet, that is an instruction to edit something invisible.
+        `dotenv.describe` returns the absolute path, whether the file is
+        there, and the NAMES it defines. Never the values: this endpoint is
+        read by a web page, and a secret that reaches a browser is a secret in
+        a devtools tab, a screenshot and a bug report.
         """
-        return {"providers": agent_backends.provider_list(repo_root)}
+        return {"providers": agent_backends.provider_list(repo_root),
+                "env_file": dotenv.describe(repo_root)}
 
     def providers_post(req):
         """Switch providers on and off, and add or remove your own.
