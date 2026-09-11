@@ -1016,19 +1016,117 @@
        resident (LM Studio keeps ONE model loaded and swaps on demand, so
        picking an unloaded one is a ~20-second decision), and whether it claims
        tool training — which the Assistant needs for any of its verbs to work. */
+    /* A role, chosen in three steps: KIND, then PROVIDER, then MODEL.
+
+       One flat list of backend ids could not answer the question people
+       actually arrive with. "Claude Code" and "OpenRouter" are not two items
+       of the same kind: one is a binary on PATH that runs as a process, the
+       other is a URL and a key, and they fail, cost and behave differently.
+       Mixing them in a single dropdown — by raw id, unlabelled — meant
+       choosing a backend required already knowing which sort each one was.
+
+       So: kind narrows the providers, and the provider narrows the models.
+       Nothing new is stored. `backend` and `model` are the same two settings
+       as before; the kind is DERIVED from whichever backend is pinned, so
+       there is no third field to disagree with the other two.
+
+       Auto stays, and stays first, because it is the right answer for a
+       machine with one usable backend. It stores an empty `backend`, and
+       `resolve_backend` searches at send time — which is why the readout at
+       the top of this section exists to say where that search landed. */
     function roleRow(s, d, opts) {
         var wrap = C.el("div", {});
-        var backends = [["", opts.autoLabel]].concat(
-            (d.installed || []).map(function (id) { return [id, id]; }));
+        var rows = d.backends || [];
+        var pinned = String(s[opts.backendKey] || "");
+        var pinnedRow = rows.filter(function (b) { return b.id === pinned; })[0];
 
-        var sel = C.el("select", { "aria-label": opts.label + " backend" });
-        backends.forEach(function (o) {
+        // Derived, never stored: a pinned backend already says which kind it
+        // is, and a stored copy could contradict it. `forceKind` is the one
+        // exception and lives for a single repaint — after you pick CLI or
+        // API there is no provider yet, so there is nothing to derive from
+        // and nothing saved to derive it from either.
+        var kind = opts.forceKind || (!pinned ? "auto" : (pinnedRow
+            ? (pinnedRow.is_api ? "api" : "cli")
+            // Pinned to something the server no longer offers. Guess from the
+            // id rather than silently resetting the row to Auto.
+            : "gone"));
+
+        var kindSel = C.el("select", { "aria-label": opts.label + " kind" });
+        [["auto", opts.autoLabel],
+         ["cli", "CLI — a binary on PATH, run as a process"],
+         ["api", "API — an endpoint the console calls itself"]].forEach(function (o) {
             var opt = C.el("option", { value: o[0], text: o[1] });
-            if (String(s[opts.backendKey] || "") === o[0]) opt.selected = true;
-            sel.appendChild(opt);
+            if (o[0] === kind) opt.selected = true;
+            kindSel.appendChild(opt);
         });
-        sel.addEventListener("change", function () {
-            var patch = {}; patch[opts.backendKey] = sel.value;
+        if (kind === "gone") {
+            var lost = C.el("option", { value: "gone", text: pinned + " — not available now" });
+            lost.selected = true;
+            kindSel.appendChild(lost);
+        }
+
+        /* Only backends that are installed AND enabled can be saved: the
+           server refuses the rest by name (`assistant_config.update`). So the
+           list offers exactly those — except for a pin that has dropped out,
+           which is shown anyway and disabled. A picker that quietly displayed
+           "Auto" while the stored setting said `lm-studio` is how you end up
+           debugging a machine that is not the one you are looking at. */
+        var choices = rows.filter(function (b) {
+            return b.installed && (kind === "api" ? b.is_api : !b.is_api);
+        });
+
+        var providerSel = C.el("select", { "aria-label": opts.label + " provider" });
+        if (kind === "auto") {
+            providerSel.appendChild(C.el("option", { value: "", text: "— chosen at send time —" }));
+            providerSel.disabled = true;
+        } else {
+            if (!pinned || !choices.some(function (b) { return b.id === pinned; })) {
+                var blank = C.el("option", { value: "", text: "Choose a provider…" });
+                blank.selected = true;
+                providerSel.appendChild(blank);
+            }
+            choices.forEach(function (b) {
+                var opt = C.el("option", { value: b.id, text: b.label || b.id });
+                if (b.id === pinned) opt.selected = true;
+                providerSel.appendChild(opt);
+            });
+            if (kind === "gone") {
+                var kept = C.el("option", { value: pinned, text: pinned + " — not reachable now" });
+                kept.selected = true;
+                providerSel.appendChild(kept);
+            }
+            if (!choices.length && kind !== "gone") {
+                providerSel.appendChild(C.el("option", { value: "",
+                    text: kind === "api" ? "no API provider is set up"
+                                         : "no CLI is on PATH" }));
+            }
+        }
+
+        kindSel.addEventListener("change", function () {
+            if (kindSel.value === "auto") {
+                var patch = {};
+                patch[opts.backendKey] = "";
+                patch[opts.modelKey] = "";
+                save(patch);
+                return;
+            }
+            // Nothing is saved by switching kind alone — there is no provider
+            // yet to save. Repaint the two selects below and wait for one.
+            kind = kindSel.value;
+            pinned = "";
+            var next = roleRow(
+                Object.assign({}, s, (function () {
+                    var o = {}; o[opts.backendKey] = ""; o[opts.modelKey] = ""; return o;
+                })()),
+                d,
+                Object.assign({}, opts, { forceKind: kind }));
+            wrap.replaceWith(next);
+        });
+
+        providerSel.addEventListener("change", function () {
+            if (!providerSel.value) return;
+            var patch = {};
+            patch[opts.backendKey] = providerSel.value;
             // The model belonged to the old provider; keeping it would send a
             // qwen id to claude.
             patch[opts.modelKey] = "";
@@ -1038,11 +1136,11 @@
         var models = C.el("select", { "aria-label": opts.label + " model" });
         var note = C.el("span", { class: "muted", style: "font-size:11px" });
 
-        function fillModels(rows, reportsResidency) {
+        function fillModels(rowsIn, reportsResidency) {
             C.clear(models);
             var chosen = String(s[opts.modelKey] || "");
-            models.appendChild(C.el("option", { value: "", text: "(backend default)" }));
-            (rows || []).forEach(function (m) {
+            models.appendChild(C.el("option", { value: "", text: "(provider default)" }));
+            (rowsIn || []).forEach(function (m) {
                 var bits = [];
                 if (m.loaded === true) bits.push("● loaded");
                 else if (m.loaded === false) bits.push("○ not loaded");
@@ -1057,17 +1155,17 @@
             });
             // A chosen model the catalogue does not list still has to appear,
             // or switching provider would silently drop it.
-            if (chosen && !(rows || []).some(function (m) { return m.id === chosen; })) {
+            if (chosen && !(rowsIn || []).some(function (m) { return m.id === chosen; })) {
                 var kept = C.el("option", { value: chosen, text: chosen + "  — not in the catalogue" });
                 kept.selected = true;
                 models.appendChild(kept);
             }
-            if (!(rows || []).length) {
+            if (!(rowsIn || []).length) {
                 note.textContent = "no catalogue yet — Refresh models on the provider above";
             } else if (!reportsResidency) {
-                note.textContent = rows.length + " models · this provider does not report what is loaded";
+                note.textContent = rowsIn.length + " models · this provider does not report what is loaded";
             } else {
-                note.textContent = rows.length + " models";
+                note.textContent = rowsIn.length + " models";
             }
         }
 
@@ -1088,9 +1186,8 @@
             save(patch);
         });
 
-        var chosenBackend = String(s[opts.backendKey] || "");
-        if (chosenBackend) {
-            C.get("/api/agents/models?backend=" + encodeURIComponent(chosenBackend))
+        if (pinned) {
+            C.get("/api/agents/models?backend=" + encodeURIComponent(pinned))
                 .then(function (m) {
                     models._rows = m.models || [];
                     fillModels(m.models, m.reports_residency);
@@ -1098,7 +1195,10 @@
                 .catch(function () { fillModels([], false); });
         } else {
             fillModels([], false);
-            note.textContent = "pick a provider to choose a model";
+            models.disabled = true;
+            note.textContent = kind === "auto"
+                ? "Auto sends no model — each provider uses its own default"
+                : "pick a provider to choose a model";
         }
 
         wrap.appendChild(C.el("div", { class: "setrow" }, [
@@ -1107,7 +1207,7 @@
                 C.el("b", { text: opts.label }),
                 C.el("span", { text: opts.hint }),
             ]),
-            C.el("div", { class: "setctl" }, [sel, models, note]),
+            C.el("div", { class: "setctl" }, [kindSel, providerSel, models, note]),
         ]));
         return wrap;
     }
@@ -1235,7 +1335,7 @@
 
     function save(patch) {
       C.post("/api/assistant/settings", patch)
-        .then(function (d) { paint({ settings: d.settings, installed: installed }); C.toast("Saved", "ok"); })
+        .then(function (d) { paint({ settings: d.settings, backends: installed }); C.toast("Saved", "ok"); })
         .catch(function (err) { C.toast(err.message, "err"); load(); });
     }
 
@@ -1251,10 +1351,12 @@
     function loadInstalled() {
       return C.get("/api/agents/backends")
         .then(function (d) {
-          installed = (d.backends || [])
-            .filter(function (b) { return b.installed; })
-            .map(function (b) { return b.id; })
-            .sort();
+          // Whole rows, not ids: the picker needs `label` to name a provider
+          // and `is_api` to sort it into CLI or API, and rebuilding either
+          // from an id is guesswork about a fact the server already sent.
+          installed = (d.backends || []).slice().sort(function (a, b) {
+            return String(a.label || a.id).localeCompare(String(b.label || b.id));
+          });
           return installed;
         })
         // A failure here costs the picker its options, not the panel. The
@@ -1265,8 +1367,14 @@
     function load() {
       C.get("/api/assistant/settings")
         .then(function (d) {
+          // `d` is the settings response and carries no backends, so the
+          // first paint draws the pickers empty and the second fills them.
+          // Passing `d` unchanged to both was the bug that left every fresh
+          // page load showing "Auto" no matter what was pinned.
           paint(d);
-          loadInstalled().then(function () { paint(d); });
+          loadInstalled().then(function () {
+            paint({ settings: d.settings, backends: installed });
+          });
         })
         .catch(function (err) {
           C.clear(body);
