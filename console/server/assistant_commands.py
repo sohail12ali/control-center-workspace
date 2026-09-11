@@ -91,7 +91,6 @@ _BACKEND_ALIASES = {
     "ollama": "ollama",
     "lm studio": "lm-studio", "lmstudio": "lm-studio", "lm-studio": "lm-studio",
     "openrouter": "openrouter", "open router": "openrouter",
-    "qwen": "qwen", "qwen code": "qwen",
 }
 
 

@@ -274,49 +274,6 @@ default_mode = "default"
 [backend.mode_blurbs]
 default = "writes and shell ask you in the chat; reads and console lookups do not"
 
-# ------------------------------------------------------------------ qwen ----
-# Qwen Code — a coding CLI with a Claude-Code-shaped flag surface. Verified
-# against `qwen --help`, version 0.15.11, on 2026-08-29: every flag below is
-# real and its values are the documented ones.
-#
-# ONE-SHOT, and the `notes` line says so on the card. qwen does have
-# `-r/--resume <id>` and `--session-id`, so per-turn continuity is reachable —
-# but only if its stream-json init event carries a session id in the shape
-# `agent_session._observe` reads. That has NOT been verified here (it needs a
-# live run, which spends real quota), and a `resume_args` row written on the
-# assumption would degrade silently: `_expand` drops an empty `{resume_id}`,
-# so every turn would quietly start fresh while the UI implied a conversation.
-# One-shot that says it is one-shot beats continuity that might not be.
-#
-# To upgrade it: run a chat, check console/.cache/chats/<id>.log for an init
-# event with a session id, then add resume_args = [..., "--resume", "{resume_id}"].
-[[backend]]
-id = "qwen"
-label = "Qwen Code"
-command = "qwen"
-transport = "oneshot"
-prompt_prefix_style = "inline"
-notes = "one-shot — each turn starts fresh, with no memory of the last"
-
-# stream-json rather than text: it carries tool calls and usage, which the
-# normalizer already understands. Nothing about that parsing is claude-specific
-# — see Normalizer's docstring.
-turn_args = [
-  "--output-format", "stream-json",
-  "--include-partial-messages",
-  "--approval-mode", "{mode}",
-  "--model", "{model}",
-  "-p", "{prompt}",
-]
-add_dir_args = ["--include-directories", "{dir}"]
-
-modes = ["plan", "default", "auto-edit"]
-default_mode = "plan"
-[backend.mode_blurbs]
-plan = "plan only — proposes, never writes"
-default = "prompts for approval on its own terms, in its own process"
-auto-edit = "auto-approves edit tools; everything else still asks"
-
 # ---------------------------------------------------------------- ollama ----
 # A model running on this machine. Free, private, works offline.
 #
