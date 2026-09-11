@@ -51,6 +51,20 @@ pub fn attach(app: AppHandle, console_url: String) {
     let _ = CONSOLE_URL.set(console_url);
 }
 
+/// The app handle, for the other windows the shell puts on screen.
+///
+/// This module owns it because it is attached here; a second `OnceLock`
+/// somewhere else would be the same handle stored twice and a chance for the
+/// two to disagree about whether setup has run.
+pub fn app() -> Option<AppHandle> {
+    HANDLE.get().cloned()
+}
+
+/// Where the console is served from, for the pages those windows load.
+pub fn console_url() -> String {
+    CONSOLE_URL.get().cloned().unwrap_or_default()
+}
+
 /// What was just heard, or just said — shown in the overlay.
 pub fn said(line: &str) {
     if let Some(app) = HANDLE.get() {

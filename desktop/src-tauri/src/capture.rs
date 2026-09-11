@@ -220,10 +220,31 @@ pub enum Target {
     Region { x: u32, y: u32, width: u32, height: u32 },
 }
 
-pub fn capture(repo_root: &Path, target: Target, max_side: u32) -> CaptureResult<CaptureInfo> {
+/// Where a capture came from, in physical screen pixels.
+///
+/// Returned alongside the file so the shutter flash can cover exactly what
+/// was taken. Best effort by design: every accessor below can fail on a
+/// display that is being reconfigured, and a missing rectangle costs the
+/// flash, not the screenshot.
+fn rect_of(m: &Monitor) -> Option<crate::shutter::Rect> {
+    Some(crate::shutter::Rect {
+        x: m.x().ok()?,
+        y: m.y().ok()?,
+        width: m.width().ok()?,
+        height: m.height().ok()?,
+    })
+}
+
+pub fn capture(
+    repo_root: &Path,
+    target: Target,
+    max_side: u32,
+) -> CaptureResult<(CaptureInfo, Option<crate::shutter::Rect>)> {
+    let mut where_from: Option<crate::shutter::Rect> = None;
     let (image, label) = match target {
         Target::Screen => {
             let m = primary_monitor()?;
+            where_from = rect_of(&m);
             let img = m
                 .capture_image()
                 .map_err(|e| format!("screen capture failed: {e}"))?;
@@ -235,6 +256,7 @@ pub fn capture(repo_root: &Path, target: Target, max_side: u32) -> CaptureResult
                 .into_iter()
                 .find(|m| m.id().unwrap_or(0) == id)
                 .ok_or_else(|| format!("no monitor with id {id}"))?;
+            where_from = rect_of(&m);
             let img = m
                 .capture_image()
                 .map_err(|e| format!("monitor capture failed: {e}"))?;
@@ -248,6 +270,9 @@ pub fn capture(repo_root: &Path, target: Target, max_side: u32) -> CaptureResult
                 // window gives back.
                 return Err(format!("the window {title:?} is minimized - restore it first"));
             }
+            if let (Ok(x), Ok(y), Ok(width), Ok(height)) = (w.x(), w.y(), w.width(), w.height()) {
+                where_from = Some(crate::shutter::Rect { x, y, width, height });
+            }
             let img = w
                 .capture_image()
                 .map_err(|e| format!("window capture failed: {e}"))?;
@@ -258,13 +283,23 @@ pub fn capture(repo_root: &Path, target: Target, max_side: u32) -> CaptureResult
                 return Err("a region needs a non-zero width and height".into());
             }
             let m = primary_monitor()?;
+            // Region coordinates are relative to the monitor; the flash needs
+            // them in screen space, which is that plus the monitor's origin.
+            if let Some(screen) = rect_of(&m) {
+                where_from = Some(crate::shutter::Rect {
+                    x: screen.x + x as i32,
+                    y: screen.y + y as i32,
+                    width,
+                    height,
+                });
+            }
             let img = m
                 .capture_region(x, y, width, height)
                 .map_err(|e| format!("region capture failed: {e}"))?;
             (img, format!("region {width}x{height} at {x},{y}"))
         }
     };
-    save(repo_root, shrink(image, max_side), &label)
+    Ok((save(repo_root, shrink(image, max_side), &label)?, where_from))
 }
 
 /// Resolve a capture id back to its file, refusing anything that escapes the

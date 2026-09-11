@@ -40,6 +40,8 @@ pub enum Cue {
     Sent,
     /// Nothing was heard, or the take was dropped.
     Dropped,
+    /// A screenshot was taken.
+    Shutter,
 }
 
 impl Cue {
@@ -52,6 +54,11 @@ impl Cue {
             Cue::Sent => &[(880.0, 55), (1320.0, 55)],
             // Down: nothing came of it.
             Cue::Dropped => &[(520.0, 70), (390.0, 90)],
+            // Two clicks, tight and dry, an octave apart — a leaf shutter
+            // opening and closing rather than a musical phrase. Short enough
+            // that the 3ms edge fade in `render` is most of each note, which
+            // is what stops it reading as a beep.
+            Cue::Shutter => &[(1900.0, 22), (1150.0, 34)],
         }
     }
 }

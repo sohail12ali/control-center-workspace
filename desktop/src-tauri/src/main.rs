@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod app_icon;
 mod audio;
 mod bridge;
 mod capture;
@@ -16,6 +17,7 @@ mod listen;
 mod logger;
 mod ocr;
 mod piper;
+mod shutter;
 mod sidecar;
 mod speech_text;
 mod stt;
@@ -233,7 +235,10 @@ fn open_window(app: &tauri::App, handle: &Handle) -> Result<(), Box<dyn std::err
         builder = builder.decorations(false).shadow(true);
     }
 
-    builder.build()?;
+    let window = builder.build()?;
+    // After build, so this overrides the single-frame icon tao just set from
+    // Tauri's context — see app_icon.rs.
+    app_icon::apply(&window);
     log::info!("window: main webview opened");
     Ok(())
 }

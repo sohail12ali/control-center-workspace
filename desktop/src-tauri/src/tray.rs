@@ -482,8 +482,23 @@ pub fn attach(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-    if let Some(icon) = handle.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    // The 32px app icon, not `default_window_icon`. That one is whatever
+    // `tauri-codegen` pulled out of icon.ico as entries()[0], which is a
+    // single frame at a single size and was never chosen for a notification
+    // area — when the .ico led with its 16px frame, this is where it showed
+    // up doubled and soft. 32 is exactly what the tray asks for at 200%
+    // scaling and halves cleanly to the 16 it wants at 100%.
+    //
+    // Only the FIRST thing the tray shows: `tray_paint` replaces it with the
+    // state icon as soon as there is a state to report.
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
+        Ok(icon) => tray = tray.icon(icon),
+        Err(e) => {
+            log::warn!("tray: app icon failed to decode ({e}); falling back");
+            if let Some(icon) = handle.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+        }
     }
 
     tray.build(handle)?;

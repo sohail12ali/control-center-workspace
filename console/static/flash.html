@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Capture</title>
+<!--
+  The screenshot flash: a white pane over exactly what was captured, gone in
+  a quarter of a second.
+
+  A page rather than a native overlay for the same reason the HUD is a page —
+  the shell already knows how to put a borderless transparent window over the
+  screen, and one CSS animation is less code than a layered window per
+  platform. It is served, not bundled, because `frontendDist` is a placeholder
+  and every other shell window loads from the console the same way.
+
+  Nothing here is interactive: the window is created with focus off and cursor
+  events ignored, and this page has no script at all. The shell closes it on a
+  timer, so a stuck animation cannot leave a white rectangle on the screen.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* Two layers: the pane that flashes, and a border that reads as a frame
+     being closed on what was taken. The border matters at region captures,
+     where the pane alone is a white flicker with no edges. */
+  .pane {
+    position: fixed; inset: 0;
+    background: #fff;
+    border: 2px solid rgba(255, 255, 255, .95);
+    box-sizing: border-box;
+    animation: flash 240ms ease-out forwards;
+  }
+  @keyframes flash {
+    0%   { opacity: .62; }
+    35%  { opacity: .38; }
+    100% { opacity: 0; }
+  }
+  /* Someone who has asked the OS for less motion gets a still, brief pane
+     rather than a pulse. */
+  @media (prefers-reduced-motion: reduce) {
+    .pane { animation: fade 240ms linear forwards; }
+    @keyframes fade { 0% { opacity: .35; } 100% { opacity: 0; } }
+  }
+</style>
+</head>
+<body><div class="pane"></div></body>
+</html>

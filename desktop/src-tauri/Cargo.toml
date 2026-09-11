@@ -53,6 +53,8 @@ windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_Console",
+  # GetModuleHandleW, for loading the exe's own icon resource — see app_icon.rs.
+  "Win32_System_LibraryLoader",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",

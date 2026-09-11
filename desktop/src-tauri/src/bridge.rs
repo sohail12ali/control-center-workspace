@@ -467,7 +467,12 @@ fn route(
                 .map(|v| v as u32)
                 .unwrap_or(capture::DEFAULT_MAX_SIDE);
             match capture::capture(repo_root, target, max_side) {
-                Ok(info) => ok(json!({"capture": info})),
+                Ok((info, where_from)) => {
+                    // After the pixels are grabbed, never before: a flash
+                    // drawn first would be in the screenshot.
+                    crate::shutter::fire(where_from);
+                    ok(json!({"capture": info}))
+                }
                 Err(e) => err(500, "unavailable", e),
             }
         }
