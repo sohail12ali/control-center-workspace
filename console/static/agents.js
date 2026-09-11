@@ -862,7 +862,7 @@
       if (!Voice.prefs().autoRead) return;
       if (item.kind === "text" && item.open === false && !item._spoken) {
         item._spoken = true;
-        Voice.speak(item.text);
+        Voice.autoSpeak(item.text);
       }
     });
 
@@ -876,9 +876,9 @@
       var p = Voice.prefs();
       if (!p.announce) return;
       if (item.kind === "turnend" && !p.autoRead) {
-        Voice.speak(item.is_error ? "The agent stopped with an error." : "The agent is done.");
+        Voice.autoSpeak(item.is_error ? "The agent stopped with an error." : "The agent is done.");
       } else if (item.kind === "approval" && !(item.approval || {}).decided) {
-        Voice.speak("Permission needed for " + ((item.approval || {}).tool || "a tool"));
+        Voice.autoSpeak("Permission needed for " + ((item.approval || {}).tool || "a tool"));
       }
     });
 
@@ -1230,7 +1230,13 @@
         ta.value = (committed + " " + interim).replace(/\s+/g, " ").trim();
       }),
       Voice.speakButton(function () { return st.view ? st.view.lastAssistantText() : ""; }),
-      C.el("label", { class: "ct-autoread", title: "Speak each reply as it finishes" }, [
+      // Both switches say when the shell has taken the job over, rather than
+      // sitting on and doing nothing — a checkbox that is ticked and silent is
+      // the bug report "read aloud does not work".
+      C.el("label", { class: "ct-autoread", title: Voice.shellSpeaks()
+        ? "The desktop app reads replies itself — this browser stays quiet so "
+          + "you do not hear both"
+        : "Speak each reply as it finishes" }, [
         (function () {
           var cb = C.el("input", { type: "checkbox" });
           cb.checked = !!Voice.prefs().autoRead;
@@ -1242,9 +1248,12 @@
           return cb;
         })(),
         C.el("span", { text: "read aloud" }),
+        Voice.shellSpeaks()
+          ? C.el("span", { class: "chip", text: "app reads" }) : null,
       ]),
-      C.el("label", { class: "ct-autoread",
-        title: "Say when the agent finishes a turn or needs permission" }, [
+      C.el("label", { class: "ct-autoread", title: Voice.shellSpeaks()
+        ? "The desktop app speaks for itself; announcements stay quiet here"
+        : "Say when the agent finishes a turn or needs permission" }, [
         (function () {
           var cb = C.el("input", { type: "checkbox" });
           cb.checked = !!Voice.prefs().announce;

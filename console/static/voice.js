@@ -142,6 +142,26 @@ window.ConsoleVoice = (function (C) {
   function listening() { return state.listening; }
 
   /* ---------------- read aloud ---------------- */
+
+  /* Inside the desktop shell, the SHELL speaks.
+     `assistant_reply` sends every finished reply to the native bridge, which
+     reads it with piper. The Assistant's chat is an agent chat like any other,
+     so with the Agents tab open the browser's own auto-read reached the same
+     text and you heard it twice, in two different voices, slightly offset.
+     One speaker, and in the shell it is the good one. */
+  function shellSpeaks() {
+    return document.documentElement.classList.contains("in-shell");
+  }
+
+  /* Speech nobody asked for right now: auto-read and announcements.
+     Separate from `speak` because pressing the speaker button on a message IS
+     asking, and that must still work wherever you are — the shell is not
+     speaking at that moment. */
+  function autoSpeak(text, onDone) {
+    if (shellSpeaks()) return false;
+    return speak(text, onDone);
+  }
+
   function speak(text, onDone) {
     if (!SS) { C.toast(support().readAloudWhy, "err"); return false; }
     text = String(text || "").trim();
@@ -228,7 +248,8 @@ window.ConsoleVoice = (function (C) {
     support: support, prefs: prefs, setPrefs: setPrefs,
     loadVoices: loadVoices, voices: voices,
     startDictation: startDictation, stopDictation: stopDictation, listening: listening,
-    speak: speak, stopSpeaking: stopSpeaking, speaking: speaking,
+    speak: speak, autoSpeak: autoSpeak, shellSpeaks: shellSpeaks,
+    stopSpeaking: stopSpeaking, speaking: speaking,
     micButton: micButton, speakButton: speakButton,
   };
 })(window.Console);
