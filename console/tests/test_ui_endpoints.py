@@ -155,6 +155,17 @@ class TestAssistantHomeAndRuns:
         rows = call(app, "GET", "/api/runs")["runs"]
         assert rec["id"] in [r["id"] for r in rows]
 
+    def test_runs_list_is_enriched_for_the_inspector(self, app, repo):
+        """T-018 FR-8: the same route the Agents tab reads carries the
+        inspector fields, not just the raw Run record."""
+        from server import runs
+        runs.create(repo, ticket="", executor="chat", executor_id="c2")
+        row = call(app, "GET", "/api/runs")["runs"][0]
+        assert row["worktree_display"] == "shared tree"
+        assert row["diffstat"] == ""
+        assert row["cost_usd"] == 0
+        assert row["tokens"] == 0
+
 
 class TestModelsEndpoint:
     def test_with_no_backend_it_summarises_providers(self, app):

@@ -34,6 +34,23 @@ class TestRunStore:
         runs.create(repo, ticket="T-002", executor="job", executor_id="b")
         assert len(runs.list_runs(repo, ticket="T-001")) == 1
 
+    def test_worktree_fields_default_empty(self, repo):
+        rec = runs.create(repo, ticket="T-001", executor="chat", executor_id="a")
+        assert (rec["worktree_path"], rec["worktree_branch"], rec["worktree_error"]) == ("", "", "")
+
+    def test_worktree_fields_round_trip(self, repo):
+        rec = runs.create(repo, ticket="T-001", executor="chat", executor_id="a",
+                          worktree_path="/repo/.claude/worktrees/T-001",
+                          worktree_branch="agent/T-001", worktree_error="")
+        got = runs.get(repo, rec["id"])
+        assert got["worktree_path"] == "/repo/.claude/worktrees/T-001"
+        assert got["worktree_branch"] == "agent/T-001"
+
+    def test_worktree_error_round_trips(self, repo):
+        rec = runs.create(repo, ticket="T-001", executor="chat", executor_id="a",
+                          worktree_error="T-001 is not a git repository")
+        assert runs.get(repo, rec["id"])["worktree_error"] == "T-001 is not a git repository"
+
 
 def _install_shipped_verbs(repo):
     src = os.path.join(find_repo_root(), "console", "config", "verbs.toml")

@@ -21,6 +21,7 @@ import uuid
 import time
 
 from . import agent_approvals, agent_backends, agent_session
+from . import worktrees as worktrees_mod
 from .agent_events import replay_file
 from .paths import resolve_rel
 
@@ -61,6 +62,25 @@ def server_port():
     return _SERVER_PORT
 
 
+def _resolve_worktree(repo_root, ticket):
+    """Reuse-or-create the one managed worktree for `ticket` (T-018 FR-1/FR-4,
+    decision-log a3 — never a second worktree for a ticket that already has
+    one). Falls back to `repo_root` with a non-silent reason on any
+    `WorktreeError` (non-git repo, branch collision, etc.) — never raises,
+    because a worktree failure must degrade a Run to the shared tree, not
+    crash it (FR-3).
+
+    Returns `(cwd, worktree_path, worktree_branch, worktree_error)`.
+    """
+    try:
+        entry = worktrees_mod._find(repo_root, ticket)
+        if entry is None:
+            entry = worktrees_mod.add(repo_root, ticket)
+        return entry["path"], entry["path"], entry["branch"], ""
+    except worktrees_mod.WorktreeError as exc:
+        return repo_root, "", "", str(exc)
+
+
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
            persona="", title="", server_port=0, ticket="",
            system_append="", extra="", open=True):
@@ -95,6 +115,17 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
     sid = uuid.uuid4().hex[:12]
     log_path, _events = _paths(repo_root, sid)
 
+    # Worktree isolation (T-018 FR-1/FR-2/FR-4): default on for any ticketed
+    # Run, reusing the ticket's existing managed worktree if one exists
+    # (decision-log a3). A ticketless call (`ticket=""`, the Assistant's own
+    # chats and every pre-T-018 caller) is unaffected — `cwd` stays
+    # `repo_root`, exactly as before this ticket.
+    cwd = repo_root
+    worktree_path = worktree_branch = worktree_error = ""
+    if ticket:
+        cwd, worktree_path, worktree_branch, worktree_error = \
+            _resolve_worktree(repo_root, ticket)
+
     # Approval gate: a stream_json backend with gated tools gets a per-session
     # settings file installing the PreToolUse hook. Needs the server's bound
     # port so the hook can call home; without one (e.g. a CLI-launched run
@@ -111,7 +142,7 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         agent_approvals.REGISTRY.forget(sess.id)
 
     sess = agent_session.build(
-        sid, backend, repo_root, log_path=log_path,
+        sid, backend, cwd, log_path=log_path,
         title=title or text[:80] or "(new chat)", model=model, mode=mode,
         skill=skill, persona=persona, on_exit=_on_exit,
         settings_path=settings_path, ticket=ticket,
@@ -125,17 +156,28 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
     # first one — everything after it is a normal continuation of the same
     # conversation, which already has the text.
     needs_prefix = bool(system_append) and not backend.supports_system_append_flag
+
+    def _snap():
+        # Surfaced on the snapshot (not stored on the session itself) so both
+        # `verb_handlers.py` call sites can thread these onto the Run record
+        # they create right after this call returns (T-018 FR-1..FR-4).
+        snap = sess.snapshot()
+        snap["worktree_path"] = worktree_path
+        snap["worktree_branch"] = worktree_branch
+        snap["worktree_error"] = worktree_error
+        return snap
+
     if not open:
         if needs_prefix:
             sess.defer_system_prefix(system_append)
-        return sess.snapshot()
+        return _snap()
 
     wire = backend.compose_prompt(text, skill=skill, persona=persona,
                                   repo_root=repo_root)
     if needs_prefix:
         wire = system_append + "\n\n" + wire
     sess.send(wire, mode="auto", display=text)
-    return sess.snapshot()
+    return _snap()
 
 
 def get(sid):

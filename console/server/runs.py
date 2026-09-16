@@ -43,7 +43,16 @@ def _write(path, record):
 
 
 def create(repo_root, *, ticket="", role="work", executor="chat",
-           executor_id="", backend="", state="running"):
+           executor_id="", backend="", state="running",
+           worktree_path="", worktree_branch="", worktree_error=""):
+    """`worktree_path`/`worktree_branch`/`worktree_error` (T-018 FR-1..FR-3,
+    decision-log a2) record where THIS Run's isolated checkout lives — fixed
+    at the moment the Run started, unlike `ticket.toml`'s `branch` which is
+    durable across every Run against the ticket. All three default to `""`
+    so a Run created without them (every pre-T-018 caller) round-trips
+    unchanged; a ticketless Run leaves them empty rather than "shared tree" —
+    that display string is the inspector's job (verb_handlers._enrich_run),
+    not a fact this record stores."""
     if executor not in EXECUTORS:
         raise ValueError("executor must be one of %s" % ", ".join(EXECUTORS))
     if state not in STATES:
@@ -62,6 +71,9 @@ def create(repo_root, *, ticket="", role="work", executor="chat",
         "state": state,
         "created": stamp,
         "updated": stamp,
+        "worktree_path": worktree_path or "",
+        "worktree_branch": worktree_branch or "",
+        "worktree_error": worktree_error or "",
     }
     _write(_path(repo_root, rid), record)
     return record

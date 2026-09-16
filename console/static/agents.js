@@ -223,6 +223,36 @@
     return row;
   }
 
+  /* Inspector detail line (T-018 FR-8, decision-log a5 — extends this
+     existing row, no new tab/page): backend, worktree path or the
+     shared-tree/fallback-reason string the server already computed
+     (`worktree_display`), a `git diff --stat` summary, and telemetry
+     cost/tokens. All four are additive fields on the same `/api/runs`
+     response `runRow` already reads — a Run from before T-018 (or a client
+     that hasn't refreshed) simply shows nothing extra rather than "undefined". */
+  function runDetailLine(run) {
+    var bits = [run.executor, run.backend, run.executor_id].filter(Boolean);
+    if (run.worktree_display) bits.push(run.worktree_display);
+    if (run.diffstat) bits.push(run.diffstat);
+    if (run.tokens) bits.push(run.tokens + " tok");
+    if (run.cost_usd) bits.push("$" + run.cost_usd.toFixed(4));
+    return bits.join(" · ");
+  }
+
+  function copyPathButton(run) {
+    if (!run.worktree_path) return null;
+    return C.el("button", {
+      class: "btn sm", title: "Copy this Run's worktree path",
+      onclick: function (e) {
+        e.stopPropagation();
+        if (!navigator.clipboard) { C.toast("Clipboard unavailable", "err"); return; }
+        navigator.clipboard.writeText(run.worktree_path).then(
+          function () { C.toast("Copied " + run.worktree_path, "ok"); },
+          function () { C.toast("Clipboard blocked by the browser", "err"); });
+      },
+    }, ["Copy path"]);
+  }
+
   function runRow(run) {
     return C.el("div", {
       class: "lrow clickable",
@@ -236,9 +266,10 @@
       C.el("span", { class: "ltext" }, [
         C.el("div", { class: "truncate", style: "font-size:12.2px",
           text: (run.ticket ? run.ticket + " " : "") + (run.id || "") }),
-        C.el("div", { class: "muted", style: "font-size:10.8px",
-          text: [run.executor, run.backend, run.executor_id].filter(Boolean).join(" · ") }),
+        C.el("div", { class: "muted truncate", style: "font-size:10.8px",
+          text: runDetailLine(run) }),
       ]),
+      copyPathButton(run),
       C.el("span", { class: "chip", text: run.state || "" }),
     ]);
   }

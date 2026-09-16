@@ -73,6 +73,14 @@ def create(repo_root, ticket_id, title, kind="tickets", owner="",
         # "unclaimed". See decision-log a3.
         "claimed_by": "",
         "claimed_at": "",
+        # This ticket's delivery identity (T-018 FR-5, decision-log a2):
+        # the branch a worktree was created on, and the PR opened from it.
+        # Durable across however many Runs execute against the ticket, unlike
+        # the per-Run `worktree_path`/`worktree_branch` on the Run record.
+        # Mutated only through `set_pr`, never hand-edited or `set_field`.
+        "branch": "",
+        "pr_url": "",
+        "pr_state": "",
     }
     tomlio.atomic_write(path, {"ticket": ticket})
     trackers_mod.ensure_all(repo_root, ticket_id)
@@ -91,6 +99,9 @@ def load(repo_root, ticket_id):
     ticket.setdefault("url", "")
     ticket.setdefault("claimed_by", "")
     ticket.setdefault("claimed_at", "")
+    ticket.setdefault("branch", "")
+    ticket.setdefault("pr_url", "")
+    ticket.setdefault("pr_state", "")
     ticket["priority"] = normalise_priority(ticket.get("priority"))
     return ticket
 
@@ -238,6 +249,43 @@ def set_claim(repo_root, ticket_id, claimed_by, claimed_at=None):
                 f"{ticket_id} is already claimed by {current!r}")
         ticket["claimed_by"] = claimed_by
         ticket["claimed_at"] = (claimed_at or "") if claimed_by else ""
+        ticket["updated"] = date.today().isoformat()
+
+    raw = tomlio.atomic_update(path, _mutate)
+    return raw["ticket"]
+
+
+def set_pr(repo_root, ticket_id, *, branch=None, pr_url=None, pr_state=None):
+    """Set `branch`/`pr_url`/`pr_state` (T-018 FR-5, decision-log a2).
+
+    A dedicated mutator, not `set_field`/`patch` — those are the user-editable
+    surface (`EDITABLE`); a ticket's branch/PR identity is a verb-driven fact
+    (worktree creation, a `gh pr view` read), same category as `set_claim`'s
+    `claimed_by`/`claimed_at`. Any of the three keyword args left as `None`
+    means "leave unchanged" (task 3a-2) — pass `""` explicitly to clear a
+    field. Race-safe via `tomlio.atomic_update`, the same lock-guarded
+    read-modify-write `set_claim` uses, so a worktree-creation write and a
+    `pr-check` write cannot interleave and half-clobber each other.
+
+    Publishing to the MCP change bus is the caller's job here, same as
+    `set_claim` — the `pr-check` verb (3b-1) publishes after calling this,
+    mirroring `ticket_claim`/`ticket_comment` in verb_handlers.py rather than
+    this module reaching into `bus` itself.
+    """
+    repo_root = repo_root or find_repo_root()
+    config = boards_mod.load_console_config(repo_root)
+    path = _toml_path(repo_root, config, ticket_id)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"no ticket.toml for {ticket_id}")
+
+    def _mutate(raw):
+        ticket = raw.setdefault("ticket", {})
+        if branch is not None:
+            ticket["branch"] = branch
+        if pr_url is not None:
+            ticket["pr_url"] = pr_url
+        if pr_state is not None:
+            ticket["pr_state"] = pr_state
         ticket["updated"] = date.today().isoformat()
 
     raw = tomlio.atomic_update(path, _mutate)

@@ -154,6 +154,26 @@ class TestRemove:
             worktrees.remove(gitrepo, "elsewhere")
 
 
+class TestDiffStat:
+    def test_missing_path_degrades_without_raising(self, gitrepo):
+        assert worktrees.diff_stat(gitrepo, os.path.join(gitrepo, "nope")) == ""
+
+    def test_empty_path_degrades_without_raising(self, gitrepo):
+        assert worktrees.diff_stat(gitrepo, "") == ""
+
+    def test_clean_worktree_reports_no_changes(self, gitrepo):
+        path = worktrees.add(gitrepo, "CC-T001")["path"]
+        assert worktrees.diff_stat(gitrepo, path) == "no changes"
+
+    def test_a_real_change_produces_a_stat_summary(self, gitrepo):
+        path = worktrees.add(gitrepo, "CC-T001")["path"]
+        with open(os.path.join(path, "README.md"), "a", encoding="utf-8") as fh:
+            fh.write("more\n")
+        out = worktrees.diff_stat(gitrepo, path)
+        assert out and out != "no changes"
+        assert "README.md" in out
+
+
 class TestPrune:
     def test_prune_clears_records_of_deleted_directories(self, gitrepo):
         import shutil

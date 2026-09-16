@@ -192,6 +192,47 @@ class TestClaim:
         assert final["claimed_by"] == winner
 
 
+class TestSetPr:
+    """T-018 FR-5 / decision-log a2: `branch`/`pr_url`/`pr_state` are a
+    distinct field triple, set only through `set_pr`."""
+
+    def test_created_ticket_starts_with_empty_git_fields(self, repo):
+        t = _create(repo)
+        assert (t["branch"], t["pr_url"], t["pr_state"]) == ("", "", "")
+
+    def test_set_pr_sets_all_three(self, repo):
+        _create(repo)
+        out = tickets.set_pr(repo, "CC-T001", branch="agent/CC-T001",
+                             pr_url="https://example/pr/1", pr_state="open")
+        assert out["branch"] == "agent/CC-T001"
+        assert out["pr_url"] == "https://example/pr/1"
+        assert out["pr_state"] == "open"
+
+    def test_partial_update_leaves_others_unchanged(self, repo):
+        _create(repo)
+        tickets.set_pr(repo, "CC-T001", branch="agent/CC-T001",
+                       pr_url="https://example/pr/1", pr_state="open")
+        out = tickets.set_pr(repo, "CC-T001", pr_state="merged")
+        assert out["branch"] == "agent/CC-T001"
+        assert out["pr_url"] == "https://example/pr/1"
+        assert out["pr_state"] == "merged"
+
+    def test_an_older_ticket_toml_without_pr_fields_still_loads(self, repo):
+        _create(repo)
+        path = os.path.join(repo, "knowledge-center", "artifacts", "CC-T001", "ticket.toml")
+        data = tomlio.load(path)
+        del data["ticket"]["branch"]
+        del data["ticket"]["pr_url"]
+        del data["ticket"]["pr_state"]
+        tomlio.atomic_write(path, data)
+        t = tickets.load(repo, "CC-T001")
+        assert (t["branch"], t["pr_url"], t["pr_state"]) == ("", "", "")
+
+    def test_missing_ticket_raises(self, repo):
+        with pytest.raises(FileNotFoundError):
+            tickets.set_pr(repo, "CC-T999", pr_state="open")
+
+
 class TestList:
     def test_lists_and_filters(self, repo):
         _create(repo, "CC-T001", owner="Sam")

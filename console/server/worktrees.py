@@ -204,6 +204,25 @@ def remove(repo_root, name, force=False):
             "discarded_changes": len(dirty) if force else 0}
 
 
+def diff_stat(repo_root, worktree_path):
+    """`git diff --stat` for a worktree, for the Run inspector (T-018 FR-8).
+
+    Degrades gracefully rather than raising: a missing path (the worktree was
+    removed, or `worktree_path` is empty) returns `""`, and a clean worktree
+    returns `"no changes"` rather than an empty string that would be
+    indistinguishable from "not checked". `repo_root` is accepted for
+    signature symmetry with this module's other functions but unused — the
+    command runs with `cwd=worktree_path`, same as `dirty_files`.
+    """
+    if not worktree_path or not os.path.isdir(worktree_path):
+        return ""
+    proc = _git(worktree_path, "diff", "--stat", check=False)
+    if proc.returncode != 0:
+        return ""
+    out = (proc.stdout or "").strip()
+    return out or "no changes"
+
+
 def prune(repo_root):
     """Drop git's records of worktrees whose directories are gone."""
     _require_git_repo(repo_root)

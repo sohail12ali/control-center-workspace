@@ -11,6 +11,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Completed
 
+- [[T-018-summary]] — Ticket-git-Run: worktree isolation per Run, ticket id in branch/PR, lane hints from PR open/merge, Run inspector diff — Complete — Sohail Ali — 2026-09-16
 - [[T-017-summary]] — Delivery Console core: one API, MCP resources/HTTP, tracker SPI, workspace.toml, ready/claim/comment verbs — Complete — Sohail Ali — 2026-09-16
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Complete — Sohail Ali — 2026-09-10
 - [[T-014-summary]] — Model roles: a local model to talk, a capable one to work — Complete — Sohail Ali — 2026-09-08

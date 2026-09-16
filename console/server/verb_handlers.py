@@ -24,11 +24,13 @@ from . import harness_lint
 from . import kickoff as kickoff_mod
 from . import model_catalog
 from . import native_bridge
+from . import pr_state as pr_state_mod
 from . import runs as runs_mod
 from . import telemetry as telemetry_mod
 from . import tickets as tickets_mod
 from . import todos_agg
 from . import trackers as trackers_mod
+from . import worktrees as worktrees_mod
 # Backend SPI (T-017 FR-5, decision-log a4). `ticket_move` (2b-4) is the one
 # pre-existing mutating verb this phase rewires through it; `ready`/`claim`/
 # `comment` get their own verb handlers in Phase 3, calling the same
@@ -217,7 +219,10 @@ def delegate(repo_root, ticket=None, task=""):
               "status": "started — the result will be reported back here"}
     run = runs_mod.create(
         repo_root, ticket=ticket or "", role="work", executor="chat",
-        executor_id=snap["id"], backend=backend_id, state="running")
+        executor_id=snap["id"], backend=backend_id, state="running",
+        worktree_path=snap.get("worktree_path", ""),
+        worktree_branch=snap.get("worktree_branch", ""),
+        worktree_error=snap.get("worktree_error", ""))
     answer["run"] = run["id"]
     if skipped:
         # Which local runtime was passed over, and why. Without this, work
@@ -329,23 +334,78 @@ def launch_role(repo_root, ticket=None, role=""):
         return {"ok": False, "error": str(exc)}
     run = runs_mod.create(
         repo_root, ticket=ticket or "", role=role, executor="chat",
-        executor_id=snap["id"], backend="cursor-agent", state="running")
+        executor_id=snap["id"], backend="cursor-agent", state="running",
+        worktree_path=snap.get("worktree_path", ""),
+        worktree_branch=snap.get("worktree_branch", ""),
+        worktree_error=snap.get("worktree_error", ""))
     return {"ok": True, "run": run["id"], "chat": snap["id"],
             "backend": "cursor-agent", "role": role}
 
 
+def _telemetry_by_session(repo_root):
+    """session -> {cost_usd, tokens}, read once per call site rather than once
+    per Run — `_enrich_run` used to re-read and re-parse the whole telemetry
+    directory for every row in a list, which is O(runs x telemetry size) on a
+    response the Agents tab polls."""
+    totals = {}
+    for rec in telemetry_mod.read_records(repo_root):
+        session = rec.get("session") or ""
+        if not session:
+            continue
+        row = totals.setdefault(session, {"cost_usd": 0.0, "tokens": 0})
+        row["cost_usd"] += float(rec.get("cost_usd") or 0)
+        row["tokens"] += int(rec.get("input_tokens") or 0) + int(rec.get("output_tokens") or 0)
+    return totals
+
+
+def _enrich_run(repo_root, row, telemetry_totals=None):
+    """Adds inspector-only fields to a Run record (T-018 FR-8) — additive,
+    never removes/renames an existing key, so a client reading only the old
+    shape is unaffected.
+
+    `worktree_display` is the one computed field: a real path when the Run
+    has a worktree, the surfaced fallback reason when worktree resolution
+    failed for a ticketed Run, or "shared tree" for a ticketless Run (or a
+    ticketed Run from before T-018, with no worktree fields recorded at all).
+
+    `telemetry_totals` (session -> {cost_usd, tokens}) lets a caller
+    enriching many rows read the telemetry directory once instead of once per
+    row; omit it to compute it fresh for a single Run (`run_show`).
+    """
+    wpath = row.get("worktree_path") or ""
+    if wpath:
+        row["worktree_display"] = wpath
+    elif row.get("ticket") and row.get("worktree_error"):
+        row["worktree_display"] = row["worktree_error"]
+    else:
+        row["worktree_display"] = "shared tree"
+    row["diffstat"] = worktrees_mod.diff_stat(repo_root, wpath) if wpath else ""
+
+    if telemetry_totals is None:
+        telemetry_totals = _telemetry_by_session(repo_root)
+    totals = telemetry_totals.get(row.get("executor_id") or "", {"cost_usd": 0.0, "tokens": 0})
+    row["cost_usd"] = round(totals["cost_usd"], 4)
+    row["tokens"] = totals["tokens"]
+    return row
+
+
 def run_list(repo_root, ticket=None, state=""):
-    """List Run records, optionally filtered by ticket or state."""
+    """List Run records, optionally filtered by ticket or state — enriched
+    with worktree display, diffstat, and telemetry cost/tokens for the Run
+    inspector (T-018 FR-8)."""
     rows = runs_mod.list_runs(repo_root, ticket=ticket, state=state)
+    totals = _telemetry_by_session(repo_root)
+    for row in rows:
+        _enrich_run(repo_root, row, telemetry_totals=totals)
     return {"runs": rows, "count": len(rows)}
 
 
 def run_show(repo_root, ticket=None, run_id=""):
-    """One Run by id."""
+    """One Run by id, same enrichment as `run_list` (T-018 FR-8)."""
     rec = runs_mod.get(repo_root, run_id)
     if rec is None:
         return {"ok": False, "error": "no run %s" % run_id}
-    return rec
+    return _enrich_run(repo_root, rec)
 
 
 def ticket_move(repo_root, ticket=None, stage=""):
@@ -413,6 +473,53 @@ def ticket_comment(repo_root, ticket=None, text="", author=""):
                  detail={"author": item.get("author", "")})
     bus_mod.default().publish("ticket://%s" % ticket)
     return item
+
+
+def _lane_hint(repo_root, ticket, ticket_row, old_state):
+    """Suggest — never perform — a lane move on a PR-state transition (FR-7,
+    decision-log a4: "human still closes explicitly"). Posts a comment via
+    the existing `comments` tracker, the same surface `ticket_comment` uses;
+    this function calls neither `ticket_move` nor `close-work`, by design —
+    verified by grepping this module for those names.
+    """
+    new_state = ticket_row.get("pr_state") or ""
+    if not new_state or new_state == old_state:
+        return None
+    stage = ticket_row.get("stage") or ""
+    if new_state == "open" and stage != "verify":
+        text = "PR is now open — consider moving %s to verify." % ticket
+    elif new_state == "merged" and stage != "done":
+        text = "PR has merged — consider closing %s (close-work)." % ticket
+    else:
+        return None
+    return trackers_mod.add(repo_root, ticket, "comments", text, author="pr-check")
+
+
+def pr_check(repo_root, ticket=None):
+    """Read PR state via `gh` and write it back onto `ticket.toml` (FR-6),
+    then surface a lane-hint suggestion on a state transition (FR-7). An
+    ordinary verb like any other — callable on demand (CLI/MCP/HTTP) or from
+    `schedules.toml`, which schedules any registered verb by its `verb =`
+    row with no scheduler code change needed (implementation-plan CR-2
+    correction)."""
+    ticket_row = tickets_mod.load(repo_root, ticket)
+    if ticket_row is None:
+        return {"ok": False, "error": "no ticket.toml for %s" % ticket}
+    branch = ticket_row.get("branch") or ""
+    if not branch:
+        return {"ok": False, "error":
+                "ticket has no branch set yet — nothing to check"}
+
+    result = pr_state_mod.pr_state_for(repo_root, branch)
+    if result.get("error"):
+        return {"ok": False, "error": result["error"]}
+
+    old_state = ticket_row.get("pr_state") or ""
+    updated = tickets_mod.set_pr(repo_root, ticket, pr_url=result["pr_url"],
+                                 pr_state=result["pr_state"])
+    bus_mod.default().publish("ticket://%s" % ticket)
+    suggestion = _lane_hint(repo_root, ticket, updated, old_state)
+    return {"ok": True, "ticket": updated, "suggestion": suggestion}
 
 
 def ticket_set(repo_root, ticket=None, field="", value=""):

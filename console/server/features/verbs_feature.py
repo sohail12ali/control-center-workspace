@@ -11,7 +11,7 @@ state is a GET a browser will happily repeat.
 
 from .. import audit
 from .. import jobs as jobs_mod
-from .. import runs as runs_mod
+from .. import verb_handlers
 from .. import verbs as verbs_mod
 from ..plugins.base import Plugin
 
@@ -88,10 +88,15 @@ def apply(ctx):
         return job
 
     def runs_list(req):
-        """Watchable Run records (T-016). Read-only; listing never mutates."""
-        return {"runs": runs_mod.list_runs(
+        """Watchable Run records (T-016), enriched with worktree/diffstat/
+        cost-tokens for the Run inspector (T-018 FR-8). Read-only; listing
+        never mutates. Goes through `verb_handlers.run_list` — the same
+        function the `run-list` verb dispatches to — rather than calling
+        `runs_mod.list_runs` directly, so the HTTP route and every other
+        caller of the verb see one enriched shape (CANONICAL)."""
+        return verb_handlers.run_list(
             repo_root, ticket=req.query.get("ticket"),
-            state=req.query.get("state") or "")}
+            state=req.query.get("state") or "")
 
     ctx.get(r"^/api/runs/?$", runs_list, "runs.list")
     ctx.get(r"^/api/verbs/?$", listing, "verbs.list")

@@ -147,6 +147,19 @@ handler = "verb_handlers.ticket_comment"
 needs_ticket = true
 needs_confirm = true
 
+# T-018 FR-6/FR-7: reads PR state via the `gh` CLI (decision-log a1, no API
+# client/token) and writes `pr_url`/`pr_state` back onto `ticket.toml`, then
+# surfaces a lane-hint suggestion (never a `ticket_move`/`close-work` call —
+# decision-log a4) on a state transition. Schedulable via `schedules.toml`
+# like any other registered verb — no scheduler code change needed.
+[[verb]]
+id = "pr-check"
+label = "Check PR state"
+hint = "Read PR state for this ticket's branch via gh CLI; updates pr_url/pr_state and suggests a lane move on open/merge"
+handler = "verb_handlers.pr_check"
+needs_ticket = true
+needs_confirm = true
+
 [[verb]]
 id = "ticket-set"
 label = "Set ticket field"
