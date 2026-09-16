@@ -50,6 +50,9 @@ struct Engine {
     child: Child,
     port: u16,
     model: String,
+    /// What it was loaded with. Compared on every `ensure`, because it cannot
+    /// be changed on a running process.
+    prompt: String,
     started: Instant,
 }
 
@@ -93,6 +96,45 @@ pub fn prefer_model(name: &str) {
     if *slot != name {
         *slot = name.to_string();
     }
+}
+
+/// Words this assistant hears often, given to the decoder before it starts.
+///
+/// Whisper's initial prompt is not a filter — it cannot make the recogniser
+/// refuse anything — it is a hint about the vocabulary and spelling of what is
+/// coming. That matters here for two things a general model has no reason to
+/// expect: ticket ids like "T-002", and the wake word itself, which came back
+/// from live audio as a different word often enough to make hands-free look
+/// broken (T-019).
+static PROMPT: Mutex<String> = Mutex::new(String::new());
+
+pub fn prefer_prompt(text: &str) {
+    let mut slot = PROMPT.lock().unwrap_or_else(|e| e.into_inner());
+    if *slot != text {
+        *slot = text.to_string();
+    }
+}
+
+fn prompt() -> String {
+    PROMPT.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// The prompt to load the engine with, built from what this machine is set up
+/// to hear. Public so the caller can hand it straight to `prefer_prompt` and
+/// so it can be tested without an engine.
+pub fn prompt_for(wake_word: &str, ticket_prefix: &str) -> String {
+    let wake = wake_word.trim();
+    let prefix = ticket_prefix.trim();
+    let mut parts = vec!["Delivery Console.".to_string()];
+    if !wake.is_empty() {
+        // Said the way it is said: as an address, at the start of a sentence.
+        parts.push(format!("{wake}, what is open?"));
+    }
+    if !prefix.is_empty() {
+        parts.push(format!("Open ticket {prefix}002, {prefix}014."));
+    }
+    parts.push("Status, verify, blockers, screenshot.".into());
+    parts.join(" ")
 }
 
 /// The named model if it is installed; otherwise any ggml in the directory,
@@ -203,10 +245,19 @@ fn responding(port: u16) -> bool {
 fn ensure(repo_root: &std::path::Path) -> SttResult<u16> {
     let mut slot = guard();
 
-    // Already running and still answering?
+    // Already running, still answering, and loaded with what we want now?
+    //
+    // The model and the prompt are both fixed when the process starts, so a
+    // changed setting cannot reach a running engine — it used to be ignored
+    // until the next launch, with nothing saying so.
+    let wanted_prompt = prompt();
     if let Some(engine) = slot.as_mut() {
+        let stale = engine.prompt != wanted_prompt;
+        if stale {
+            log::info!("stt: restarting the engine — the decoder prompt changed");
+        }
         match engine.child.try_wait() {
-            Ok(None) if responding(engine.port) => return Ok(engine.port),
+            Ok(None) if !stale && responding(engine.port) => return Ok(engine.port),
             _ => {
                 // Died, or stopped answering. Clear it and start again rather
                 // than reporting a failure the user cannot act on.
@@ -254,6 +305,9 @@ fn ensure(repo_root: &std::path::Path) -> SttResult<u16> {
         .arg("-mc")
         .arg("0")
         .arg("-sns")
+        // Vocabulary, not a filter. See `prompt_for`.
+        .arg("--prompt")
+        .arg(&wanted_prompt)
         // The DLLs sit beside the binary.
         .current_dir(binary.parent().unwrap_or(repo_root))
         .stdin(Stdio::null())
@@ -280,6 +334,7 @@ fn ensure(repo_root: &std::path::Path) -> SttResult<u16> {
                 child,
                 port,
                 model: model.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                prompt: wanted_prompt,
                 started: Instant::now(),
             });
             return Ok(port);
@@ -465,6 +520,20 @@ mod tests {
         } else {
             assert!(!hint(&root).is_empty(), "unavailable must explain itself");
         }
+    }
+
+    #[test]
+    fn the_prompt_names_the_words_a_general_model_would_not_expect() {
+        let p = prompt_for("console", "T-");
+        assert!(p.contains("console,"), "the wake word, said the way it is said: {p}");
+        assert!(p.contains("T-002"), "a ticket id in the shape ids take: {p}");
+    }
+
+    #[test]
+    fn a_machine_with_no_wake_word_still_gets_a_usable_prompt() {
+        let p = prompt_for("", "T-");
+        assert!(!p.is_empty());
+        assert!(!p.contains(" ,"), "no gap where the wake word would have been: {p}");
     }
 
     #[test]

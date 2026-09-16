@@ -6,6 +6,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 - [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
 - [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Verify — Sohail Ali — 2026-09-11
+- [[T-019-summary]] — Make hands-free listening actually work — Open — Sohail Ali — 2026-09-16
 
 ## Blocked
 

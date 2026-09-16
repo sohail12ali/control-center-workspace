@@ -240,7 +240,39 @@ fn capabilities(repo_root: &Path) -> Value {
         "stt": listen::available(repo_root),
         "stt_model": crate::stt::model_name(repo_root),
         "stt_hint": listen::hint(repo_root),
+        // A wakeword recorded on THIS machine. Hands-free runs either way —
+        // without one it falls back to transcribing every utterance — so this
+        // says which of the two Settings should describe.
+        "wake": crate::wake::available(repo_root),
+        "wake_words": crate::wake::installed(repo_root),
+        "wake_hint": crate::wake::hint(repo_root),
     })
+}
+
+/// Record one utterance of a wake phrase.
+///
+/// Deliberately not a `listen` take: nothing here is transcribed, gated,
+/// dispatched or shown in the tray. It is a few seconds of audio going
+/// straight to a file that will be built into a template — the shortest path
+/// there is, and the one with the fewest ways to surprise someone who pressed
+/// a button labelled "say it".
+fn record_phrase() -> Result<Vec<u8>, String> {
+    let mut mic = crate::audio::Mic::open()?;
+    let take = mic.take(
+        Arc::new(Mutex::new(false)),
+        crate::audio::Limits {
+            // A wake phrase is two or three words. A longer cap would just
+            // record the room after someone had finished saying it, and a
+            // template padded with silence matches silence.
+            max_take: std::time::Duration::from_secs(3),
+            trailing_silence: std::time::Duration::from_millis(500),
+            first_pause: std::time::Duration::from_millis(500),
+        },
+    )?;
+    if take.ending == crate::audio::Ending::NothingHeard {
+        return Err("nothing heard - say the phrase once, right after pressing".into());
+    }
+    Ok(take.wav())
 }
 
 fn route(
@@ -387,7 +419,75 @@ fn route(
             // microphone that went away) can say so instead of just going
             // quiet.
             "hands_free_stopped": hands_free::last_stop_reason(),
+            // T-019. What the wake-word spotter can see, for the diagnostics
+            // panel. Before this the only evidence a user had that listening
+            // was working at all was a log file — which is why a broken wake
+            // word went five takes without anyone being able to say why.
+            "wake": {
+                "installed": crate::wake::installed(repo_root),
+                "available": crate::wake::available(repo_root),
+                "hint": crate::wake::hint(repo_root),
+                "score": crate::wake::last_score(),
+                "level": crate::audio::level(),
+                "fired": crate::wake::last_fired().map(|f| json!({
+                    "name": f.name, "score": f.score, "avg_score": f.avg_score,
+                })),
+            },
         })),
+        // -- recording a wake word ------------------------------------------
+        //
+        // Three steps, deliberately: say it, say it again, build. A phrase
+        // recorded once is a template of one reading of it, and the detector
+        // is only as forgiving as the recordings it was given.
+        ("POST", "/wake/sample") => {
+            let body = match read_body(request) {
+                Ok(v) => v,
+                Err(e) => return err(400, "bad_request", e),
+            };
+            let name = body.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            if crate::wake::sanitise(&name).is_empty() {
+                return err(400, "bad_request", "say what the wake word is called");
+            }
+            match record_phrase() {
+                Ok(wav) => match crate::wake::save_sample(repo_root, &name, &wav) {
+                    Ok(count) => ok(json!({
+                        "samples": count,
+                        "enough": count >= crate::wake::MIN_SAMPLES,
+                    })),
+                    Err(e) => err(500, "internal", e),
+                },
+                Err(e) => err(503, "unavailable", e),
+            }
+        }
+        ("POST", "/wake/train") => {
+            let body = match read_body(request) {
+                Ok(v) => v,
+                Err(e) => return err(400, "bad_request", e),
+            };
+            let name = body.get("name").and_then(Value::as_str).unwrap_or("");
+            let recordings = crate::wake::samples(repo_root, name);
+            match crate::wake::train(repo_root, name, &recordings, None, None) {
+                Ok(path) => {
+                    crate::wake::clear_samples(repo_root, name);
+                    ok(json!({
+                        "wakeword": path.file_name().unwrap_or_default().to_string_lossy(),
+                        "installed": crate::wake::installed(repo_root),
+                    }))
+                }
+                Err(e) => err(400, "bad_request", e),
+            }
+        }
+        ("POST", "/wake/forget") => {
+            let body = match read_body(request) {
+                Ok(v) => v,
+                Err(e) => return err(400, "bad_request", e),
+            };
+            let name = body.get("name").and_then(Value::as_str).unwrap_or("");
+            match crate::wake::forget(repo_root, name) {
+                Ok(()) => ok(json!({"installed": crate::wake::installed(repo_root)})),
+                Err(e) => err(500, "internal", e),
+            }
+        }
         ("POST", "/speak") => {
             let body = match read_body(request) {
                 Ok(v) => v,

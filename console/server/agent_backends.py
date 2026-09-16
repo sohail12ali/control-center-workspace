@@ -463,6 +463,16 @@ class Backend:
         if not self.is_api:
             return "%s is not on PATH (command: %s)" % (self.label, self.command)
         if self.auth == "key":
+            # A name present with no value is the case worth naming
+            # separately. `.env` shipped with `OPENROUTER_API_KEY=` in it, so
+            # "not set in this environment" sent people to look at a line that
+            # was already there, and this backend sat unavailable — with the
+            # Assistant falling back to a CLI that takes seconds per turn —
+            # for as long as it took someone to notice (T-019).
+            if self.api_key_env in os.environ:
+                return ("%s is present but empty. Give it a value in the "
+                        "workspace's .env — the name being there is not the "
+                        "same as the key being there." % self.api_key_env)
             return ("%s is not set in this environment. Put it in the "
                     "workspace's .env or export it in the shell that starts "
                     "the console." % self.api_key_env)

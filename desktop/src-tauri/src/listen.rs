@@ -116,12 +116,66 @@ where
         return Err("already listening".into());
     }
     // Whatever happens below, the flag and the tray must come back.
-    let outcome = take_inner(mic, repo_root, assistant, console_url, &gate);
+    let outcome = take_inner(mic, repo_root, assistant, console_url, &gate, None);
     LISTENING.store(false, Ordering::SeqCst);
     if outcome.is_err() {
         note(assistant, Event::Cancel);
     }
     outcome
+}
+
+/// A take that begins in the PAST, because the wake word has already fired.
+///
+/// By the time a spotter recognises a phrase, the phrase has been said — so a
+/// take that starts "now" starts after the interesting part. `from` is a
+/// cursor into the microphone's ring, taken a second before the firing, and
+/// the audio it names is still there.
+///
+/// There is no gate: the wake word WAS the gate, and it ran on the audio
+/// rather than on a transcript, so nothing here has to decide again.
+pub fn take_after_wake(
+    mic: &mut Option<audio::Mic>,
+    from: u64,
+    repo_root: &std::path::Path,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+) -> ListenResult<String> {
+    if LISTENING.swap(true, Ordering::SeqCst) {
+        return Err("already listening".into());
+    }
+    let outcome = take_inner(
+        mic, repo_root, assistant, console_url, &|_: &str| true, Some(from));
+    LISTENING.store(false, Ordering::SeqCst);
+    if outcome.is_err() {
+        note(assistant, Event::Cancel);
+    }
+    outcome
+}
+
+/// The two limits a take runs under, from the console's merged settings.
+///
+/// `patient` is the hands-free shape: a longer first pause, because somebody
+/// who has just said a wake word and stopped is thinking rather than finished.
+/// Push-to-talk passes false — there, a short take is a short command.
+pub fn limits_from(settings: &serde_json::Value, patient: bool) -> audio::Limits {
+    let trailing = std::time::Duration::from_millis(console_settings::u64_at(
+        settings, "listen_silence_ms",
+        audio::DEFAULT_TRAILING_SILENCE.as_millis() as u64,
+    ));
+    audio::Limits {
+        max_take: std::time::Duration::from_secs(console_settings::u64_at(
+            settings, "listen_max_seconds", audio::DEFAULT_MAX_TAKE.as_secs(),
+        )),
+        trailing_silence: trailing,
+        first_pause: if patient {
+            std::time::Duration::from_millis(console_settings::u64_at(
+                settings, "listen_first_pause_ms",
+                audio::DEFAULT_FIRST_PAUSE.as_millis() as u64,
+            ))
+        } else {
+            trailing
+        },
+    }
 }
 
 fn take_inner<F>(
@@ -130,6 +184,7 @@ fn take_inner<F>(
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
     gate: &F,
+    from: Option<u64>,
 ) -> ListenResult<String>
 where
     F: Fn(&str) -> bool,
@@ -182,16 +237,15 @@ where
     let step = std::time::Instant::now();
     let settings = console_settings::all(console_url);
     log::debug!("listen: step settings {}ms", step.elapsed().as_millis());
-    let limits = audio::Limits {
-        max_take: std::time::Duration::from_secs(console_settings::u64_at(
-            &settings, "listen_max_seconds", audio::DEFAULT_MAX_TAKE.as_secs(),
-        )),
-        trailing_silence: std::time::Duration::from_millis(console_settings::u64_at(
-            &settings, "listen_silence_ms",
-            audio::DEFAULT_TRAILING_SILENCE.as_millis() as u64,
-        )),
-    };
+    let limits = limits_from(&settings, from.is_some());
     stt::prefer_model(&console_settings::str_at(&settings, "stt_model", "base.en"));
+    // Tell the decoder what it is about to hear. Ticket ids and the wake word
+    // are exactly the words a general model has no reason to expect, and
+    // exactly the ones a spoken command turns on.
+    stt::prefer_prompt(&stt::prompt_for(
+        &console_settings::str_at(&settings, "hands_free_wake_word", ""),
+        &console_settings::str_at(&settings, "ticket_prefix", "T-"),
+    ));
 
     let step = std::time::Instant::now();
     note(assistant, Event::ListenStart);
@@ -200,10 +254,12 @@ where
     if mic.is_none() {
         *mic = Some(audio::Mic::open()?);
     }
-    let recorded = mic
-        .as_mut()
-        .expect("just opened")
-        .take(stop, limits);
+    let open = mic.as_mut().expect("just opened");
+    let recorded = match from {
+        // Pre-roll: the wake word was said before it was recognised.
+        Some(cursor) => open.record_from(cursor, stop, limits),
+        None => open.take(stop, limits),
+    };
     if recorded.is_err() {
         // A microphone that failed mid-take may have been unplugged. Drop it
         // so the next take opens a fresh one rather than retrying a handle to

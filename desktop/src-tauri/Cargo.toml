@@ -45,6 +45,22 @@ cpal = "0.16"
 # Voice activity detection, so a "short take" ends when the speaker stops
 # rather than after a fixed timer. Pure Rust - no ONNX runtime, no model file.
 earshot = "1"
+# T-019 wake word. The always-on detector that decides whether the recogniser
+# runs at all: before this, hands-free transcribed every sound in the room with
+# whisper and matched the TEXT, which cost a second per noise and went deaf
+# while it did. Apache-2.0, pure Rust, and no ONNX runtime or C toolchain —
+# the same constraint `earshot` and `cpal` are here for. A wakeword is built
+# from a few of your own recordings, so the word is yours rather than one of
+# three someone else trained.
+rustpotter = { version = "3", default-features = false }
+# Not used by a line of our code. It is here because rustpotter pulls
+# candle-core 0.2.2, which uses `rand_distr` 0.4 — and `half` 2.4+ moved its
+# `SampleUniform` impls to `rand_distr` 0.5, so the newest `half` cargo would
+# otherwise pick fails to compile candle with twenty trait-bound errors. A
+# lockfile entry alone would not survive `cargo update`, and the failure it
+# produces names neither `half` nor this crate, so the constraint is written
+# down where the next person will look.
+half = "=2.3.1"
 # Push-to-talk. Registered from Rust, so no webview capability is widened.
 tauri-plugin-global-shortcut = "2"
 

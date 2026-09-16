@@ -991,6 +991,136 @@
       return row(label, hint, C.el("div", { class: "setctl" }, [input]), iconName);
     }
 
+    /* Record the wake word: say it three times, then build it.
+
+       Three, because one recording is a template of one reading of the phrase
+       and the detector is only as forgiving as what it was given. The button
+       blocks while the shell records — that is honest, it IS recording — and
+       says what it heard back as a count, never as audio. */
+    function wakeRecorder(s) {
+      var name = String(s.hands_free_wake_word || "console");
+      var status = C.el("span", { text: "" });
+      var say = C.el("button", { class: "btn", text: "Say it" });
+      var build = C.el("button", { class: "btn", text: "Build" });
+      var forget = C.el("button", { class: "btn", text: "Remove" });
+      var taken = 0;
+
+      function busy(on, what) {
+        [say, build, forget].forEach(function (b) { b.disabled = on; });
+        if (on) status.textContent = what;
+      }
+      function report(installed) {
+        if (installed && installed.length) {
+          status.textContent = "recorded: " + installed.join(", ");
+        } else if (taken) {
+          status.textContent = taken + " of 3 recorded";
+        } else {
+          status.textContent = "not recorded — hands-free falls back to "
+            + "transcribing everything";
+        }
+      }
+
+      say.addEventListener("click", function () {
+        busy(true, "listening — say it now");
+        C.post("/api/assistant/wake/sample", { name: name }).then(function (r) {
+          busy(false);
+          if (r && r.samples) { taken = r.samples; report(null); }
+          else { status.textContent = (r && r.reason) || "nothing recorded"; }
+        }).catch(function (e) { busy(false); status.textContent = String(e); });
+      });
+      build.addEventListener("click", function () {
+        busy(true, "building");
+        C.post("/api/assistant/wake/train", { name: name }).then(function (r) {
+          busy(false);
+          taken = 0;
+          if (r && r.wakeword) { report(r.installed); }
+          else { status.textContent = (r && r.reason) || "could not build it"; }
+        }).catch(function (e) { busy(false); status.textContent = String(e); });
+      });
+      forget.addEventListener("click", function () {
+        busy(true, "removing");
+        C.post("/api/assistant/wake/forget", { name: name }).then(function (r) {
+          busy(false); taken = 0; report(r && r.installed);
+        }).catch(function (e) { busy(false); status.textContent = String(e); });
+      });
+
+      C.get("/api/assistant/voice").then(function (v) {
+        report(v && v.wake && v.wake.installed);
+      }).catch(function () { report(null); });
+
+      return row("Record the wake word",
+        "say it three times, then build — it is matched against your voice, "
+        + "on this machine, and never leaves it",
+        C.el("div", { class: "setctl" }, [say, build, forget, status]), "mic");
+    }
+
+    /* The live panel: input level, wake score, and what the engine is.
+
+       Polled rather than streamed. A second of staleness costs nothing here,
+       and an EventSource for a panel most people never open would be a
+       connection held open for the life of the tab. */
+    function voicePanel() {
+      var lines = C.el("div", { class: "setctl", style: "flex-direction:column;align-items:flex-start" });
+      var timer = null;
+
+      function draw(v) {
+        lines.textContent = "";
+        if (!v || v.ok === false) {
+          lines.appendChild(C.el("span", {
+            text: (v && v.reason) || "the desktop shell is not running",
+          }));
+          return;
+        }
+        var wake = v.wake || {};
+        [
+          ["Microphone", v.microphone || "none"],
+          ["Input level", bar(v.wake && v.wake.level)],
+          ["Listening", v.listening ? "yes" : "no"],
+          ["Hands-free", v.hands_free ? "on" : "off"
+            + (v.hands_free_stopped ? " — " + v.hands_free_stopped : "")],
+          ["Wake word", wake.available ? (wake.installed || []).join(", ")
+            : (wake.hint || "not recorded")],
+          ["Wake score", bar(wake.score)],
+          ["Last fired", wake.fired
+            ? wake.fired.name + " at " + wake.fired.score.toFixed(2)
+            : "not since the shell started"],
+          ["Speech engine", v.engine_running
+            ? (v.model || "running") : "not running"],
+        ].forEach(function (pair) {
+          lines.appendChild(C.el("div", {}, [
+            C.el("b", { text: pair[0] + ": " }),
+            C.el("span", { text: String(pair[1]) }),
+          ]));
+        });
+      }
+
+      // A number AND a bar: the bar is what you watch while talking, the
+      // number is what you quote when it does not work.
+      function bar(value) {
+        var n = Math.max(0, Math.min(1, Number(value) || 0));
+        var filled = Math.round(n * 20);
+        return "[" + new Array(filled + 1).join("#")
+          + new Array(20 - filled + 1).join(".") + "] " + n.toFixed(2);
+      }
+
+      function poll() {
+        C.get("/api/assistant/voice").then(draw).catch(function (e) {
+          draw({ ok: false, reason: String(e) });
+        });
+      }
+      // Only while the panel is on screen: a hidden panel polling the shell
+      // twice a second would keep a microphone-adjacent endpoint warm for no
+      // reason anybody asked for.
+      var observer = new IntersectionObserver(function (entries) {
+        var visible = entries.some(function (e) { return e.isIntersecting; });
+        if (visible && !timer) { poll(); timer = setInterval(poll, 500); }
+        if (!visible && timer) { clearInterval(timer); timer = null; }
+      });
+      observer.observe(lines);
+      return row("Live", "updates twice a second while this panel is open",
+        lines, "mic");
+    }
+
     function choice(s, key, label, hint, options, iconName) {
       var sel = C.el("select", { "aria-label": label });
       options.forEach(function (o) {
@@ -1271,6 +1401,10 @@
         field(s, "listen_silence_ms", "Ends after",
           "milliseconds of quiet, so a pause to think does not cut you off",
           "number", "mic"),
+        field(s, "listen_first_pause_ms", "First pause",
+          "milliseconds allowed before you have said much — hands-free only, "
+          + "so a pause right after the wake word is thinking, not finishing",
+          "number", "clock"),
         field(s, "stt_model", "Speech model",
           "base.en is accurate on ticket ids; tiny.en is faster and worse at "
           + "exactly those. Fetch one with desktop/get-whisper.ps1 -Model",
@@ -1292,6 +1426,13 @@
               + "empty room", "mic"),
         field(s, "hands_free_wake_word", "Wake word",
           "matched at the start of a sentence, as a whole word", "text", "mic"),
+        wakeRecorder(s),
+        field(s, "wake_sensitivity", "Sensitivity",
+          "0 to 1 — higher fires more readily. Raise it if it misses you, "
+          + "lower it if the room sets it off", "text", "mic"),
+        field(s, "listen_preroll_ms", "Pre-roll",
+          "milliseconds of audio kept from BEFORE the wake word fired, so the "
+          + "start of your sentence is not cut off", "number", "clock"),
         toggle(s, "hands_free_listen_while_speaking",
           "Keep listening while speaking",
           s.hands_free_listen_while_speaking
@@ -1302,10 +1443,18 @@
           "number", "clock"),
       ], {
         id: "set.assistant.handsfree", open: false, icon: "mic",
-        help: "An always-on microphone. Audio is transcribed on this machine "
-              + "and thrown away unless it is addressed, so leaving it on "
-              + "means the room is heard locally and forgotten — not sent "
-              + "anywhere.",
+        help: "An always-on microphone. A small detector on this machine "
+              + "listens for the wake word, and nothing is transcribed or "
+              + "sent anywhere until it fires — so leaving the mic on means "
+              + "the room is heard locally and forgotten.",
+      }));
+
+      body.appendChild(C.group("Voice diagnostics", [voicePanel()], {
+        id: "set.assistant.voicediag", open: false, icon: "mic",
+        help: "What listening can see, live. \"It doesn't work\" is not "
+              + "something anyone can act on; a level that never moves and a "
+              + "score that never reaches the bar are different faults with "
+              + "different fixes.",
       }));
 
       body.appendChild(C.group("Chat", [
@@ -1475,7 +1624,12 @@
         box.appendChild(line("Work", d.work));
         // One list, not two: the same candidates are tried for both roles and
         // fail for the same reasons, so printing it twice is just noise.
-        box.appendChild(passed((d.talk && d.talk.rejected) || []));
+        //
+        // Guarded, because `passed` returns null when nothing was passed over
+        // — and `appendChild(null)` throws, so this panel showed "could not
+        // work out what will answer" precisely when the answer was cleanest.
+        var why = passed((d.talk && d.talk.rejected) || []);
+        if (why) box.appendChild(why);
         box.appendChild(C.el("div", { class: "row" }, [again]));
         again.disabled = false;
       }).catch(function (err) {

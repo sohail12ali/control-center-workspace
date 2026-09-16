@@ -172,6 +172,39 @@ def state(repo_root, opener=None):
     return _call(repo_root, "/state", opener=opener)
 
 
+def listen_state(repo_root, opener=None):
+    """What listening can see right now — input level, wake score, engine.
+
+    The Settings tab polls this. Before T-019 the only evidence that hands-free
+    was working was `console/.cache/desktop/host.log`, which is why a wake word
+    the recogniser never heard went five takes with nobody able to say why.
+    """
+    return _call(repo_root, "/listen/state", opener=opener)
+
+
+def wake_sample(repo_root, name, opener=None):
+    """Record one utterance of the wake phrase. Blocks for up to a few seconds.
+
+    The timeout is the shell's recording cap plus the second it takes to open
+    a microphone on Windows, plus room — a request that gives up while the
+    shell is still recording would leave a sample on disk that the caller
+    thinks does not exist.
+    """
+    return _call(repo_root, "/wake/sample", payload={"name": name},
+                 timeout=15, opener=opener)
+
+
+def wake_train(repo_root, name, opener=None):
+    """Build the recordings into a wakeword the spotter can load."""
+    return _call(repo_root, "/wake/train", payload={"name": name},
+                 timeout=30, opener=opener)
+
+
+def wake_forget(repo_root, name, opener=None):
+    return _call(repo_root, "/wake/forget", payload={"name": name},
+                 opener=opener)
+
+
 def list_windows(repo_root, opener=None):
     return _call(repo_root, "/windows", opener=opener)
 

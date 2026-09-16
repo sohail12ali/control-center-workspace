@@ -346,6 +346,35 @@ class TestListeningSettings:
         with pytest.raises(ValueError, match="between"):
             assistant_config.update(str(tmp_path), {key: value})
 
+    def test_the_wake_pipeline_has_the_dials_the_shell_reads(self, tmp_path):
+        # T-019. The shell's hands_free::fetch_policy asks for these by name
+        # and falls back to its own cautious copies when they are missing —
+        # so a rename here is a silent behaviour change there.
+        s = assistant_config.settings(str(tmp_path))
+        assert s["listen_first_pause_ms"] == 1500
+        assert s["listen_preroll_ms"] == 1000
+        assert s["wake_sensitivity"] == 0.5
+
+    @pytest.mark.parametrize("key,value", [
+        ("listen_first_pause_ms", 199), ("listen_first_pause_ms", 5001),
+        ("listen_preroll_ms", -1), ("listen_preroll_ms", 3001),
+        ("wake_sensitivity", -0.1), ("wake_sensitivity", 1.1),
+    ])
+    def test_a_wake_dial_outside_its_range_is_refused(self, tmp_path, key, value):
+        with pytest.raises(ValueError, match="between"):
+            assistant_config.update(str(tmp_path), {key: value})
+
+    def test_a_sensitivity_posted_as_text_stays_a_number(self, tmp_path):
+        # A slider posts "0.7". Stored as a string it would compare against
+        # the range as a string, and the shell would read a float back as 0.
+        assistant_config.update(str(tmp_path), {"wake_sensitivity": "0.7"})
+        stored = assistant_config.settings(str(tmp_path))["wake_sensitivity"]
+        assert isinstance(stored, float) and abs(stored - 0.7) < 1e-9
+
+    def test_a_sensitivity_that_is_not_a_number_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="number"):
+            assistant_config.update(str(tmp_path), {"wake_sensitivity": "loud"})
+
     @pytest.mark.parametrize("value", ["../../.env", "a/b", "..", "", "  "])
     def test_a_model_name_cannot_be_a_path(self, tmp_path, value):
         # It becomes `ggml-{name}.bin` in the shell, so this is the only place

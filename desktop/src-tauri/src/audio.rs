@@ -42,8 +42,36 @@ const FRAME: usize = 256;
 pub const DEFAULT_MAX_TAKE: Duration = Duration::from_secs(12);
 pub const DEFAULT_TRAILING_SILENCE: Duration = Duration::from_millis(700);
 
+/// How long to wait for someone who has only just started before the shorter
+/// `trailing_silence` takes over.
+///
+/// 700ms of quiet is the right answer once you are mid-sentence and the wrong
+/// one immediately after a wake word, where a pause is someone deciding what
+/// to ask rather than someone finishing. Patience is spent where it is needed
+/// and nowhere else: the cost is paid only by takes that end almost as soon as
+/// they began.
+///
+/// Hands-free only. Push-to-talk opens on a keypress, so a short take there is
+/// a short COMMAND — "open T-002" — and making that wait would be the same
+/// mistake in the other direction. `Endpointer::new` and `Limits::default`
+/// therefore ask for no grace at all; only the always-on loop passes this.
+pub const DEFAULT_FIRST_PAUSE: Duration = Duration::from_millis(1500);
+
+/// How much speech counts as "under way", after which the short silence
+/// applies. Roughly a wake word plus a word or two.
+const SETTLED_SPEECH: Duration = Duration::from_millis(1200);
+
 /// Ignore a take shorter than this: a stray click or a knocked desk.
 const MIN_SPEECH: Duration = Duration::from_millis(300);
+
+/// How much audio the ring behind an open microphone keeps.
+///
+/// It exists for two things at once. A wake word is only recognised once it
+/// has been SAID, so the audio that has to be transcribed is already in the
+/// past by the time capture starts — that is the pre-roll. And a microphone
+/// that is open for a whole hands-free session must not grow a buffer for
+/// the whole hands-free session.
+pub const RING: Duration = Duration::from_secs(4);
 
 /// Baseline thresholds, used as FLOORS under the adaptive ones below.
 /// `earshot` documents 0.5 as the general threshold; starting is held higher
@@ -215,6 +243,82 @@ pub fn rms(frame: &[i16]) -> f32 {
     ((sum / frame.len() as f64).sqrt() as f32).clamp(0.0, 1.0)
 }
 
+/// The last few seconds of an open microphone, and a cursor into them.
+///
+/// Replaces a `Vec` that was cleared at the start of every take. That clear
+/// was the defect behind hands-free being unusable: between a take ending and
+/// the next one starting, the shell transcribes, gates and dispatches — and
+/// every word said during that second went in the bin. The word most likely to
+/// be said there is the wake word, because the user has just watched the
+/// assistant do nothing and is trying again.
+///
+/// So nothing is ever cleared. Readers hold a cursor, the writer wraps, and a
+/// reader that falls behind is TOLD it fell behind rather than handed a
+/// silently shortened recording.
+pub struct Ring {
+    buf: Vec<i16>,
+    /// Total samples ever written. The cursor space is this, not an index, so
+    /// it never wraps and comparisons stay obvious.
+    produced: u64,
+}
+
+impl Ring {
+    pub fn new(capacity: usize) -> Self {
+        Self { buf: vec![0; capacity.max(FRAME)], produced: 0 }
+    }
+
+    pub fn produced(&self) -> u64 {
+        self.produced
+    }
+
+    pub fn push(&mut self, samples: &[i16]) {
+        let cap = self.buf.len();
+        // A burst longer than the ring can only leave its tail behind — but
+        // the cursor still counts what was dropped. It is a position in time,
+        // not an index into storage, and a cursor that skipped the dropped
+        // samples would quietly stop lining up with the audio.
+        let dropped = samples.len().saturating_sub(cap);
+        let kept = &samples[dropped..];
+        let start = ((self.produced + dropped as u64) % cap as u64) as usize;
+        let first = (cap - start).min(kept.len());
+        self.buf[start..start + first].copy_from_slice(&kept[..first]);
+        if first < kept.len() {
+            self.buf[..kept.len() - first].copy_from_slice(&kept[first..]);
+        }
+        self.produced += samples.len() as u64;
+    }
+
+    /// The oldest sample still held.
+    fn oldest(&self) -> u64 {
+        self.produced.saturating_sub(self.buf.len() as u64)
+    }
+
+    /// Everything from `cursor` to now, and the cursor it actually starts at.
+    ///
+    /// The second value differs from the first argument only when the reader
+    /// fell behind the ring — which is a dropout, and the caller logs it
+    /// rather than pretending the audio was contiguous.
+    pub fn since(&self, cursor: u64) -> (u64, Vec<i16>) {
+        let from = cursor.max(self.oldest());
+        let count = (self.produced - from) as usize;
+        let cap = self.buf.len();
+        let mut out = Vec::with_capacity(count);
+        let start = (from % cap as u64) as usize;
+        let first = (cap - start).min(count);
+        out.extend_from_slice(&self.buf[start..start + first]);
+        if first < count {
+            out.extend_from_slice(&self.buf[..count - first]);
+        }
+        (from, out)
+    }
+
+    /// A cursor `back` samples before now, for pre-roll. Clamped to what is
+    /// still held.
+    pub fn rewound(&self, back: usize) -> u64 {
+        self.produced.saturating_sub(back as u64).max(self.oldest())
+    }
+}
+
 /// Decides when a take is over, from VAD scores and loudness. Pure, so the
 /// interesting behaviour is testable without a microphone — which matters,
 /// because the interesting behaviour is "does this end at all in a noisy
@@ -236,6 +340,9 @@ pub struct Endpointer {
     /// places — one is a threshold, the other is a device.
     peak: f32,
     trailing_silence: Duration,
+    /// The longer silence allowed while an utterance is still only a word or
+    /// two old. See `DEFAULT_FIRST_PAUSE`.
+    first_pause: Duration,
 }
 
 /// Move a floor toward an observation: straight down, slowly up.
@@ -254,9 +361,15 @@ impl Default for Endpointer {
 }
 
 impl Endpointer {
+    /// No grace: every silence is the same length. What push-to-talk wants.
     pub fn new(trailing_silence: Duration) -> Self {
+        Self::with_first_pause(trailing_silence, trailing_silence)
+    }
+
+    pub fn with_first_pause(trailing_silence: Duration, first_pause: Duration) -> Self {
         let frames = (CALIBRATE.as_millis() as f32 / frame_ms()).round() as usize;
         Self {
+            first_pause,
             speaking: false,
             speech_frames: 0,
             silence_frames: 0,
@@ -331,7 +444,22 @@ impl Endpointer {
         let spoken_ms = self.speech_frames as f32 * frame_ms();
         let silent_ms = self.silence_frames as f32 * frame_ms();
         spoken_ms >= MIN_SPEECH.as_millis() as f32
-            && silent_ms >= self.trailing_silence.as_millis() as f32
+            && silent_ms >= self.required_silence(spoken_ms)
+    }
+
+    /// How much quiet has to pass before this take is over.
+    ///
+    /// Longer while the utterance is still short. Someone who has said
+    /// "console" and stopped is thinking, not finished; someone who has said a
+    /// sentence and stopped is finished, and making them wait is the thing
+    /// that makes a voice assistant feel slow.
+    fn required_silence(&self, spoken_ms: f32) -> f32 {
+        if spoken_ms < SETTLED_SPEECH.as_millis() as f32 {
+            self.first_pause.as_millis() as f32
+        } else {
+            self.trailing_silence.as_millis() as f32
+        }
+        .max(self.trailing_silence.as_millis() as f32)
     }
 
     pub fn heard_speech(&self) -> bool {
@@ -369,11 +497,17 @@ pub fn device_name() -> String {
 pub struct Limits {
     pub max_take: Duration,
     pub trailing_silence: Duration,
+    pub first_pause: Duration,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { max_take: DEFAULT_MAX_TAKE, trailing_silence: DEFAULT_TRAILING_SILENCE }
+        Self {
+            max_take: DEFAULT_MAX_TAKE,
+            trailing_silence: DEFAULT_TRAILING_SILENCE,
+            // Push-to-talk's shape. Hands-free overrides it.
+            first_pause: DEFAULT_TRAILING_SILENCE,
+        }
     }
 }
 
@@ -405,7 +539,7 @@ pub fn level() -> f32 {
 /// where a wake word tends to land.
 pub struct Mic {
     stream: cpal::Stream,
-    collected: Arc<Mutex<Vec<i16>>>,
+    ring: Arc<Mutex<Ring>>,
 }
 
 impl Mic {
@@ -424,8 +558,10 @@ impl Mic {
     let channels = config.channels();
     let source_hz = config.sample_rate().0;
 
-    let collected: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
-    let sink = collected.clone();
+    let ring: Arc<Mutex<Ring>> = Arc::new(Mutex::new(Ring::new(
+        (RING.as_millis() as usize * TARGET_HZ as usize) / 1000,
+    )));
+    let sink = ring.clone();
     let format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
 
@@ -439,7 +575,7 @@ impl Mic {
             &stream_config,
             move |data: &[f32], _| {
                 if let Ok(mut buf) = sink.lock() {
-                    buf.extend(to_mono_16k(data, channels, source_hz));
+                    buf.push(&to_mono_16k(data, channels, source_hz));
                 }
             },
             err_fn,
@@ -450,7 +586,7 @@ impl Mic {
             move |data: &[i16], _| {
                 let as_f32: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 if let Ok(mut buf) = sink.lock() {
-                    buf.extend(to_mono_16k(&as_f32, channels, source_hz));
+                    buf.push(&to_mono_16k(&as_f32, channels, source_hz));
                 }
             },
             err_fn,
@@ -464,7 +600,7 @@ impl Mic {
                     .map(|s| (*s as f32 - 32768.0) / 32768.0)
                     .collect();
                 if let Ok(mut buf) = sink.lock() {
-                    buf.extend(to_mono_16k(&as_f32, channels, source_hz));
+                    buf.push(&to_mono_16k(&as_f32, channels, source_hz));
                 }
             },
             err_fn,
@@ -489,76 +625,120 @@ impl Mic {
         opening.elapsed().as_millis(),
         built.elapsed().as_millis()
     );
-        Ok(Mic { stream, collected })
+        Ok(Mic { stream, ring })
     }
 
-    /// Record one take from this already-open microphone.
+    /// Where the microphone has got to. A cursor taken now and passed to
+    /// `record_from` later is what makes pre-roll possible.
+    pub fn cursor(&self) -> u64 {
+        self.ring.lock().unwrap_or_else(|e| e.into_inner()).produced()
+    }
+
+    /// A cursor `preroll` before now, clamped to what the ring still holds.
+    pub fn rewound(&self, preroll: Duration) -> u64 {
+        let samples = (preroll.as_millis() as usize * TARGET_HZ as usize) / 1000;
+        self.ring.lock().unwrap_or_else(|e| e.into_inner()).rewound(samples)
+    }
+
+    /// Everything captured since `cursor`, and where to read from next.
+    ///
+    /// For a consumer that must see the stream continuously — the wake-word
+    /// detector — rather than one take at a time.
+    pub fn since(&self, cursor: u64) -> (u64, Vec<i16>) {
+        let (from, samples) = self
+            .ring
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .since(cursor);
+        if from > cursor {
+            // The reader could not keep up with the ring. Said out loud
+            // because the alternative — a gap nobody mentions — is exactly
+            // how a wake word goes missing with nothing in the log.
+            log::warn!(
+                "audio: fell {} samples behind the ring; audio was dropped",
+                from - cursor
+            );
+        }
+        (from + samples.len() as u64, samples)
+    }
+
+    /// Record one take from this already-open microphone, starting now.
     pub fn take(&mut self, stop: Arc<Mutex<bool>>, limits: Limits) -> AudioResult<Take> {
-        // Whatever arrived between takes is not part of this one.
-        self.collected.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        let collected = self.collected.clone();
+        self.record_from(self.cursor(), stop, limits)
+    }
 
-    let mut detector = earshot::Detector::default_boxed();
-    let mut endpointer = Endpointer::new(limits.trailing_silence);
-    let started = Instant::now();
-    let mut scored = 0usize;
-    // Every exit below assigns this. Declared without a value so the
-    // compiler proves that, rather than a default quietly standing in
-    // for a path somebody forgot.
-    let ending;
+    /// Record one take that begins at `from` — which may be in the past.
+    ///
+    /// That is the whole point: a wake word is only recognised once it has
+    /// been said, so by the time capture starts, the first second of what
+    /// matters is already behind us. It is still in the ring, and this is how
+    /// it gets into the take.
+    pub fn record_from(
+        &mut self,
+        from: u64,
+        stop: Arc<Mutex<bool>>,
+        limits: Limits,
+    ) -> AudioResult<Take> {
+        let mut detector = earshot::Detector::default_boxed();
+        let mut endpointer =
+            Endpointer::with_first_pause(limits.trailing_silence, limits.first_pause);
+        let started = Instant::now();
+        let mut samples: Vec<i16> = Vec::new();
+        let mut cursor = from;
+        let mut scored = 0usize;
+        // Every exit below assigns this. Declared without a value so the
+        // compiler proves that, rather than a default quietly standing in
+        // for a path somebody forgot.
+        let ending;
 
-    loop {
-        if *stop.lock().unwrap_or_else(|e| e.into_inner()) {
-            ending = Ending::Released;
-            break;
-        }
-        if started.elapsed() >= limits.max_take {
-            ending = Ending::Capped;
-            break;
-        }
-        // Score whatever whole frames have arrived since last time.
-        let available_frames = {
-            let buf = collected.lock().unwrap_or_else(|e| e.into_inner());
-            buf.len() / FRAME
-        };
-        let mut ended = false;
-        while scored < available_frames {
-            let frame: Vec<i16> = {
-                let buf = collected.lock().unwrap_or_else(|e| e.into_inner());
-                buf[scored * FRAME..(scored + 1) * FRAME].to_vec()
-            };
-            scored += 1;
-            let loudness = rms(&frame);
-            // Published for the HUD's level meter, from the frame the VAD is
-            // scoring anyway — a second audio path just to draw a bar would
-            // be a second place for the audio to be wrong.
-            set_level(loudness);
-            if endpointer.push(detector.predict_i16(&frame), loudness) {
-                ended = true;
+        loop {
+            if *stop.lock().unwrap_or_else(|e| e.into_inner()) {
+                ending = Ending::Released;
                 break;
             }
-        }
-        if ended {
-            ending = Ending::Silence;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(16));
-    }
+            if started.elapsed() >= limits.max_take {
+                ending = Ending::Capped;
+                break;
+            }
+            let (next, fresh) = self.since(cursor);
+            cursor = next;
+            samples.extend_from_slice(&fresh);
 
-    set_level(0.0);
-    let (on, off, min_rms) = endpointer.thresholds();
-    let (peak, speech_frames) = endpointer.observed();
-    // Logged for EVERY take, including the ones that heard nothing — those
-    // are the ones you need it for. A peak near zero is a microphone
-    // problem; a healthy peak with no speech frames is a threshold problem.
-    log::debug!(
-        "audio: thresholds on {on:.2} off {off:.2} rms {min_rms:.4}; \
-         loudest frame {peak:.4}, {speech_frames} speech frames"
-    );
-    let samples = collected.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    if !endpointer.heard_speech() {
-        return Ok(Take { samples, ending: Ending::NothingHeard });
-    }
+            let mut ended = false;
+            while (scored + 1) * FRAME <= samples.len() {
+                let frame = &samples[scored * FRAME..(scored + 1) * FRAME];
+                scored += 1;
+                let loudness = rms(frame);
+                // Published for the HUD's level meter, from the frame the VAD
+                // is scoring anyway — a second audio path just to draw a bar
+                // would be a second place for the audio to be wrong.
+                set_level(loudness);
+                if endpointer.push(detector.predict_i16(frame), loudness) {
+                    ended = true;
+                    break;
+                }
+            }
+            if ended {
+                ending = Ending::Silence;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+
+        set_level(0.0);
+        let (on, off, min_rms) = endpointer.thresholds();
+        let (peak, speech_frames) = endpointer.observed();
+        // Logged for EVERY take, including the ones that heard nothing —
+        // those are the ones you need it for. A peak near zero is a
+        // microphone problem; a healthy peak with no speech frames is a
+        // threshold problem.
+        log::debug!(
+            "audio: thresholds on {on:.2} off {off:.2} rms {min_rms:.4}; \
+             loudest frame {peak:.4}, {speech_frames} speech frames"
+        );
+        if !endpointer.heard_speech() {
+            return Ok(Take { samples, ending: Ending::NothingHeard });
+        }
         Ok(Take { samples, ending })
     }
 }
@@ -835,6 +1015,112 @@ mod tests {
         // ~13 frames is 200ms; 20 is comfortably past it and well short of
         // the 700ms default.
         assert!(feed(&mut fast, 0.0, 20));
+    }
+
+    // -- the ring ----------------------------------------------------------
+    //
+    // These are the tests for the defect that made hands-free unusable: audio
+    // arriving while the shell was busy used to be dropped on the floor.
+
+    #[test]
+    fn a_reader_sees_everything_written_while_it_was_away() {
+        let mut ring = Ring::new(16_000);
+        ring.push(&[1, 2, 3]);
+        let cursor = 0;
+        // Exactly the case the old code got wrong: the shell is busy
+        // transcribing and dispatching, and more is said meanwhile.
+        ring.push(&[4, 5, 6]);
+        let (from, got) = ring.since(cursor);
+        assert_eq!(from, 0, "nothing had to be skipped");
+        assert_eq!(got, vec![1, 2, 3, 4, 5, 6], "nothing may be lost between reads");
+        let next = from + got.len() as u64;
+        assert!(ring.since(next).1.is_empty(), "and nothing is served twice");
+    }
+
+    #[test]
+    fn the_ring_wraps_without_reordering_the_audio() {
+        let mut ring = Ring::new(FRAME);
+        let first: Vec<i16> = (0..200).collect();
+        let second: Vec<i16> = (200..400).collect();
+        ring.push(&first);
+        ring.push(&second);
+        let (from, got) = ring.since(0);
+        assert_eq!(from, 400 - FRAME as u64, "the oldest samples fell out");
+        assert_eq!(got.len(), FRAME);
+        assert_eq!(got[0], (400 - FRAME) as i16, "in order, across the wrap");
+        assert_eq!(got[got.len() - 1], 399);
+    }
+
+    #[test]
+    fn a_burst_longer_than_the_ring_keeps_its_tail() {
+        let mut ring = Ring::new(FRAME);
+        let burst: Vec<i16> = (0..300).collect();
+        ring.push(&burst);
+        let (from, got) = ring.since(0);
+        assert_eq!(from, 300 - FRAME as u64);
+        assert_eq!(got[got.len() - 1], 299, "the newest audio is the audio kept");
+        assert_eq!(ring.produced(), 300, "the cursor still counts what was written");
+    }
+
+    #[test]
+    fn a_ring_always_holds_at_least_one_frame() {
+        // Asked for four samples, given a frame: below one frame nothing
+        // downstream can score anything, so the request is raised rather
+        // than honoured. Stated here because it surprised its own author.
+        assert_eq!(Ring::new(4).buf.len(), FRAME);
+    }
+
+    #[test]
+    fn rewinding_gives_back_audio_from_before_now() {
+        // Pre-roll: the wake word has already been SAID by the time it is
+        // recognised, so a take has to start in the past.
+        let mut ring = Ring::new(16_000);
+        ring.push(&vec![7i16; 1_600]); // 100ms
+        let cursor = ring.rewound(800); // 50ms back
+        assert_eq!(cursor, 800);
+        assert_eq!(ring.since(cursor).1.len(), 800);
+    }
+
+    #[test]
+    fn rewinding_further_than_the_ring_holds_is_clamped() {
+        let mut ring = Ring::new(FRAME);
+        ring.push(&vec![1i16; 300]);
+        assert_eq!(ring.rewound(10_000), 300 - FRAME as u64,
+                   "a pre-roll cannot reach audio the ring no longer holds");
+    }
+
+    // -- the first-pause grace ---------------------------------------------
+
+    #[test]
+    fn someone_who_has_only_just_started_is_given_longer_to_think() {
+        // 480ms of speech, then a 700ms pause: mid-sentence that means
+        // finished, but right after a wake word it means thinking.
+        let mut patient = Endpointer::with_first_pause(
+            Duration::from_millis(700), Duration::from_millis(1500));
+        quiet_room(&mut patient);
+        assert!(!feed(&mut patient, 0.9, 30));
+        assert!(!feed(&mut patient, 0.0, 44), "700ms is not yet the end");
+        assert!(feed(&mut patient, 0.0, 50), "but 1500ms is");
+    }
+
+    #[test]
+    fn once_a_sentence_is_under_way_the_short_silence_applies_again() {
+        let mut ep = Endpointer::with_first_pause(
+            Duration::from_millis(700), Duration::from_millis(1500));
+        quiet_room(&mut ep);
+        // Past SETTLED_SPEECH — this is someone who has actually said
+        // something, and making them wait is what feels slow.
+        assert!(!feed(&mut ep, 0.9, 90));
+        assert!(feed(&mut ep, 0.0, 46), "~730ms ends it");
+    }
+
+    #[test]
+    fn push_to_talk_asks_for_no_grace_at_all() {
+        // A short spoken command through push-to-talk must not be made to
+        // wait: the keypress already said it was addressed.
+        let plain = Endpointer::new(Duration::from_millis(700));
+        assert_eq!(plain.required_silence(100.0), 700.0);
+        assert_eq!(Limits::default().first_pause, DEFAULT_TRAILING_SILENCE);
     }
 
     #[test]

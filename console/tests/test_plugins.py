@@ -213,7 +213,15 @@ class TestAssistantRoutes:
             ("GET", "assistant.resolve_get"),
             # T-015: the voice overlay's Allow/Deny. The Assistant answers a
             # card on its own chat, so the caller needs no chat id.
-            ("POST", "assistant.approve")}
+            ("POST", "assistant.approve"),
+            # T-019: voice diagnostics, and recording a wake word. All four
+            # pass straight through to the shell — the console keeps no voice
+            # state of its own, because a second copy of "is the microphone
+            # open" is how the tray and the overlay came to disagree.
+            ("GET", "assistant.voice_state"),
+            ("POST", "assistant.wake_sample"),
+            ("POST", "assistant.wake_train"),
+            ("POST", "assistant.wake_forget")}
 
 
 class TestPaletteAssets:

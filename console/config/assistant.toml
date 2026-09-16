@@ -127,6 +127,17 @@ listen_max_seconds = 12
 # think mid-sentence, short enough not to feel like waiting.
 listen_silence_ms = 700
 
+# How long a pause is allowed while the utterance is still only a word or two
+# old. Hands-free only. 700ms is the right answer mid-sentence and the wrong
+# one straight after a wake word, where a pause is someone deciding what to
+# ask rather than someone finishing.
+listen_first_pause_ms = 1500
+
+# How much audio from BEFORE the wake word fired goes into the take. A spotter
+# can only recognise the phrase once it has been said, so with no pre-roll the
+# recogniser is handed the sentence with its opening missing.
+listen_preroll_ms = 1000
+
 # Which whisper.cpp model transcribes your voice, by name. base.en is accurate
 # enough for ticket ids; tiny.en is several times faster and noticeably worse
 # at exactly those. Fetch one with: ./desktop/get-whisper.ps1 -Model tiny.en
@@ -144,6 +155,14 @@ stt_model = "base.en"
 # and nobody else in the room, and not otherwise.
 hands_free_require_wake = true
 hands_free_wake_word = "console"
+
+# How readily the wake-word spotter fires, 0.0-1.0: higher fires more readily.
+# Since T-019 the word is recognised from the AUDIO by a small always-on
+# detector, so the recogniser never runs on speech that was not addressed to
+# the assistant — record the phrase under Settings > Listening. Until you have,
+# hands-free falls back to the old, slower behaviour: transcribe everything
+# and match the text.
+wake_sensitivity = 0.5
 
 # Keep listening while a reply is being read aloud?
 #

@@ -7,13 +7,19 @@
 //!
 //! ## 1. Everything in the room would go to a model
 //!
-//! It does not. Audio is transcribed **on this machine**, and the transcript
-//! is discarded unless it is addressed to the assistant by name. Leaving the
-//! microphone on therefore means the room is heard locally and forgotten —
-//! not sent anywhere. Only an addressed utterance becomes a turn.
+//! It does not, and since T-019 it does not in the stronger sense. A wake-word
+//! spotter scores the audio itself (`wake`), and the recogniser is not started
+//! at all unless it fires. Unaddressed speech is therefore not transcribed and
+//! discarded — it is never transcribed. Nothing about it is written down and
+//! nothing about it leaves this machine.
 //!
 //! That can be switched off, for headphones-on, nobody-else-in-the-room use,
 //! and it is off-by-default precisely because the alternative is a surprise.
+//!
+//! The old arrangement — record everything, transcribe everything, match the
+//! text — is still here as a fallback for a machine with no wakeword recorded
+//! yet, because a tray switch that does nothing is worse. It is slower, it is
+//! less accurate, and the log says which one is running.
 //!
 //! ## 2. The assistant would hear itself
 //!
@@ -37,7 +43,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::tray_state::{Assistant, Event};
-use crate::{listen, tray_paint, tts};
+use crate::{listen, tray_paint, tts, wake};
 
 /// Whether the loop should keep going. Also what `stop()` clears.
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -50,6 +56,14 @@ static LAST_STOP: Mutex<String> = Mutex::new(String::new());
 /// to spin.
 const PAUSE_POLL: Duration = Duration::from_millis(200);
 
+/// How long to wait between reads of the microphone while armed.
+///
+/// Much shorter than `PAUSE_POLL`: this one is in the path of hearing the wake
+/// word, and every millisecond here is a millisecond of the phrase that has to
+/// sit in the ring before anyone looks at it. The ring makes that safe rather
+/// than lossy, but latency is still latency.
+const SPOT_POLL: Duration = Duration::from_millis(30);
+
 /// Settings the loop needs, fetched from the console so `assistant.toml`
 /// stays the single source of truth rather than being parsed twice.
 #[derive(Clone, Debug)]
@@ -58,6 +72,13 @@ pub struct Policy {
     pub wake_word: String,
     pub listen_while_speaking: bool,
     pub max_minutes: u64,
+    /// How readily the spotter fires, 0.0..1.0, in the direction a person
+    /// expects: higher is more sensitive.
+    pub wake_sensitivity: f32,
+    /// How much audio before the firing goes into the take. A wake word is
+    /// recognised only once it has been said, so without this the recogniser
+    /// gets the sentence with its first word missing.
+    pub preroll: Duration,
 }
 
 impl Default for Policy {
@@ -69,6 +90,8 @@ impl Default for Policy {
             wake_word: "console".into(),
             listen_while_speaking: false,
             max_minutes: 30,
+            wake_sensitivity: 0.5,
+            preroll: Duration::from_millis(1000),
         }
     }
 }
@@ -167,6 +190,16 @@ pub fn fetch_policy(console_url: &str) -> Policy {
                     .and_then(|x| x.as_u64())
                     .filter(|m| *m >= 1)
                     .unwrap_or(d.max_minutes),
+                wake_sensitivity: v
+                    .get("wake_sensitivity")
+                    .and_then(|x| x.as_f64())
+                    .map(|x| x as f32)
+                    .unwrap_or(d.wake_sensitivity),
+                preroll: Duration::from_millis(
+                    v.get("listen_preroll_ms")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(d.preroll.as_millis() as u64),
+                ),
             }
         }
         Err(e) => {
@@ -228,6 +261,30 @@ fn run(
     // this loop ends, which is what turns the OS indicator off.
     let mut mic: Option<crate::audio::Mic> = None;
 
+    // The spotter, if this machine has a wakeword. When it does not, the loop
+    // falls back to the old transcribe-everything gate — and says so once,
+    // here, rather than leaving the user to wonder why it is slow.
+    let mut spotter = match (policy.require_wake, wake::Spotter::new(&repo_root, policy.wake_sensitivity)) {
+        (false, _) => None,
+        (true, Ok(s)) => Some(s),
+        (true, Err(why)) => {
+            log::warn!("hands-free: {why}; falling back to transcribing every utterance");
+            None
+        }
+    };
+    log::info!(
+        "hands-free: {}",
+        if spotter.is_some() {
+            "armed - the recogniser runs only after the wake word"
+        } else {
+            "armed - every utterance will be transcribed and gated on its text"
+        }
+    );
+    // Where the spotter has read up to. Kept across iterations, which is the
+    // whole point: audio that arrives while a take is being transcribed and
+    // answered is still here to be read afterwards.
+    let mut cursor: u64 = 0;
+
     while RUNNING.load(Ordering::SeqCst) {
         if started.elapsed() >= cap {
             stop("reached the time limit");
@@ -240,18 +297,76 @@ fn run(
             .map(|a| a.needs_approval())
             .unwrap_or(false);
         if should_pause(&policy, speaking, awaiting_approval) {
+            // Nothing is captured, scored or kept while paused — but the
+            // cursor moves on, so the audio skipped here can never surface
+            // later as a wake word nobody said just now.
+            if let Some(open) = mic.as_ref() {
+                cursor = open.cursor();
+            }
+            if let Some(s) = spotter.as_mut() {
+                s.reset();
+            }
             std::thread::sleep(PAUSE_POLL);
             continue;
         }
 
-        let policy_for_gate = policy.clone();
-        match listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
-            let addressed = should_send(text, &policy_for_gate);
-            if !addressed {
-                log::info!("hands-free: {}", why_not(text, &policy_for_gate));
+        let outcome = if spotter.is_some() {
+            if mic.is_none() {
+                match crate::audio::Mic::open() {
+                    Ok(open) => {
+                        cursor = open.cursor();
+                        mic = Some(open);
+                    }
+                    Err(why) => {
+                        stop(&why);
+                        break;
+                    }
+                }
             }
-            addressed
-        }) {
+            // Armed: score the stream and do nothing else. No recogniser, no
+            // recording, no take — this is the state hands-free spends
+            // essentially all of its time in, and it costs one small
+            // comparison per frame of audio.
+            let (next, fresh) = mic.as_ref().expect("open above").since(cursor);
+            cursor = next;
+            match spotter.as_mut().expect("checked").push(&fresh) {
+                None => {
+                    std::thread::sleep(SPOT_POLL);
+                    continue;
+                }
+                Some(fired) => {
+                    log::info!(
+                        "wake: fired {:?} (score {:.2}, avg {:.2})",
+                        fired.name, fired.score, fired.avg_score
+                    );
+                    crate::cue::play(crate::cue::Cue::Sent);
+                    // Start the take BEFORE the word was recognised: it has
+                    // already been said by now, and so, often, has the first
+                    // word of the request after it.
+                    let from = mic.as_ref().expect("open above").rewound(policy.preroll);
+                    let sent = listen::take_after_wake(
+                        &mut mic, from, &repo_root, &assistant, &console_url);
+                    // Whatever happened, the utterance just handled must not
+                    // be scored again as a fresh wake word.
+                    if let Some(open) = mic.as_ref() {
+                        cursor = open.cursor();
+                    }
+                    spotter.as_mut().expect("checked").reset();
+                    sent
+                }
+            }
+        } else {
+            let policy_for_gate = policy.clone();
+            listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
+                let addressed = should_send(text, &policy_for_gate);
+                if !addressed {
+                    log::info!("hands-free: {}", why_not(text, &policy_for_gate));
+                }
+                addressed
+            })
+        };
+
+        match outcome {
             Ok(sent) => log::info!("hands-free: sent {sent:?}"),
             // `listen` now says when a take was heard and dropped, so the
             // quiet cases below stay quiet without hands-free looking dead.

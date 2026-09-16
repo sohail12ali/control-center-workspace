@@ -26,6 +26,7 @@ mod tray_link;
 mod tray_paint;
 mod tray_state;
 mod tts;
+mod wake;
 
 #[cfg(windows)]
 mod job;

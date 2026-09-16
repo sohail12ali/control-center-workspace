@@ -153,6 +153,16 @@ DEFAULTS = {
     # thinks mid-sentence is not cut off.
     "listen_max_seconds": 12,
     "listen_silence_ms": 700,
+    # How long a pause is allowed while an utterance is still only a word or
+    # two old (T-019). 700ms is right mid-sentence and wrong straight after a
+    # wake word, where a pause is someone deciding what to ask. Hands-free
+    # only: push-to-talk opens on a keypress, so a short take there is a short
+    # command and making it wait would be the same mistake reversed.
+    "listen_first_pause_ms": 1500,
+    # How much audio from BEFORE the wake word fired goes into the take. A
+    # spotter can only recognise a phrase once it has been said, so without
+    # this the recogniser is handed the sentence with its opening missing.
+    "listen_preroll_ms": 1000,
     # Which whisper.cpp model to load, by name. `base.en` is accurate enough
     # for ticket ids; `tiny.en` is several times faster and noticeably worse
     # at exactly those. Named rather than inferred, so dropping a second model
@@ -169,6 +179,12 @@ DEFAULTS = {
     # the room to a model. Turning it off means every utterance becomes a turn.
     "hands_free_require_wake": True,
     "hands_free_wake_word": "console",
+    # How readily the wake-word spotter fires, 0.0-1.0, in the direction a
+    # person expects: higher fires more readily. T-019 moved the wake word off
+    # the transcript and onto the audio, so this is a real dial now — before
+    # it, "sensitivity" meant whether whisper happened to spell the word the
+    # way the string comparison wanted.
+    "wake_sensitivity": 0.5,
     # Whether to keep listening while a reply is being read aloud. Off by
     # default because on speakers the assistant hears itself and answers its
     # own voice. On headphones there is no echo, and turning this on is what
@@ -190,6 +206,7 @@ WRITABLE = frozenset({
     "backend", "model", "mode", "session_idle_minutes", "speak",
     "reply_chars", "ticket_prefix", "tray_click_action",
     "listen_max_seconds", "listen_silence_ms", "stt_model",
+    "listen_first_pause_ms", "listen_preroll_ms", "wake_sensitivity",
     "speak_voice", "speak_rate_percent",
     "work_backend", "work_model", "backend_chain",
     "hud_dismiss_shortcut",
@@ -480,6 +497,14 @@ def _coerce(key, value):
             return int(value)
         except (TypeError, ValueError):
             raise ValueError("%s must be a whole number" % key) from None
+    if want is float:
+        # Checked before int would swallow it: a slider posts "0.5", and
+        # without this branch that is stored as the STRING "0.5" and every
+        # range check below compares a string to a number.
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise ValueError("%s must be a number" % key) from None
     return str(value)
 
 
@@ -521,6 +546,16 @@ def update(repo_root, patch, installed_backends=()):
         # Below 200ms a normal pause between words ends the take; above five
         # seconds you are waiting for the backstop instead of the detector.
         raise ValueError("listen_silence_ms must be between 200 and 5000")
+    if "listen_first_pause_ms" in clean and not 200 <= clean["listen_first_pause_ms"] <= 5000:
+        # Same bounds as listen_silence_ms, and for the same reasons — this is
+        # the same quantity, measured earlier in the utterance.
+        raise ValueError("listen_first_pause_ms must be between 200 and 5000")
+    if "listen_preroll_ms" in clean and not 0 <= clean["listen_preroll_ms"] <= 3000:
+        # Capped by what audio.rs's ring actually holds (4s), with room left
+        # for the take itself. Asking for more would silently get less.
+        raise ValueError("listen_preroll_ms must be between 0 and 3000")
+    if "wake_sensitivity" in clean and not 0.0 <= clean["wake_sensitivity"] <= 1.0:
+        raise ValueError("wake_sensitivity must be between 0 and 1")
     if "speak_rate_percent" in clean and not 50 <= clean["speak_rate_percent"] <= 200:
         # Outside this the voice is either unintelligible or comic, and both
         # read as "broken" rather than "you set it that way".

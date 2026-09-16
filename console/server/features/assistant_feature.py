@@ -591,6 +591,41 @@ def apply(ctx):
                         cfg.get("work_backend", ""), cfg.get("work_model", "")),
         }
 
+    # -- voice: what listening can see, and recording a wake word ------------
+    #
+    # Thin passes through to the shell. The console owns no voice state of its
+    # own here — inventing a second copy of "is the microphone open" is how
+    # the tray and the overlay came to disagree in T-015.
+
+    def voice_state(req):
+        return native_bridge.listen_state(repo_root)
+
+    def wake_sample(req):
+        name = ((req.body or {}).get("name") or "").strip()
+        if not name:
+            return {"ok": False, "reason": "say what the wake word is called"}
+        return native_bridge.wake_sample(repo_root, name)
+
+    def wake_train(req):
+        name = ((req.body or {}).get("name") or "").strip()
+        result = native_bridge.wake_train(repo_root, name)
+        audit.record(repo_root, "assistant.wake_train",
+                     actor=audit.actor_of(req), target=name,
+                     outcome="built" if result.get("wakeword") else
+                             str(result.get("reason", "failed")))
+        return result
+
+    def wake_forget(req):
+        name = ((req.body or {}).get("name") or "").strip()
+        result = native_bridge.wake_forget(repo_root, name)
+        audit.record(repo_root, "assistant.wake_forget",
+                     actor=audit.actor_of(req), target=name, outcome="removed")
+        return result
+
+    ctx.get(r"^/api/assistant/voice/?$", voice_state, "assistant.voice_state")
+    ctx.post(r"^/api/assistant/wake/sample/?$", wake_sample, "assistant.wake_sample")
+    ctx.post(r"^/api/assistant/wake/train/?$", wake_train, "assistant.wake_train")
+    ctx.post(r"^/api/assistant/wake/forget/?$", wake_forget, "assistant.wake_forget")
     ctx.get(r"^/api/assistant/session/?$", session, "assistant.session")
     ctx.post(r"^/api/assistant/new/?$", new, "assistant.new")
     ctx.post(r"^/api/assistant/say/?$", say, "assistant.say")
