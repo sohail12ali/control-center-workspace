@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 
 from . import boards as boards_mod
 from . import verbs as verbs_mod
+from .paths import resolve_rel
 
 DEFAULT_DIR = os.path.join("console", ".cache", "jobs")
 DEFAULT_MAX_CONCURRENT = 2
@@ -73,7 +74,7 @@ def _config(repo_root):
 
 
 def jobs_dir(repo_root):
-    return os.path.join(repo_root, _config(repo_root)["dir"])
+    return resolve_rel(repo_root, _config(repo_root)["dir"])
 
 
 class JobQueue:
@@ -87,7 +88,7 @@ class JobQueue:
     def __init__(self, repo_root, max_concurrent=None):
         self.repo_root = repo_root
         cfg = _config(repo_root)
-        self.dir = os.path.join(repo_root, cfg["dir"])
+        self.dir = resolve_rel(repo_root, cfg["dir"])
         self.max_concurrent = max_concurrent or cfg["max_concurrent"]
         self._jobs = {}
         self._lock = threading.Lock()

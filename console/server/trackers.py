@@ -16,18 +16,23 @@ from . import boards as boards_mod
 from . import tomlio
 from .paths import find_repo_root, ticket_dir
 
-VALID_KINDS = ("questions", "bugs", "todos")
+#: `comments` (T-017 FR-9, decision-log a2) is the `comment` verb's storage —
+#: reuses the proven add/list/update CRUD shape rather than a new file format,
+#: and (like `todos`) never blocks release.
+VALID_KINDS = ("questions", "bugs", "todos", "comments")
 
 _ID_FORMATS = {
     "questions": lambda n: f"Q{n}",
     "bugs": lambda n: f"D-{n}",
     "todos": lambda n: f"TD-{n}",
+    "comments": lambda n: f"C{n}",
 }
 
 _DEFAULT_STATUS = {
     "questions": "open",
     "bugs": "open",
     "todos": "open",
+    "comments": "open",
 }
 
 # predicate: item counts as a release-blocking critical item for this kind
@@ -35,6 +40,7 @@ _IS_BLOCKER = {
     "questions": lambda it: it.get("priority") == "critical" and it.get("status") not in ("resolved", "closed"),
     "bugs": lambda it: it.get("severity") == "critical" and it.get("status") not in ("verified", "closed"),
     "todos": lambda it: False,  # todos never block, by design
+    "comments": lambda it: False,  # comments never block, by design (a2)
 }
 
 
@@ -152,6 +158,13 @@ def add(repo_root, ticket_id, kind, text, **fields):
                 "context": fields.get("context", ""),
                 "done_on": "",
                 "drop_reason": "",
+            }
+        )
+    elif kind == "comments":
+        item.update(
+            {
+                "author": fields.get("author", "agent"),
+                "posted_on": _now_iso(),
             }
         )
 

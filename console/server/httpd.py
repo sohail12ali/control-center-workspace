@@ -54,10 +54,10 @@ class Request:
     needs the raw socket is doing transport work in the wrong layer."""
 
     __slots__ = ("method", "path", "query", "body", "repo_root",
-                 "client_addr", "user_agent")
+                 "client_addr", "user_agent", "mcp_session_id")
 
     def __init__(self, method, path, query, body, repo_root,
-                 client_addr="", user_agent=""):
+                 client_addr="", user_agent="", mcp_session_id=""):
         self.method = method
         self.path = path
         self.query = query
@@ -68,6 +68,11 @@ class Request:
         # sense; treating a client-controlled header as one would be theatre.
         self.client_addr = client_addr
         self.user_agent = user_agent
+        # T-017 FR-4/2a: the MCP Streamable HTTP transport's session id,
+        # carried the same way `user_agent` already is — a single named
+        # header read here, not a general headers dict (`Request` stays
+        # narrow on purpose, see the class docstring).
+        self.mcp_session_id = mcp_session_id
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -127,7 +132,8 @@ class Handler(BaseHTTPRequestHandler):
         req = Request(method, path, query, body, self.repo_root,
                       client_addr=(self.client_address[0]
                                    if self.client_address else ""),
-                      user_agent=self.headers.get("User-Agent", "") or "")
+                      user_agent=self.headers.get("User-Agent", "") or "",
+                      mcp_session_id=self.headers.get("Mcp-Session-Id", "") or "")
         try:
             result = handler(req, *groups)
         except FileNotFoundError as exc:

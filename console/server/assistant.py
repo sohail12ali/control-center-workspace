@@ -34,6 +34,8 @@ import os
 import re
 import time
 
+from .paths import resolve_rel
+
 CACHE_REL = os.path.join("console", ".cache", "assistant")
 
 SESSION_FILE = "session.json"
@@ -66,7 +68,7 @@ def _now():
 
 
 def cache_dir(repo_root):
-    d = os.path.join(repo_root, CACHE_REL)
+    d = resolve_rel(repo_root, CACHE_REL)
     os.makedirs(d, exist_ok=True)
     return d
 

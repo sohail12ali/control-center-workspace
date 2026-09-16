@@ -92,6 +92,7 @@ class TestRoutesExist:
         # The composer's inline pickers and its model list.
         ("GET", "/api/agents/files"),
         ("GET", "/api/agents/models"),
+        ("GET", "/api/runs"),
     ])
     def test_the_tab_endpoints_are_routed(self, app, method, path):
         assert routed(app, method, path), "%s %s is not routed" % (method, path)
@@ -136,6 +137,23 @@ class TestFilePicker:
 
     def test_an_empty_workspace_returns_a_list_not_an_error(self, app):
         assert call(app, "GET", "/api/agents/files", {"q": "zzz"})["files"] == []
+
+
+class TestAssistantHomeAndRuns:
+    """T-016: Assistant tab is in the manifest; Runs list is a GET."""
+
+    def test_config_keeps_overview_first_and_includes_assistant(self, app):
+        cfg = call(app, "GET", "/api/config")
+        ids = [t["id"] for t in cfg["tabs"]]
+        assert ids[0] == "overview"
+        assert "assistant" in ids
+
+    def test_runs_list_is_empty_then_durable(self, app, repo):
+        assert call(app, "GET", "/api/runs")["runs"] == []
+        from server import runs
+        rec = runs.create(repo, ticket="T-001", executor="chat", executor_id="c1")
+        rows = call(app, "GET", "/api/runs")["runs"]
+        assert rec["id"] in [r["id"] for r in rows]
 
 
 class TestModelsEndpoint:

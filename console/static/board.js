@@ -310,7 +310,7 @@
     if (!C.IS_STATIC) {
       body.appendChild(C.el("div", { class: "drow dactions" }, [
         C.el("button", {
-          class: "btn sm primary", title: "Open the Agents tab with this ticket's context",
+          class: "btn sm primary", title: "Start a Run for this ticket, or ask the Assistant",
           onclick: function () { startAgentFor(t); },
         }, [C.icon("cpu"), "Start agent"]),
         C.el("button", {
@@ -445,21 +445,48 @@
     return C.el("section", { class: "dsection" }, [head].concat(Array.isArray(kids) ? kids : [kids]));
   }
 
-  /* Hand the ticket to the Agents tab. The prompt names the ticket and its
-     artifact folder rather than pasting its contents — the agent can read the
-     files, and a prompt stuffed with a whole ticket is both expensive and
-     stale the moment anything changes. */
+  /* Start a ticket-scoped Run (delegate). If no work backend is ready, ask
+     the Assistant instead. Compose+Agents is only the last fallback. */
   function startAgentFor(t) {
     var prompt = "Work on ticket " + t.id + ": " + t.title + "\n\n" +
       "Its artifacts are in knowledge-center/artifacts/" + t.id + "/. " +
       "Read them first, then propose what to do next.";
-    if (window.ConsoleAgents && window.ConsoleAgents.compose) {
-      window.ConsoleAgents.compose({ prompt: prompt, ticket: t.id });
+
+    function goHome() {
       window.ConsoleApp.drawer.close();
-      if (st.api) st.api.go("agents");
-    } else {
-      C.toast("The Agents tab is not available in this build.", "err");
+      if (st.api) st.api.go("assistant");
     }
+
+    function fallbackCompose() {
+      if (window.ConsoleAgents && window.ConsoleAgents.compose) {
+        window.ConsoleAgents.compose({ prompt: prompt, ticket: t.id });
+        window.ConsoleApp.drawer.close();
+        if (st.api) st.api.go("agents");
+      } else {
+        C.toast("Could not start a Run or reach the Assistant.", "err");
+      }
+    }
+
+    function askAssistant() {
+      C.post("/api/assistant/say", { text: prompt, source: "board" })
+        .then(function () {
+          C.toast("Asked the Assistant about " + t.id, "ok");
+          goHome();
+        })
+        .catch(function () { fallbackCompose(); });
+    }
+
+    C.post("/api/verbs/delegate/run", { ticket: t.id, confirm: true, task: prompt })
+      .then(function (out) {
+        var r = (out && out.result) || {};
+        if (r.ok) {
+          C.toast("Run " + (r.run || r.chat) + " started", "ok");
+          goHome();
+        } else {
+          askAssistant();
+        }
+      })
+      .catch(function () { askAssistant(); });
   }
 
   C.tab("board", {

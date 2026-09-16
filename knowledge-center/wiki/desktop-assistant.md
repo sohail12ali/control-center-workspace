@@ -9,8 +9,8 @@ This is durable design, not a ticket. Implementation is phased. Phase 1 is [[T-0
 **Status:** evaluation, 2026-09-05. Phase-1 host on [[T-001-summary]] is Tauri 2 (`desktop/src-tauri/`). Tray registry and menu IA locked the same day; first tray code is [[T-002-summary]].
 **Locked choices:** native desktop shell as the main window; local-first
 default (Ollama / LM Studio + local STT/TTS); shell is portable, Windows is
-the smoke OS for T-001; tray is a remote control of the live Agents chat, not
-a second product.
+the smoke OS for T-001; tray remotes the **Assistant** session (one reused
+chat), not a second product. Product lock: [[T-016-summary]] / [[T-016-decision-log]].
 **Reasoning backends:** user-selectable per chat — `ollama`, `lm-studio`,
 `claude`, `cursor-agent`, `openrouter`. Picking a hosted or vendor CLI
 backend **is** the cloud opt-in for that turn’s transcript and screenshot.
@@ -23,11 +23,10 @@ inject mouse and keyboard, or keep an always-on microphone private. The
 console already owns the agent work: one Agents tab, four transports, gated
 approvals, MCP.
 
-Voice chat is not a second product. It is an input adapter on the live Agents
-session. Local STT turns speech into text; the shell optionally attaches a
-screenshot; that turn goes to whichever backend the user already picked; the
-existing SSE stream comes back; TTS reads the finished reply (the Agents tab
-already does this with `autoRead`).
+Voice chat is not a second product. It is an input adapter on the **Assistant**
+session (`POST /api/assistant/say`). Local STT turns speech into text; the shell
+optionally attaches a screenshot; that turn goes to the Assistant's talk
+backend; the existing SSE stream comes back; TTS reads the finished reply.
 
 The stdlib-only `python console/kanban.py serve` path keeps working without
 the shell. OS **actuation** stays behind the existing Permission needed gate.
@@ -237,12 +236,13 @@ Ship without these and the feature should stay off.
 
 ## Tray as the desktop control surface
 
-The tray (and hotkeys) are a **remote control for the live Agents session**.
+The tray (and hotkeys) are a **remote control for the Assistant**.
 They must not invent a second orchestrator, a second backend picker, or a
-second cloud flag. “Tell an agent to do something” is not a free-text box in
-the tray: show the window and focus the composer, run a short take into the
-current chat, or pick a saved prompt. New session = existing `newChat()` in
-`console/static/agents.js`.
+second cloud flag. Talk posts to `/api/assistant/say`. Named work is a **Run**
+([[T-016-decision-log]]). “Tell an agent to do something” is not a free-text box in
+the tray: show the window and focus the Assistant, run a short take into the
+current Assistant chat, or pick a saved prompt. New session = the Assistant
+`new chat` command / `/api/assistant/new`.
 
 Canonical list: `desktop/features.toml` (desktop tree, not `console/` pip or
 Cargo). Every tray row and every hotkey uses the same `id`.

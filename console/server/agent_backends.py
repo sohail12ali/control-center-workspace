@@ -46,6 +46,7 @@ from . import boards as boards_mod
 from . import provider_overrides
 from . import prompt_tokens
 from . import tomlio
+from .paths import resolve_rel
 
 CONFIG_REL = os.path.join("console", "config", "agents.toml")
 
@@ -196,7 +197,7 @@ def load_config(repo_root, force=False):
     """
     if not force and repo_root in _cache:
         return _cache[repo_root]
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     if os.path.isfile(path):
         data = tomlio.load(path)
     else:
@@ -216,7 +217,7 @@ def committed_rows(repo_root):
     "what is switched on here" — the provider list, and refusing a custom id
     that would shadow a committed one.
     """
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     if not os.path.isfile(path):
         return []
     try:

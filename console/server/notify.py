@@ -37,6 +37,7 @@ import urllib.request
 
 from . import boards as boards_mod
 from . import tomlio
+from .paths import resolve_rel
 
 DEFAULT_TIMEOUT = 8
 TELEGRAM_API = "https://api.telegram.org"
@@ -59,7 +60,7 @@ WRITABLE = ("events", "quiet_from", "quiet_to")
 
 
 def prefs_path(repo_root):
-    return os.path.join(repo_root, PREFS_REL)
+    return resolve_rel(repo_root, PREFS_REL)
 
 
 def load_prefs(repo_root):

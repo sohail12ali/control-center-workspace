@@ -33,6 +33,7 @@ import os
 
 from . import model_catalog
 from . import tomlio
+from .paths import resolve_rel
 
 CONFIG_REL = os.path.join("console", "config", "assistant.toml")
 OVERRIDE_REL = os.path.join("console", ".cache", "assistant", "settings.json")
@@ -198,7 +199,7 @@ WRITABLE = frozenset({
 
 
 def _committed(repo_root):
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     if not os.path.isfile(path):
         return {}
     try:
@@ -210,7 +211,7 @@ def _committed(repo_root):
 
 
 def _overrides(repo_root):
-    path = os.path.join(repo_root, OVERRIDE_REL)
+    path = resolve_rel(repo_root, OVERRIDE_REL)
     if not os.path.isfile(path):
         return {}
     try:
@@ -547,7 +548,7 @@ def update(repo_root, patch, installed_backends=()):
             raise ValueError("hands_free_wake_word needs at least two characters")
         clean["hands_free_wake_word"] = word
 
-    path = os.path.join(repo_root, OVERRIDE_REL)
+    path = resolve_rel(repo_root, OVERRIDE_REL)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     stored = _overrides(repo_root)
     stored.update(clean)

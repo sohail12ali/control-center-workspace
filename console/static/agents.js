@@ -29,7 +29,7 @@
   var Pick = window.ConsoleComposerPick;
 
   var st = {
-    host: null, chats: [], sel: null, mode: "new",
+    host: null, chats: [], runs: [], sel: null, mode: "new",
     backends: [], catalog: { skills: [], personas: [], tickets: [] },
     store: null, view: null, offMeta: null,
     // No `skill` / `persona` here any more: both are read out of the opening
@@ -223,12 +223,55 @@
     return row;
   }
 
+  function runRow(run) {
+    return C.el("div", {
+      class: "lrow clickable",
+      title: "Open this Run",
+      onclick: function () { openRun(run); },
+      onkeydown: function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openRun(run); }
+      },
+    }, [
+      C.el("span", { class: "chip", text: run.role || "work" }),
+      C.el("span", { class: "ltext" }, [
+        C.el("div", { class: "truncate", style: "font-size:12.2px",
+          text: (run.ticket ? run.ticket + " " : "") + (run.id || "") }),
+        C.el("div", { class: "muted", style: "font-size:10.8px",
+          text: [run.executor, run.backend, run.executor_id].filter(Boolean).join(" · ") }),
+      ]),
+      C.el("span", { class: "chip", text: run.state || "" }),
+    ]);
+  }
+
+  function openRun(run) {
+    if (run.executor !== "chat" || !run.executor_id) {
+      C.toast("This Run is not a chat.", "");
+      return;
+    }
+    var id = run.executor_id;
+    var past = (st.chats || []).filter(function (c) { return c.id === id; })[0];
+    if (past && past.orphaned && past.resumable) {
+      resumeChat(id);
+      return;
+    }
+    openChat(id);
+  }
+
   function paintRail() {
     var pane = document.getElementById("agChats");
     if (!pane) return;
     C.clear(pane);
+    if (st.runs && st.runs.length) {
+      pane.appendChild(C.el("div", { class: "muted",
+        style: "padding:8px 10px 0;font-size:11px;font-weight:550", text: "Runs" }));
+      var runRows = C.el("div", { class: "rows" });
+      st.runs.forEach(function (r) { runRows.appendChild(runRow(r)); });
+      pane.appendChild(runRows);
+    }
     if (!st.chats.length) {
-      pane.appendChild(C.empty("No chats yet", "Start one with New chat.", "cpu"));
+      if (!(st.runs && st.runs.length)) {
+        pane.appendChild(C.empty("No chats yet", "Start one with New chat.", "cpu"));
+      }
       return;
     }
     // Offered only once there are both kinds to tell apart.
@@ -250,8 +293,12 @@
   }
 
   function refreshChats() {
-    return C.get("/api/agents/chats").then(function (d) {
-      st.chats = d.chats || [];
+    return Promise.all([
+      C.get("/api/agents/chats"),
+      C.get("/api/runs").catch(function () { return { runs: [] }; }),
+    ]).then(function (res) {
+      st.chats = (res[0] && res[0].chats) || [];
+      st.runs = (res[1] && res[1].runs) || [];
       paintRail();
       var live = st.chats.filter(function (c) { return c.busy; }).length;
       var chip = document.getElementById("agLive");
@@ -1278,8 +1325,10 @@
 
     composer.appendChild(C.el("div", { class: "ct-inputrow" }, [
       taWrap,
-      C.el("button", { class: "btn primary ct-go", onclick: fire, title: sendLabel },
-        [C.icon(sendIcon), C.el("span", { class: "blab", text: sendLabel })]),
+      C.el("button", {
+        class: "btn primary iconly ct-go", type: "button",
+        onclick: fire, title: sendLabel, "aria-label": sendLabel,
+      }, [C.icon(sendIcon)]),
     ]));
 
     // Same judgement as the New-chat form, live on every keystroke. It has to

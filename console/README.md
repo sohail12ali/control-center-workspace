@@ -53,9 +53,9 @@ ticket show ID
 ticket move ID STAGE
 ticket set ID FIELD VALUE
 
-tracker add ID {questions|bugs|todos} "text" [--set key=value ...]
-tracker list ID {questions|bugs|todos} [--status S]
-tracker update ID {questions|bugs|todos} ITEM_ID [--set key=value ...]
+tracker add ID {questions|bugs|todos|comments} "text" [--set key=value ...]
+tracker list ID {questions|bugs|todos|comments} [--status S]
+tracker update ID {questions|bugs|todos|comments} ITEM_ID [--set key=value ...]
 tracker blockers ID
 
 onboard [--json]        first-run setup steps, ending at the requirements pipeline
@@ -65,6 +65,18 @@ refresh [--quiet]
 reset [--yes] [--dry-run] [--keep-logs] [--keep-investigations]
                          wipe tickets/investigations/logs/telemetry back to an empty
                          template — see knowledge-center/wiki/reset-to-clean-slate.md
+
+stop-hook check [--agent A] [--json]
+                         session stop-hook (T-017 FR-10): reminds the calling identity
+                         (default: knowledge-center/logs/author.local's slug) about a
+                         claimed ticket with no comment/move recorded since the claim.
+                         Never fails a session — wired from .claude/hooks/console-stop-
+                         reminder.sh.
+setup {cursor|claude|vscode} [--json]
+                         write that editor's MCP client config (pointed at this
+                         console's stdio server) plus an AGENTS.md snippet warning
+                         against hand-editing ticket/tracker TOML (T-017 FR-11).
+                         Idempotent — re-run any time, merges rather than overwrites.
 
 overview
 todos [--status S] [--owner O]
@@ -542,14 +554,19 @@ difference is visible rather than assumed.
 ## Data model
 
 - `{TICKET}/ticket.toml` — id, title, kind, stage, status, owner, priority,
-  dates, tags, links, optional `scripts_dir`, optional `url`.
+  dates, tags, links, optional `scripts_dir`, optional `url`, `claimed_by`,
+  `claimed_at`.
 
   `priority` is one of `low|medium|high|critical` — anything else normalises
   to `medium` rather than producing a card that can't render. `url` links the
   ticket to whatever external tracker the team uses (Jira, Linear, GitHub, an
   internal tool); empty means "not tracked elsewhere" and the card simply
-  omits the link. Nothing here is specific to any one tracker.
-- `{TICKET}/{TICKET}-{questions,bugs,todos}.toml` — `[meta]` + `[[items]]`.
+  omits the link. `claimed_by`/`claimed_at` (T-017) record who currently has
+  the ticket claimed and since when — distinct from `owner` — and are set
+  only by the `claim` verb, never hand-edited or set via `ticket set`.
+- `{TICKET}/{TICKET}-{questions,bugs,todos,comments}.toml` — `[meta]` + `[[items]]`.
+  `comments` (T-017) is the `comment` verb's storage; like `todos` it never
+  blocks release.
 
 All of the above are **CLI-mutated only** (this CLI or the HTTP API, which
 share the same `server/` code) — never hand-edited. See

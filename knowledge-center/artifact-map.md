@@ -5,11 +5,13 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 ## Active
 
 - [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
+- [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Verify — Sohail Ali — 2026-09-11
 
 ## Blocked
 
 ## Completed
 
+- [[T-017-summary]] — Delivery Console core: one API, MCP resources/HTTP, tracker SPI, workspace.toml, ready/claim/comment verbs — Complete — Sohail Ali — 2026-09-16
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Complete — Sohail Ali — 2026-09-10
 - [[T-014-summary]] — Model roles: a local model to talk, a capable one to work — Complete — Sohail Ali — 2026-09-08
 - [[T-013-summary]] — Voice quality: neural TTS, speech-shaped text, and a less robotic house style — Complete — Sohail Ali — 2026-09-07

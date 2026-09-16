@@ -50,7 +50,7 @@ from . import agent_backends
 from . import boards as boards_mod
 from . import procs
 from . import tickets as tickets_mod
-from .paths import find_repo_root
+from .paths import find_repo_root, resolve_rel
 
 _JOBS = {}
 _JOBS_LOCK = threading.Lock()
@@ -77,7 +77,7 @@ def house_style(repo_root):
     Everything above the `---` in the file is documentation for whoever opens
     it; only what follows is sent.
     """
-    path = os.path.join(repo_root, HOUSE_STYLE_REL)
+    path = resolve_rel(repo_root, HOUSE_STYLE_REL)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             text = fh.read()
@@ -91,7 +91,7 @@ def house_style(repo_root):
 
 
 def _jobs_cache_dir(repo_root):
-    d = os.path.join(repo_root, "console", ".cache", "agent-runs")
+    d = resolve_rel(repo_root, os.path.join("console", ".cache", "agent-runs"))
     os.makedirs(d, exist_ok=True)
     return d
 

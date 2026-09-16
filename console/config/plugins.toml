@@ -78,10 +78,18 @@ id = "vault"
 module = "features.vault_feature"
 enabled = true
 
-# T-004: one reused "Assistant" chat, typed-first — say/session/new/stream/
-# memory. No tab of its own yet (T-006 adds the palette box); the routes
-# exist so a native bridge (T-005) or a CLI (`kanban assistant say`) has
-# something to post to today.
+# T-017 FR-4/2a: MCP Streamable HTTP transport (POST request/response + GET
+# SSE for server-initiated messages), mounted on this same process/port so
+# editor MCP clients don't need a separate process. No tab — this is a
+# protocol endpoint, not a UI surface. stdio (`console/mcp_server.py`) is
+# unaffected either way.
+[[plugin]]
+id = "mcp_http"
+module = "features.mcp_http_feature"
+enabled = true
+
+# T-004/T-016: one reused Assistant chat plus the home tab (talk, Runs,
+# ticket strip). Routes also serve the native bridge and `kanban assistant say`.
 [[plugin]]
 id = "assistant"
 module = "features.assistant_feature"

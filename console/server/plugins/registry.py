@@ -16,13 +16,14 @@ import importlib
 import os
 
 from .. import tomlio
+from ..paths import resolve_rel
 from .base import PluginContext, PluginError, Router
 
 CONFIG_REL = os.path.join("console", "config", "plugins.toml")
 
 
 def _load_rows(repo_root):
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     if not os.path.isfile(path):
         raise PluginError(f"plugin registry not found: {CONFIG_REL}")
     data = tomlio.load(path)

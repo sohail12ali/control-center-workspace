@@ -36,6 +36,8 @@ import json
 import os
 import re
 
+from .paths import resolve_rel
+
 #: Where this machine's choices live. Gitignored (`console/.cache/`).
 OVERRIDE_REL = os.path.join("console", ".cache", "agents", "providers.json")
 
@@ -84,7 +86,7 @@ CUSTOM_FIELDS = ("id", "label", "base_url", "api_key_env", "models_url",
 
 
 def path(repo_root):
-    return os.path.join(repo_root, OVERRIDE_REL)
+    return resolve_rel(repo_root, OVERRIDE_REL)
 
 
 def load(repo_root):

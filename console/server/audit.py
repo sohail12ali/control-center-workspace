@@ -33,6 +33,7 @@ import threading
 from datetime import datetime, timezone
 
 from . import boards as boards_mod
+from .paths import resolve_rel
 
 DEFAULT_DIR = os.path.join("console", ".cache", "audit")
 
@@ -56,12 +57,19 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # table, and a settings file, audited the same way everything else
            # here is (BR-2).
            "assistant.say", "assistant.kickoff", "assistant.remember",
-           "assistant.settings", "assistant.persona_truncated")
+           "assistant.settings", "assistant.persona_truncated",
+           # T-017 NFR-5: every mutation from the collapsed one-api ticket-
+           # creation path (FR-2) is recorded, same as everything else here.
+           "ticket.create",
+           # T-017 NFR-5: the ready/claim/comment verbs (FR-7/8/9) — a
+           # refused claim is recorded too (outcome="error: ..."), same as
+           # `verb.run`'s own refused-run rows.
+           "ticket.claim", "ticket.comment")
 
 
 def audit_dir(repo_root):
     cfg = boards_mod.load_console_config(repo_root).get("audit", {}) or {}
-    return os.path.join(repo_root, cfg.get("dir") or DEFAULT_DIR)
+    return resolve_rel(repo_root, cfg.get("dir") or DEFAULT_DIR)
 
 
 def enabled(repo_root):

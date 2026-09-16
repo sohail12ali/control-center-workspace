@@ -47,6 +47,7 @@ from . import agent_backends
 from . import boards as boards_mod
 from . import procs
 from . import tickets as tickets_mod
+from .paths import resolve_rel
 
 #: The pre-freeze requirements chain, in the order the skills run. Named here
 #: because the order is the part people forget.
@@ -80,7 +81,7 @@ def _identity_step(repo_root):
     """Who the work logs will be attributed to. `log-work` resolves this
     itself, but a person setting up wants to know it resolved to the right
     name before a month of entries land under the wrong one."""
-    author_local = os.path.join(repo_root, "knowledge-center", "logs", "author.local")
+    author_local = resolve_rel(repo_root, os.path.join("knowledge-center", "logs", "author.local"))
     if os.path.isfile(author_local):
         try:
             with open(author_local, "r", encoding="utf-8") as f:

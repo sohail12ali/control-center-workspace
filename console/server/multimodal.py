@@ -44,6 +44,8 @@ import json
 import mimetypes
 import os
 
+from .paths import resolve_rel
+
 #: Only files under here can be attached. Not a general file-reading feature:
 #: this exists to send back a picture the shell just took.
 CAPTURE_DIR_REL = os.path.join("console", ".cache", "desktop-captures")
@@ -108,7 +110,7 @@ def resolve_capture(repo_root, rel_path):
     """
     if not rel_path:
         return None
-    base = os.path.realpath(os.path.join(repo_root, CAPTURE_DIR_REL))
+    base = os.path.realpath(resolve_rel(repo_root, CAPTURE_DIR_REL))
     candidate = os.path.realpath(os.path.join(repo_root, rel_path))
     if candidate != base and not candidate.startswith(base + os.sep):
         return None

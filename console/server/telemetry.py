@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 
 from . import boards as boards_mod
 from . import tomlio
+from .paths import resolve_rel
 
 DEFAULT_DIR = os.path.join("knowledge-center", "telemetry")
 PRICING_REL = os.path.join("console", "config", "pricing.toml")
@@ -60,7 +61,7 @@ FIELDS = ("ts", "session", "backend", "model", "mode", "ticket", "skill",
 def telemetry_dir(repo_root):
     cfg = boards_mod.load_console_config(repo_root)
     rel = cfg.get("telemetry", {}).get("dir") or DEFAULT_DIR
-    return os.path.join(repo_root, rel)
+    return resolve_rel(repo_root, rel)
 
 
 # --------------------------------------------------------------- pricing ----
@@ -69,7 +70,7 @@ def load_pricing(repo_root, force=False):
     """model id -> {input, output} in USD per million tokens."""
     if not force and repo_root in _pricing_cache:
         return _pricing_cache[repo_root]
-    path = os.path.join(repo_root, PRICING_REL)
+    path = resolve_rel(repo_root, PRICING_REL)
     table = {}
     if os.path.isfile(path):
         data = tomlio.load(path)

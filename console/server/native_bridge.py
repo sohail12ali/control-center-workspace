@@ -32,6 +32,8 @@ import os
 import urllib.error
 import urllib.request
 
+from .paths import resolve_rel
+
 BRIDGE_FILE_REL = os.path.join("console", ".cache", "desktop", "bridge.json")
 
 #: A quick fact (clipboard, window list) versus a screen capture are not the
@@ -44,7 +46,7 @@ _UNAVAILABLE_REASON = "shell not running"
 
 
 def _bridge_path(repo_root):
-    return os.path.join(repo_root, BRIDGE_FILE_REL)
+    return resolve_rel(repo_root, BRIDGE_FILE_REL)
 
 
 def _read_pointer(repo_root):

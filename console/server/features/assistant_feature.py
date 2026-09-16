@@ -27,7 +27,7 @@ import time
 
 from .. import (agent_approvals, agent_backends, agent_manager, assistant,
                 assistant_commands, assistant_config, assistant_reply, audit,
-                native_bridge, prompt_build, verbs)
+                native_bridge, prompt_build, runs as runs_mod, verbs)
 from .. import context as context_mod
 from ..httpd import EventSource
 from ..plugins.base import Plugin
@@ -45,6 +45,7 @@ PERSONA = "assistant"
 CONTEXT_DIGEST_CAP = 1_200
 CONTEXT_MEMORY_CAP = 1_500
 CONTEXT_CAPABILITIES_CAP = 500
+CONTEXT_RUNS_CAP = 800
 
 #: Fallback only — the live value comes from `assistant_config.settings`,
 #: which merges the committed defaults with this machine's choice.
@@ -128,6 +129,14 @@ def _compose_extra(repo_root, backend):
         sections.append("## Remembered\n" +
                         _cap_section(memory, CONTEXT_MEMORY_CAP, "memory"))
     sections.append("## Capabilities\n" + _capabilities_line(repo_root, backend))
+    run_lines = []
+    for rec in runs_mod.list_runs(repo_root)[:30]:
+        run_lines.append("%s %s %s %s" % (
+            rec.get("id", ""), rec.get("ticket") or "-",
+            rec.get("role") or "", rec.get("state") or ""))
+    if run_lines:
+        sections.append("## Runs\n" + _cap_section(
+            "\n".join(run_lines), CONTEXT_RUNS_CAP, "runs"))
     if assistant_config.settings(repo_root).get("speak"):
         # Only when it is actually true. A model told "this will be read aloud"
         # while nothing speaks would write for an audience that does not exist,
@@ -179,6 +188,14 @@ def _minutes_since(iso_ts):
 
 def apply(ctx):
     repo_root = ctx.repo_root
+    ctx.register_tab(
+        "assistant",
+        label="Assistant",
+        short="Talk",
+        icon="mic",
+        group="main",
+        needs_live=True,
+    )
     # Needed to reinstall the approval hook when a chat is resumed: the gate
     # is a settings file pointing at this port, and a resumed session without
     # it would run ungated.
@@ -605,10 +622,8 @@ class _LocalRequest:
 class _CaptureCtx:
     """Collects the plugin's route handlers instead of serving them.
 
-    Deliberately implements only `get`/`post` — the two things `apply` above
-    actually calls. Stubbing the rest of the plugin-ctx surface "just in
-    case" would both be dead code and quietly defeat the shipped-registry
-    test that asserts this file never mentions tab registration.
+    Implements `get`/`post` plus `register_tab` (T-016 home tab). The CLI
+    has no nav, so tab registration is ignored here.
     """
 
     def __init__(self, repo_root):
@@ -620,6 +635,9 @@ class _CaptureCtx:
 
     def post(self, pattern, fn, name):
         self.routes[name] = fn
+
+    def register_tab(self, *a, **kw):
+        pass
 
 
 def handlers(repo_root):
@@ -647,5 +665,5 @@ def call(repo_root, name, body=None, query=None):
 PLUGIN = Plugin(
     id="assistant",
     apply=apply,
-    summary="One reused Assistant chat, typed-first: say/session/new/stream/memory/settings.",
+    summary="Assistant home tab plus one reused chat: say/session/new/stream/memory/settings.",
 )

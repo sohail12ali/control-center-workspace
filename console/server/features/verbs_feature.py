@@ -11,6 +11,7 @@ state is a GET a browser will happily repeat.
 
 from .. import audit
 from .. import jobs as jobs_mod
+from .. import runs as runs_mod
 from .. import verbs as verbs_mod
 from ..plugins.base import Plugin
 
@@ -86,6 +87,13 @@ def apply(ctx):
                      target=job_id)
         return job
 
+    def runs_list(req):
+        """Watchable Run records (T-016). Read-only; listing never mutates."""
+        return {"runs": runs_mod.list_runs(
+            repo_root, ticket=req.query.get("ticket"),
+            state=req.query.get("state") or "")}
+
+    ctx.get(r"^/api/runs/?$", runs_list, "runs.list")
     ctx.get(r"^/api/verbs/?$", listing, "verbs.list")
     ctx.post(r"^/api/verbs/([A-Za-z0-9_-]+)/run/?$", run, "verbs.run")
     ctx.post(r"^/api/verbs/([A-Za-z0-9_-]+)/submit/?$", submit, "verbs.submit")

@@ -107,3 +107,65 @@ class TestFileIO:
             t.join()
 
         assert tomlio.load(path)["t"]["k"].startswith("w")
+
+
+class TestAtomicUpdate:
+    """T-017 3a-5: the read-modify-write primitive `tickets.set_claim` reuses
+    for race-safe claims — generic, so it is tested at this layer once rather
+    than only through the ticket-claim scenario that motivated it."""
+
+    def test_mutates_existing_contents(self, tmp_path):
+        path = str(tmp_path / "a.toml")
+        tomlio.atomic_write(path, {"t": {"k": "one", "n": 1}})
+
+        def bump(data):
+            data["t"]["n"] += 1
+
+        tomlio.atomic_update(path, bump)
+        assert tomlio.load(path)["t"]["n"] == 2
+
+    def test_missing_file_starts_from_empty_dict(self, tmp_path):
+        path = str(tmp_path / "new.toml")
+
+        def seed(data):
+            data["t"] = {"k": "v"}
+
+        tomlio.atomic_update(path, seed)
+        assert tomlio.load(path)["t"]["k"] == "v"
+
+    def test_a_raise_inside_mutate_writes_nothing(self, tmp_path):
+        path = str(tmp_path / "a.toml")
+        tomlio.atomic_write(path, {"t": {"k": "seed"}})
+
+        def boom(data):
+            data["t"]["k"] = "changed"
+            raise ValueError("refuse")
+
+        with pytest.raises(ValueError):
+            tomlio.atomic_update(path, boom)
+        # Nothing written, and the lock was released (no leftover .lock file).
+        assert tomlio.load(path)["t"]["k"] == "seed"
+        assert os.listdir(tmp_path) == ["a.toml"]
+
+    def test_concurrent_updates_do_not_corrupt_or_lose_writes(self, tmp_path):
+        """A read-modify-write increment under real concurrency: if the
+        read-then-write pair were not lock-guarded end to end, some
+        increments would be lost. This is exactly the shape of the claim
+        race the primitive was built to close."""
+        path = str(tmp_path / "counter.toml")
+        tomlio.atomic_write(path, {"t": {"n": 0}})
+
+        def bump(data):
+            data["t"]["n"] += 1
+
+        def worker():
+            for _ in range(15):
+                tomlio.atomic_update(path, bump)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert tomlio.load(path)["t"]["n"] == 60

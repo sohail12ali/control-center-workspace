@@ -18,15 +18,24 @@ from . import agent_manager
 from . import assistant as assistant_mod
 from . import assistant_config
 from . import assistant_reply
+from . import audit
 from . import context as context_mod
 from . import harness_lint
 from . import kickoff as kickoff_mod
 from . import model_catalog
 from . import native_bridge
+from . import runs as runs_mod
 from . import telemetry as telemetry_mod
 from . import tickets as tickets_mod
 from . import todos_agg
 from . import trackers as trackers_mod
+# Backend SPI (T-017 FR-5, decision-log a4). `ticket_move` (2b-4) is the one
+# pre-existing mutating verb this phase rewires through it; `ready`/`claim`/
+# `comment` get their own verb handlers in Phase 3, calling the same
+# `backends_mod.default_backend()` singleton (`VaultBackend`, the only
+# adapter — 2b-3).
+from . import backends as backends_mod
+from . import bus as bus_mod
 
 
 def ticket_context(repo_root, ticket=None):
@@ -206,6 +215,10 @@ def delegate(repo_root, ticket=None, task=""):
     answer = {"ok": True, "chat": snap["id"], "backend": backend_id,
               "model": snap.get("model") or "(backend default)",
               "status": "started — the result will be reported back here"}
+    run = runs_mod.create(
+        repo_root, ticket=ticket or "", role="work", executor="chat",
+        executor_id=snap["id"], backend=backend_id, state="running")
+    answer["run"] = run["id"]
     if skipped:
         # Which local runtime was passed over, and why. Without this, work
         # landing on a hosted agent when a local one was meant to take it is
@@ -283,6 +296,155 @@ def desktop_clipboard_read(repo_root, ticket=None):
     allow-for-this-chat.
     """
     return native_bridge.clipboard_read(repo_root)
+
+
+def launch_role(repo_root, ticket=None, role=""):
+    """Start a harness persona as a console `cursor-agent` chat (T-016 FR-6).
+
+    Missing binary fails named. Never falls through to `claude`.
+    """
+    role = (role or "").strip()
+    if role not in runs_mod.ROLES or role in ("work", "assistant"):
+        return {"ok": False, "error":
+                "role must be one of analyst, planner, builder, verifier, "
+                "fixer, harness, deployer"}
+    try:
+        backend = agent_backends.get(repo_root, "cursor-agent")
+    except ValueError as exc:
+        return {"ok": False, "error":
+                "%s I have not fallen through to another backend." % exc}
+    if not backend.installed:
+        return {"ok": False, "error":
+                "%s I have not fallen through to another backend."
+                % backend.unavailable_reason}
+    port = agent_manager.server_port()
+    task = ("You are the %s for ticket %s. Follow that agent's protocol. "
+            "Call console_context first." % (role, ticket))
+    try:
+        snap = agent_manager.create(
+            repo_root, "cursor-agent", task,
+            title="%s: %s" % (role, ticket),
+            persona=role, ticket=ticket or "", server_port=port)
+    except (ValueError, RuntimeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    run = runs_mod.create(
+        repo_root, ticket=ticket or "", role=role, executor="chat",
+        executor_id=snap["id"], backend="cursor-agent", state="running")
+    return {"ok": True, "run": run["id"], "chat": snap["id"],
+            "backend": "cursor-agent", "role": role}
+
+
+def run_list(repo_root, ticket=None, state=""):
+    """List Run records, optionally filtered by ticket or state."""
+    rows = runs_mod.list_runs(repo_root, ticket=ticket, state=state)
+    return {"runs": rows, "count": len(rows)}
+
+
+def run_show(repo_root, ticket=None, run_id=""):
+    """One Run by id."""
+    rec = runs_mod.get(repo_root, run_id)
+    if rec is None:
+        return {"ok": False, "error": "no run %s" % run_id}
+    return rec
+
+
+def ticket_move(repo_root, ticket=None, stage=""):
+    """Move a ticket to a board lane, through the Backend SPI (T-017 FR-5,
+    2b-4) rather than calling `tickets.move` directly — invalid lanes still
+    fail there, `VaultBackend.move` is a thin passthrough. Publishes to the
+    MCP change-notification bus (T-017 FR-3/1e-4) so a session subscribed to
+    `ticket://{ticket}` learns of the move — the one existing mutating verb
+    this phase wires in; the new `ready`/`claim`/`comment` verbs land in
+    Phase 3 and will publish the same way."""
+    result = backends_mod.default_backend().move(repo_root, ticket, stage)
+    bus_mod.default().publish("ticket://%s" % ticket)
+    return result
+
+
+def ticket_ready(repo_root, ticket=None, kind=None, stage=None, owner=None):
+    """Unblocked, unclaimed tickets (T-017 FR-7, decision-log a6). `ticket`
+    is accepted-but-unused: `ready` is a workspace-wide query, not scoped to
+    one ticket, but every verb handler shares the `(repo_root, ticket=None,
+    **args)` signature `verbs.run` dispatches against. Reuses the Backend
+    SPI's `ready` (2b-2), which itself reuses `trackers.blockers` (a6) — no
+    second blocking-logic engine. An empty result is a plain empty list, not
+    an error (Edge Case §8)."""
+    items = backends_mod.default_backend().ready(repo_root, kind=kind,
+                                                  stage=stage, owner=owner)
+    return {"count": len(items), "tickets": items}
+
+
+def ticket_claim(repo_root, ticket=None, agent=""):
+    """Claim a ticket for an agent identity (T-017 FR-8). Delegates to the
+    Backend SPI's `claim`, which is `tickets.set_claim` underneath —
+    race-safe (3a-5) via one lock-guarded read-modify-write, so two
+    concurrent claims by different identities cannot both succeed. A
+    conflicting claim is reported back by name, not silently overwritten
+    (Edge Case §8); re-claiming with the same identity is a no-op success
+    that refreshes `claimed_at` (3a-6). Audited either way (NFR-5) and
+    published to the MCP change-notification bus on success, same pattern as
+    `ticket_move`."""
+    agent = (agent or "").strip()
+    if not agent:
+        return {"ok": False, "error": "claim needs an agent identity — pass agent=<id>"}
+    try:
+        result = backends_mod.default_backend().claim(repo_root, ticket, agent)
+    except tickets_mod.ClaimConflictError as exc:
+        audit.record(repo_root, "ticket.claim", target=ticket,
+                     detail={"agent": agent}, outcome="error: %s" % exc)
+        return {"ok": False, "error": str(exc)}
+    audit.record(repo_root, "ticket.claim", target=ticket, detail={"agent": agent})
+    bus_mod.default().publish("ticket://%s" % ticket)
+    return {"ok": True, "ticket": result}
+
+
+def ticket_comment(repo_root, ticket=None, text="", author=""):
+    """Append an attributed, timestamped, non-blocking comment (T-017 FR-9)
+    via the Backend SPI's `comment` → the `comments` tracker kind
+    (decision-log a2, `trackers.add` already stamps `author`/`posted_on`).
+    Audited (NFR-5) and published to the MCP change-notification bus, same
+    pattern as `ticket_move`/`ticket_claim`."""
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "error": "comment needs text"}
+    extra = {"author": author} if author else {}
+    item = backends_mod.default_backend().comment(repo_root, ticket, text, **extra)
+    audit.record(repo_root, "ticket.comment", target=ticket,
+                 detail={"author": item.get("author", "")})
+    bus_mod.default().publish("ticket://%s" % ticket)
+    return item
+
+
+def ticket_set(repo_root, ticket=None, field="", value=""):
+    """Set one editable ticket.toml field. Writer is `tickets.set_field`."""
+    return tickets_mod.set_field(repo_root, ticket, field, value)
+
+
+def tracker_add(repo_root, ticket=None, kind="", text="", type="", priority=""):
+    """Add a questions/bugs/todos item. Extra fields stay optional so the
+    schema MCP derives from this signature stays small."""
+    extra = {}
+    if type:
+        extra["type"] = type
+    if priority:
+        extra["priority"] = priority
+    return trackers_mod.add(repo_root, ticket, kind, text, **extra)
+
+
+def tracker_update(repo_root, ticket=None, kind="", item_id="", status="",
+                   answer="", priority="", type=""):
+    """Patch a tracker item. Empty strings are omitted so a call that only
+    sets status does not blank the answer."""
+    fields = {}
+    if status:
+        fields["status"] = status
+    if answer:
+        fields["answer"] = answer
+    if priority:
+        fields["priority"] = priority
+    if type:
+        fields["type"] = type
+    return trackers_mod.update(repo_root, ticket, kind, item_id, **fields)
 
 
 def desktop_clipboard_write(repo_root, ticket=None, text=""):

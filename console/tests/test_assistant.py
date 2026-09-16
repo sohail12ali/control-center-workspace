@@ -423,8 +423,8 @@ def routes(repo, monkeypatch, fake_manager):
         def post(self, pattern, fn, name):
             out[("POST", name)] = fn
 
-        def register_tab(self, *a, **kw):
-            raise AssertionError("no tab yet — T-006 adds one")
+        def register_tab(self, tab_id, **kw):
+            pass
 
         def provide(self, *a, **kw):
             pass
@@ -453,12 +453,24 @@ class TestInjectedContext:
         assert "## Open tickets" in extra
         assert "## Remembered" in extra and "the sky is blue" in extra
         assert "## Capabilities" in extra
+        assert "## Runs" not in extra
 
     def test_no_memory_section_when_nothing_was_remembered(self, repo, monkeypatch):
         monkeypatch.setattr(agent_backends.shutil, "which", lambda cmd: "/usr/bin/" + cmd)
         backend = agent_backends.get(repo, "alpha")
         extra = assistant_feature._compose_extra(repo, backend)
         assert "## Remembered" not in extra
+
+    def test_runs_section_names_id_and_state(self, repo, monkeypatch):
+        from server import runs
+        monkeypatch.setattr(agent_backends.shutil, "which", lambda cmd: "/usr/bin/" + cmd)
+        rec = runs.create(repo, ticket="T-001", role="work", executor="chat",
+                          executor_id="c1")
+        backend = agent_backends.get(repo, "alpha")
+        extra = assistant_feature._compose_extra(repo, backend)
+        assert "## Runs" in extra
+        assert rec["id"] in extra
+        assert "running" in extra
 
     def test_an_oversized_section_is_capped_with_a_stated_marker(self):
         capped = assistant_feature._cap_section("x" * 2000, 1200, "tickets digest")

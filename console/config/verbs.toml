@@ -90,6 +90,87 @@ label = "Agent models"
 hint = "Cached model catalogue per API provider; pass backend=<id> refresh=1 to re-fetch"
 handler = "verb_handlers.agent_models"
 
+# T-016: pipeline mutations agents currently shell `kanban.py` for. Same
+# writers as the CLI (`tickets.move` / `set_field`, `trackers.add` / `update`).
+# `needs_confirm` is the stray-click guard; lane validation stays in `tickets.move`.
+[[verb]]
+id = "launch-role"
+label = "Launch a harness role"
+hint = "Start analyst/planner/builder/verifier/fixer/harness/deployer as a cursor-agent chat Run"
+handler = "verb_handlers.launch_role"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "run-list"
+label = "List runs"
+hint = "Watchable work records; pass state= to filter"
+handler = "verb_handlers.run_list"
+
+[[verb]]
+id = "run-show"
+label = "Show a run"
+hint = "One Run by run_id"
+handler = "verb_handlers.run_show"
+
+[[verb]]
+id = "ticket-move"
+label = "Move ticket lane"
+hint = "Set the board lane (open, in-progress, blocked, verify, done)"
+handler = "verb_handlers.ticket_move"
+needs_ticket = true
+needs_confirm = true
+
+# T-017 FR-7/FR-8/FR-9: ready/claim/comment share the vault backend registered
+# by `backends.default_backend()` (2b-3) — reached identically via CLI
+# (`kanban.py verb run`), MCP, and HTTP because they are ordinary verbs, not a
+# separate surface (one-api, decision-log a4).
+[[verb]]
+id = "ready"
+label = "Ready tickets"
+hint = "Unblocked, unclaimed tickets across the board; pass kind=/stage=/owner= to filter"
+handler = "verb_handlers.ticket_ready"
+
+[[verb]]
+id = "claim"
+label = "Claim ticket"
+hint = "Set claimed_by/claimed_at for an agent identity (pass agent=<id>); refuses a conflicting claim by name"
+handler = "verb_handlers.ticket_claim"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "comment"
+label = "Add comment"
+hint = "Append an attributed, timestamped comment (pass text=, optional author=); never blocks release"
+handler = "verb_handlers.ticket_comment"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "ticket-set"
+label = "Set ticket field"
+hint = "Set title, owner, priority, status, url, tags, links, or scripts_dir"
+handler = "verb_handlers.ticket_set"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "tracker-add"
+label = "Add tracker item"
+hint = "Add a questions, bugs, or todos item on this ticket"
+handler = "verb_handlers.tracker_add"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "tracker-update"
+label = "Update tracker item"
+hint = "Change status/answer/priority/type on a questions, bugs, or todos item"
+handler = "verb_handlers.tracker_update"
+needs_ticket = true
+needs_confirm = true
+
 # T-004: the Assistant's own verbs. `kickoff` mutates the vault (a new ticket
 # directory, artifact-map row) — needs_confirm so a stray click or a
 # hallucinated tool call cannot trigger it (BR-5's own paragraph on this).

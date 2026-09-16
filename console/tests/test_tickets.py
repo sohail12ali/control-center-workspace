@@ -3,6 +3,7 @@ cases here are mostly about what must be *refused*: a bad id, a lane that
 doesn't exist on that board, an edit to an identity field."""
 
 import os
+import threading
 
 import pytest
 
@@ -105,6 +106,90 @@ class TestEdit:
         with pytest.raises(ValueError):
             tickets.patch(repo, "CC-T001", {"owner": "Alex", "id": "OTHER"})
         assert tickets.load(repo, "CC-T001")["owner"] == "Sam"
+
+
+class TestClaim:
+    """T-017 FR-8 / decision-log a3: `claimed_by`/`claimed_at` are a distinct
+    field pair from `owner`, set only through `set_claim`."""
+
+    def test_created_ticket_starts_unclaimed(self, repo):
+        t = _create(repo, owner="Sam")
+        assert t["claimed_by"] == "" and t["claimed_at"] == ""
+
+    def test_set_claim_sets_both_fields(self, repo):
+        _create(repo)
+        out = tickets.set_claim(repo, "CC-T001", "agent-1", "2026-09-16T00:00:00Z")
+        assert out["claimed_by"] == "agent-1"
+        assert out["claimed_at"] == "2026-09-16T00:00:00Z"
+
+    def test_set_claim_leaves_owner_untouched(self, repo):
+        _create(repo, owner="Sam")
+        out = tickets.set_claim(repo, "CC-T001", "agent-1", "2026-09-16T00:00:00Z")
+        assert out["owner"] == "Sam"
+
+    def test_empty_claimed_by_releases_the_claim(self, repo):
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", "2026-09-16T00:00:00Z")
+        out = tickets.set_claim(repo, "CC-T001", "")
+        assert out["claimed_by"] == "" and out["claimed_at"] == ""
+
+    def test_an_older_ticket_toml_without_claim_fields_still_loads(self, repo):
+        _create(repo)
+        path = os.path.join(repo, "knowledge-center", "artifacts", "CC-T001", "ticket.toml")
+        data = tomlio.load(path)
+        del data["ticket"]["claimed_by"]
+        del data["ticket"]["claimed_at"]
+        tomlio.atomic_write(path, data)
+        t = tickets.load(repo, "CC-T001")
+        assert t["claimed_by"] == "" and t["claimed_at"] == ""
+
+    def test_conflicting_claim_is_refused_by_name(self, repo):
+        """3a-5: a second identity claiming an already-claimed ticket is
+        refused, not silently overwritten."""
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1")
+        with pytest.raises(tickets.ClaimConflictError) as exc:
+            tickets.set_claim(repo, "CC-T001", "agent-2")
+        assert "agent-1" in str(exc.value)
+        # The original claim is untouched, not half-overwritten.
+        assert tickets.load(repo, "CC-T001")["claimed_by"] == "agent-1"
+
+    def test_reclaim_by_same_identity_is_a_no_op_success(self, repo):
+        """3a-6: re-claiming by the identity that already holds it does not
+        error, and refreshes claimed_at."""
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", "2026-09-16T00:00:00Z")
+        out = tickets.set_claim(repo, "CC-T001", "agent-1", "2026-09-16T01:00:00Z")
+        assert out["claimed_by"] == "agent-1"
+        assert out["claimed_at"] == "2026-09-16T01:00:00Z"
+
+    def test_concurrent_claims_by_different_identities_exactly_one_succeeds(self, repo):
+        """3a-5/3a-8: race-safety under real concurrent calls, not just a
+        sequential check — two threads hammer the same unclaimed ticket with
+        different identities; exactly one must win and the other must see
+        ClaimConflictError, deterministically, every run."""
+        _create(repo)
+        n = 8
+        results = [None] * n
+
+        def _try_claim(i):
+            try:
+                tickets.set_claim(repo, "CC-T001", "agent-%d" % i)
+                results[i] = "ok"
+            except tickets.ClaimConflictError:
+                results[i] = "conflict"
+
+        threads = [threading.Thread(target=_try_claim, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert results.count("ok") == 1
+        assert results.count("conflict") == n - 1
+        final = tickets.load(repo, "CC-T001")
+        winner = "agent-%d" % results.index("ok")
+        assert final["claimed_by"] == winner
 
 
 class TestList:

@@ -8,14 +8,14 @@ console/config/, so a fork edits config, not code.
 import os
 
 from . import tomlio
-from .paths import find_repo_root
+from .paths import console_dir, find_repo_root
 
 _console_cache = {}
 _board_cache = {}
 
 
 def _config_dir(repo_root):
-    return os.path.join(repo_root, "console", "config")
+    return os.path.join(console_dir(repo_root), "config")
 
 
 def load_console_config(repo_root=None):

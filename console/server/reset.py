@@ -8,6 +8,8 @@ callers must pass apply=True to actually delete/rewrite anything.
 import os
 import shutil
 
+from .paths import console_dir, vault_dir
+
 ARTIFACT_MAP_HEADER = """# Artifact Map
 
 Index of all work artifacts. One row per ticket. Update when artifacts are created, change status, or close.
@@ -44,7 +46,7 @@ def plan(repo_root, *, keep_logs=False, keep_investigations=False):
     """Build the list of (kind, path) actions a reset would take. Never touches disk."""
     actions = []
 
-    artifacts_dir = os.path.join(repo_root, "knowledge-center", "artifacts")
+    artifacts_dir = os.path.join(vault_dir(repo_root), "artifacts")
     if os.path.isdir(artifacts_dir):
         for name in sorted(os.listdir(artifacts_dir)):
             if name in ("_template", "_shared"):
@@ -57,12 +59,12 @@ def plan(repo_root, *, keep_logs=False, keep_investigations=False):
     if os.path.isfile(shared_todos):
         actions.append(("write", shared_todos))
 
-    artifact_map = os.path.join(repo_root, "knowledge-center", "artifact-map.md")
+    artifact_map = os.path.join(vault_dir(repo_root), "artifact-map.md")
     if os.path.isfile(artifact_map):
         actions.append(("write", artifact_map))
 
     if not keep_investigations:
-        inv_dir = os.path.join(repo_root, "knowledge-center", "investigations")
+        inv_dir = os.path.join(vault_dir(repo_root), "investigations")
         if os.path.isdir(inv_dir):
             for name in sorted(os.listdir(inv_dir)):
                 full = os.path.join(inv_dir, name)
@@ -70,7 +72,7 @@ def plan(repo_root, *, keep_logs=False, keep_investigations=False):
                     actions.append(("rmtree", full))
 
     if not keep_logs:
-        logs_dir = os.path.join(repo_root, "knowledge-center", "logs")
+        logs_dir = os.path.join(vault_dir(repo_root), "logs")
         if os.path.isdir(logs_dir):
             for name in sorted(os.listdir(logs_dir)):
                 if name == "author.local":
@@ -79,13 +81,13 @@ def plan(repo_root, *, keep_logs=False, keep_investigations=False):
                 if os.path.isdir(full):
                     actions.append(("rmtree", full))
 
-    telemetry_dir = os.path.join(repo_root, "knowledge-center", "telemetry")
+    telemetry_dir = os.path.join(vault_dir(repo_root), "telemetry")
     if os.path.isdir(telemetry_dir):
         for name in sorted(os.listdir(telemetry_dir)):
             if name.endswith(".jsonl"):
                 actions.append(("remove", os.path.join(telemetry_dir, name)))
 
-    cache_dir = os.path.join(repo_root, "console", ".cache")
+    cache_dir = os.path.join(console_dir(repo_root), ".cache")
     if os.path.isdir(cache_dir):
         for name in sorted(os.listdir(cache_dir)):
             full = os.path.join(cache_dir, name)

@@ -16,9 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime  # noqa: E402
 
-from server import agent_backends, provider_overrides, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
+from server import agent_backends, provider_overrides, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, kickoff as kickoff_mod, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
+from server import stop_hook as stop_hook_mod  # noqa: E402
+from server import setup_editor as setup_editor_mod  # noqa: E402
 from server.features import assistant_feature  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
 
@@ -39,11 +41,16 @@ def _parse_kv(pairs):
 
 
 def cmd_ticket_create(args, repo_root):
-    ticket = tickets.create(
-        repo_root, args.id, args.title, kind=args.kind, owner=args.owner or "",
-        priority=args.priority, url=args.url or ""
-    )
-    print(json.dumps(ticket, indent=2))
+    """The one ticket-creation path (T-017 FR-2, decision-log a1): this and
+    `verb run kickoff` both land on `kickoff.create_ticket`, so `ticket
+    create` produces the same 3 artifacts (ticket.toml, rendered templates,
+    artifact-map row) a human running the `kickoff` skill by hand would —
+    never a thin `tickets.create`-only wrapper (the collapsed bare-TOML path,
+    a pre-T-017 shortcut, is no longer reachable as a public CLI action)."""
+    result = kickoff_mod.create_ticket(
+        repo_root, args.title, ticket_id=args.id, kind=args.kind,
+        owner=args.owner or "", priority=args.priority, url=args.url or "")
+    print(json.dumps(result, indent=2))
 
 
 def cmd_ticket_list(args, repo_root):
@@ -197,17 +204,31 @@ def cmd_notify_who(args, repo_root):
         _die(detail)
 
     listed = telegram_bot.allowed_users(repo_root)
+    allow_all = telegram_bot.allow_all(repo_root)
+    rows = []
+    for update in (result or []):
+        uid, name = telegram_bot.identity(update)
+        ok, why = telegram_bot.authorize(repo_root, uid)
+        rows.append({"id": uid, "name": name or "", "allowed": ok,
+                     "reason": "" if ok else why})
+
+    if args.json:
+        print(json.dumps({"allowlist": sorted(listed), "allow_all": allow_all,
+                          "updates": rows}, indent=2))
+        if not result:
+            sys.exit(1)
+        return
+
     print("allowlist: %s" % (", ".join(sorted(listed)) if listed
                              else "EMPTY — the bot answers nobody"))
-    if telegram_bot.allow_all(repo_root):
+    if allow_all:
         print("allow-all: ON — anyone who finds this bot can drive it")
     if not result:
         _die("no pending updates — send the bot a message, then re-run.")
-    for update in result:
-        uid, name = telegram_bot.identity(update)
-        ok, why = telegram_bot.authorize(repo_root, uid)
-        print("%-16s %-20s %s" % (uid, name or "-",
-                                  "ALLOWED" if ok else "denied (%s)" % why))
+    for row in rows:
+        print("%-16s %-20s %s" % (row["id"], row["name"] or "-",
+                                  "ALLOWED" if row["allowed"]
+                                  else "denied (%s)" % row["reason"]))
 
 
 def cmd_notify_chat_id(args, repo_root):
@@ -562,28 +583,54 @@ def cmd_serve(args, repo_root):
 
 def cmd_export(args, repo_root):
     path = export.export_static(repo_root, args.out)
+    if args.json:
+        print(json.dumps({"out": path}, indent=2))
+        return
     print(f"exported to {path}")
 
 
 def cmd_reset(args, repo_root):
     actions = reset_mod.plan(repo_root, keep_logs=args.keep_logs, keep_investigations=args.keep_investigations)
+    rel = [{"action": {"rmtree": "delete", "remove": "delete", "write": "reset"}[kind],
+           "path": os.path.relpath(path, repo_root)} for kind, path in actions]
+
     if not actions:
-        print("reset: nothing to do — already a clean slate")
+        if args.json:
+            print(json.dumps({"status": "clean", "actions": []}, indent=2))
+        else:
+            print("reset: nothing to do — already a clean slate")
         return
-    print("reset would:")
-    for kind, path in actions:
-        verb = {"rmtree": "delete", "remove": "delete", "write": "reset"}[kind]
-        print(f"  {verb}  {os.path.relpath(path, repo_root)}")
+
     if args.dry_run:
-        print("\ndry run - nothing changed. Re-run with --yes to apply.")
+        if args.json:
+            print(json.dumps({"status": "dry-run", "actions": rel}, indent=2))
+        else:
+            print("reset would:")
+            for row in rel:
+                print(f"  {row['action']}  {row['path']}")
+            print("\ndry run - nothing changed. Re-run with --yes to apply.")
         return
+
     if not args.yes:
+        # `--json` is for machine callers; an interactive `input()` prompt has
+        # nowhere to render for one, so `--json` without `--yes`/`--dry-run`
+        # is refused by name rather than hanging on stdin.
+        if args.json:
+            _die("reset --json needs --yes or --dry-run — an interactive "
+                 "confirmation prompt has no machine-readable form")
+        print("reset would:")
+        for row in rel:
+            print(f"  {row['action']}  {row['path']}")
         reply = input(f"\nThis deletes {len(actions)} path(s) and cannot be undone. Type 'reset' to continue: ")
         if reply.strip() != "reset":
             print("aborted")
             return
+
     reset_mod.run(repo_root, apply=True, keep_logs=args.keep_logs, keep_investigations=args.keep_investigations)
-    print(f"\ndone - {len(actions)} path(s) reset.")
+    if args.json:
+        print(json.dumps({"status": "done", "actions": rel, "count": len(actions)}, indent=2))
+    else:
+        print(f"\ndone - {len(actions)} path(s) reset.")
 
 
 def cmd_refresh(args, repo_root):
@@ -598,6 +645,40 @@ def cmd_refresh(args, repo_root):
         return
     if not args.quiet:
         print("console: refreshed")
+
+
+def cmd_stop_hook_check(args, repo_root):
+    """Session stop-hook (T-017 FR-10): remind an agent about a claimed
+    ticket it hasn't updated since claiming it. Never crashes session end —
+    any failure resolving identity or reading tickets is reported (JSON) or
+    swallowed (plain), same never-fatal contract as `cmd_refresh`."""
+    try:
+        agent = stop_hook_mod.resolve_agent(repo_root, args.agent or "")
+        stale = stop_hook_mod.stale_claims(repo_root, agent)
+    except Exception as exc:  # noqa: BLE001 - a stop-hook must never crash a session
+        if args.json:
+            print(json.dumps({"agent": "", "stale": [], "error": str(exc)}, indent=2))
+        else:
+            print(f"stop-hook check skipped: {exc}", file=sys.stderr)
+        return
+    if args.json:
+        print(json.dumps({"agent": agent, "stale": stale}, indent=2))
+        return
+    reminder = stop_hook_mod.format_reminder(stale)
+    if reminder:
+        print(reminder)
+
+
+def cmd_setup(args, repo_root):
+    """`console setup cursor|claude|vscode` (T-017 FR-11)."""
+    result = setup_editor_mod.setup_editor(repo_root, args.editor)
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    print("%s: MCP config -> %s (%s); AGENTS.md %s" % (
+        result["editor"], result["mcp_config"],
+        "written" if result["mcp_changed"] else "already up to date",
+        "updated" if result["agents_changed"] else "already up to date"))
 
 
 def build_parser():
@@ -788,6 +869,7 @@ def build_parser():
 
     p = sub.add_parser("export")
     p.add_argument("--out", required=True)
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("reset", help="wipe tickets/investigations/logs/telemetry back to an empty template")
@@ -795,11 +877,24 @@ def build_parser():
     p.add_argument("--dry-run", action="store_true", help="print the plan and exit without changing anything")
     p.add_argument("--keep-logs", action="store_true", help="keep knowledge-center/logs/ daily logs")
     p.add_argument("--keep-investigations", action="store_true", help="keep knowledge-center/investigations/")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_reset)
 
     p = sub.add_parser("refresh")
     p.add_argument("--quiet", action="store_true")
     p.set_defaults(func=cmd_refresh)
+
+    stop_hook = sub.add_parser("stop-hook", help="session stop-hook checks (T-017 FR-10)")
+    stop_hook_sub = stop_hook.add_subparsers(dest="stop_hook_cmd", required=True)
+    p = stop_hook_sub.add_parser("check", help="remind about a claimed-but-stale ticket before session end")
+    p.add_argument("--agent", help="override the identity to check (defaults to knowledge-center/logs/author.local's slug)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_stop_hook_check)
+
+    p = sub.add_parser("setup", help="write MCP client config + AGENTS.md snippet for an editor (T-017 FR-11)")
+    p.add_argument("editor", choices=list(setup_editor_mod.EDITORS))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_setup)
 
     verb = sub.add_parser("verb", help="deterministic jobs that run without a model")
     verb_sub = verb.add_subparsers(dest="verb_cmd", required=True)
@@ -835,6 +930,7 @@ def build_parser():
     p.add_argument("--text")
     p.set_defaults(func=cmd_notify_test)
     p = noti_sub.add_parser("who", help="who may drive the bot (dry run)")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_notify_who)
 
     sched = sub.add_parser("schedule", help="cron-driven verbs (the console is the clock)")
@@ -941,9 +1037,12 @@ def main(argv=None):
     dotenv.load(repo_root)
     try:
         args.func(args, repo_root)
-    except (FileNotFoundError, FileExistsError, ValueError, KeyError, TimeoutError) as exc:
+    except (FileNotFoundError, FileExistsError, ValueError, KeyError, TimeoutError,
+           kickoff_mod.PowerShellUnavailable) as exc:
         # VerbError subclasses ValueError, so a failed gate reports as a clean
-        # one-line error rather than a traceback.
+        # one-line error rather than a traceback. `PowerShellUnavailable` is a
+        # `RuntimeError` (T-017 FR-2/a1) — every ticket-creation entry point
+        # now shares this dependency, so the CLI must name it cleanly too.
         _die(str(exc))
 
 

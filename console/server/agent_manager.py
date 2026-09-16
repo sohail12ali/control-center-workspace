@@ -22,6 +22,7 @@ import time
 
 from . import agent_approvals, agent_backends, agent_session
 from .agent_events import replay_file
+from .paths import resolve_rel
 
 
 def _now():
@@ -34,7 +35,7 @@ _lock = threading.Lock()
 
 
 def chats_dir(repo_root):
-    d = os.path.join(repo_root, CHATS_REL)
+    d = resolve_rel(repo_root, CHATS_REL)
     os.makedirs(d, exist_ok=True)
     return d
 

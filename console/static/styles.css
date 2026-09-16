@@ -602,6 +602,11 @@ main#view.flush { padding: 0; }
   align-items: start;
   max-width: 1500px; margin-inline: auto;
 }
+
+.as-home { max-width: 1500px; }
+.as-talk { display: flex; gap: 8px; align-items: flex-end; }
+.as-talk textarea { flex: 1; min-height: 72px; padding-right: 8px; }
+.as-log { max-height: 240px; overflow: auto; margin-top: 8px; }
 .grid .span2 { grid-column: span 2; }
 .grid .span3 { grid-column: span 3; }
 
@@ -1119,7 +1124,11 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 .ct-autoread input { width: auto; margin: 0; }
 .ct-inputrow { display: flex; gap: 8px; align-items: flex-end; }
 .ct-input { min-height: 40px; max-height: 34vh; resize: vertical; }
-.ct-go { flex: none; align-self: stretch; }
+.btn.iconly.ct-go, .btn.iconly.as-send {
+  flex: none; align-self: flex-end;
+  width: 36px; height: 36px; padding: 0;
+}
+.btn.iconly.ct-go svg.ico, .btn.iconly.as-send svg.ico { width: 16px; height: 16px; }
 .ct-dead {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
   font-size: 12.5px; color: var(--ink-3);

@@ -29,6 +29,8 @@ transcript that the other half was dropped.
 import os
 import re
 
+from .paths import resolve_rel
+
 DEFAULT_BUDGET = 24_000  # characters, ~6k tokens
 
 #: T-004's persona cap (BR-7): ≤4,000 chars, truncated+stated when over, never
@@ -84,7 +86,7 @@ def persona_text(repo_root, persona):
     """
     if not persona:
         return ""
-    console_owned = os.path.join(repo_root, PERSONA_ROOT_REL, "%s.md" % persona)
+    console_owned = os.path.join(resolve_rel(repo_root, PERSONA_ROOT_REL), "%s.md" % persona)
     if os.path.isfile(console_owned):
         text = _strip_frontmatter(_read(console_owned))
     else:

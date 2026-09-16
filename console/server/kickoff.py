@@ -22,9 +22,10 @@ import shutil
 import subprocess
 from datetime import date
 
+from . import audit as audit_mod
 from . import procs
 from . import tickets as tickets_mod
-from .paths import find_repo_root
+from .paths import find_repo_root, resolve_rel
 
 TEMPLATE_DIR_REL = os.path.join("knowledge-center", "artifacts", "_template")
 ARTIFACT_MAP_REL = os.path.join("knowledge-center", "artifact-map.md")
@@ -50,7 +51,7 @@ def next_ticket_id(repo_root, prefix=DEFAULT_PREFIX):
     """The next unused `{prefix}{NNN}` id, scanning existing ticket dirs
     under `knowledge-center/artifacts/`. Zero dirs matching the prefix ->
     `{prefix}001`."""
-    data_root = os.path.join(repo_root, "knowledge-center", "artifacts")
+    data_root = resolve_rel(repo_root, os.path.join("knowledge-center", "artifacts"))
     highest = 0
     if os.path.isdir(data_root):
         pattern = re.compile(r"^%s(\d+)$" % re.escape(prefix))
@@ -86,7 +87,7 @@ def _render_templates(repo_root, ticket_id, title, *, runner=None):
                 % ticket_id)
     else:
         exe = _powershell_exe() or "powershell"
-    template_dir = os.path.join(repo_root, TEMPLATE_DIR_REL)
+    template_dir = resolve_rel(repo_root, TEMPLATE_DIR_REL)
     script = os.path.join(repo_root, RENDER_SCRIPT_REL)
     target_dir = tickets_mod.dir_for(repo_root, ticket_id)
     run = runner or subprocess.run
@@ -147,7 +148,7 @@ def _insert_under_active(text, row):
 
 
 def _append_artifact_map_row(repo_root, ticket_id, title, owner):
-    path = os.path.join(repo_root, ARTIFACT_MAP_REL)
+    path = resolve_rel(repo_root, ARTIFACT_MAP_REL)
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
     row = "- [[%s-summary]] — %s — Open — %s — %s" % (
@@ -157,7 +158,8 @@ def _append_artifact_map_row(repo_root, ticket_id, title, owner):
     return row
 
 
-def create_ticket(repo_root, title, *, kind="tickets", owner="",
+def create_ticket(repo_root, title, *, ticket_id=None, kind="tickets", owner="",
+                  priority=tickets_mod.DEFAULT_PRIORITY, url="",
                   prefix=DEFAULT_PREFIX, runner=None):
     """The verb's real work — the kickoff skill's 3 steps, in order.
 
@@ -165,15 +167,27 @@ def create_ticket(repo_root, title, *, kind="tickets", owner="",
     appended) leaves the ticket.toml already created — the same state a
     human running the skill by hand would be in if a step failed midway;
     this does not attempt a rollback the skill itself doesn't have either.
+
+    `ticket_id`, when given, is used as-is instead of allocating the next
+    free one (T-017 FR-2): this is what lets `kanban.py ticket create ID
+    --title T` and `verb run kickoff` share this one path — the CLI names an
+    id explicitly, the verb allocates one. `tickets_mod.create` still
+    validates and refuses a duplicate/malformed id either way.
     """
     repo_root = repo_root or find_repo_root()
     title = (title or "").strip()
     if not title:
         raise ValueError("kickoff needs a title")
 
-    ticket_id = next_ticket_id(repo_root, prefix=prefix)
-    ticket = tickets_mod.create(repo_root, ticket_id, title, kind=kind, owner=owner)
+    ticket_id = ticket_id or next_ticket_id(repo_root, prefix=prefix)
+    ticket = tickets_mod.create(repo_root, ticket_id, title, kind=kind,
+                                owner=owner, priority=priority, url=url)
     rendered = _render_templates(repo_root, ticket_id, title, runner=runner)
     row = _append_artifact_map_row(repo_root, ticket_id, title, owner)
+    # T-017 NFR-5: audited once here, at the one collapsed path, rather than
+    # separately in each caller (`ticket create`, `verb run kickoff`, MCP,
+    # HTTP) — one mutation, one audit line, regardless of entry point.
+    audit_mod.record(repo_root, "ticket.create", target=ticket_id,
+                     detail={"title": title, "kind": kind})
     return {"id": ticket_id, "title": title, "rendered": rendered,
            "artifact_map_row": row, "ticket": ticket}

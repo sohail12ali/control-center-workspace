@@ -84,10 +84,9 @@ class TestShippedRegistry:
         ids = {row["id"] for row in plugin_registry._load_rows(root)}
         assert "assistant" in ids
 
-    def test_assistant_plugin_registers_no_tab(self, root):
-        # No palette box yet (T-006) — the routes exist without a
-        # destination, same reasoning as the verbs plugin above.
-        assert "register_tab" not in _read(
+    def test_assistant_plugin_registers_a_tab(self, root):
+        # T-016: home tab. Routes still exist without the tab being visited.
+        assert "register_tab" in _read(
             root, "console/server/features/assistant_feature.py")
 
 
@@ -123,6 +122,7 @@ class TestVerbRoutes:
         assert set(routes) == {
             ("GET", "verbs.list"), ("POST", "verbs.run"),
             ("POST", "verbs.submit"), ("GET", "verbs.jobs"),
+            ("GET", "runs.list"),
             # Cancel is a POST: a GET that stops work is one a browser will
             # repeat and a prefetcher will call unprompted.
             ("POST", "verbs.job_cancel")}
@@ -181,6 +181,7 @@ class TestAssistantRoutes:
         from server.features import assistant_feature
 
         routes = {}
+        tabs = {}
 
         class Ctx:
             repo_root = root
@@ -191,13 +192,15 @@ class TestAssistantRoutes:
             def post(self, pattern, fn, name):
                 routes[("POST", name)] = fn
 
-            def register_tab(self, *a, **kw):
-                raise AssertionError("the assistant plugin must not register a tab")
+            def register_tab(self, tab_id, **kw):
+                tabs[tab_id] = kw
 
             def provide(self, *a, **kw):
                 pass
 
         assistant_feature.apply(Ctx())
+        assert "assistant" in tabs
+        assert tabs["assistant"].get("needs_live") is True
         assert set(routes) == {
             ("GET", "assistant.session"), ("POST", "assistant.new"),
             ("POST", "assistant.say"), ("GET", "assistant.stream"),
@@ -225,6 +228,8 @@ class TestPaletteAssets:
         assert "palette.js" in order, "the palette is never loaded"
         assert order.index("palette.js") < order.index("app.js")
         assert order.index("core.js") < order.index("palette.js")
+        assert "assistant.js" in order
+        assert order.index("assistant.js") < order.index("app.js")
 
     def test_the_key_handler_opens_it(self, root):
         app = _read(root, "console/static/app.js")
@@ -245,3 +250,28 @@ class TestPaletteAssets:
         css = _read(root, "console/static/styles.css")
         for cls in (".ct-diff", ".ct-d-add", ".ct-d-remove", ".cp-panel", ".cp-row"):
             assert cls in css, "missing style %s" % cls
+
+
+class TestInShellHome:
+    """T-016 FR-1: Assistant is first only when html.in-shell. Browser
+    NAV_ORDER is unchanged (Overview first)."""
+
+    def test_server_nav_still_starts_with_overview(self, root):
+        from server.features.shell_feature import NAV_ORDER
+        assert NAV_ORDER[0] == "overview"
+        assert "assistant" not in NAV_ORDER
+
+    def test_frontend_sorts_assistant_only_in_shell(self, root):
+        app = _read(root, "console/static/app.js")
+        assert 'classList.contains("in-shell")' in app
+        assert 't.id === "assistant"' in app
+
+    def test_board_start_is_not_compose_only(self, root):
+        src = _read(root, "console/static/board.js")
+        assert "/api/verbs/delegate/run" in src
+        assert "/api/assistant/say" in src
+
+    def test_wiki_has_no_live_agents_session_tray_lock(self, root):
+        wiki = _read(root, "knowledge-center/wiki/desktop-assistant.md")
+        assert "live Agents session" not in wiki
+        assert "[[T-016-decision-log]]" in wiki

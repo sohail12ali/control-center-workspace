@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 
 from . import agent_backends
 from . import tomlio
+from .paths import resolve_rel
 
 CACHE_REL = os.path.join("console", ".cache", "models")
 
@@ -53,7 +54,7 @@ FETCH_TIMEOUT = 20
 
 
 def cache_dir(repo_root):
-    return os.path.join(repo_root, CACHE_REL)
+    return resolve_rel(repo_root, CACHE_REL)
 
 
 def cache_path(repo_root, backend_id):

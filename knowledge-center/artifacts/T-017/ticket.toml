@@ -1,0 +1,16 @@
+[ticket]
+id = "T-017"
+title = "Delivery Console core: one API, MCP resources/HTTP, tracker SPI, workspace.toml, ready/claim/comment verbs"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-16"
+updated = "2026-09-16"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""

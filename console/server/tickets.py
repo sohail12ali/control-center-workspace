@@ -11,7 +11,7 @@ from datetime import date
 from . import boards as boards_mod
 from . import tomlio
 from . import trackers as trackers_mod
-from .paths import find_repo_root, ticket_dir
+from .paths import artifacts_dir, find_repo_root, ticket_dir
 
 
 def _toml_path(repo_root, config, ticket_id):
@@ -67,6 +67,12 @@ def create(repo_root, ticket_id, title, kind="tickets", owner="",
         # anywhere else", which is the normal case for a standalone vault —
         # the card simply doesn't show the link.
         "url": url,
+        # Who currently has this ticket claimed (T-017 FR-8), and when. This
+        # is distinct from `owner` (the human set at creation) — an agent
+        # picking up a ticket does not change who owns it. Empty means
+        # "unclaimed". See decision-log a3.
+        "claimed_by": "",
+        "claimed_at": "",
     }
     tomlio.atomic_write(path, {"ticket": ticket})
     trackers_mod.ensure_all(repo_root, ticket_id)
@@ -83,6 +89,8 @@ def load(repo_root, ticket_id):
     # Defaults for fields added after a ticket was written, so an older
     # ticket.toml keeps loading instead of erroring on a missing key.
     ticket.setdefault("url", "")
+    ticket.setdefault("claimed_by", "")
+    ticket.setdefault("claimed_at", "")
     ticket["priority"] = normalise_priority(ticket.get("priority"))
     return ticket
 
@@ -95,7 +103,7 @@ def _save(repo_root, config, ticket_id, ticket):
 def list_tickets(repo_root=None, kind=None, stage=None, owner=None):
     repo_root = repo_root or find_repo_root()
     config = boards_mod.load_console_config(repo_root)
-    root_dir = os.path.join(repo_root, config["general"]["data_root"])
+    root_dir = artifacts_dir(repo_root, config)
     results = []
     if not os.path.isdir(root_dir):
         return results
@@ -188,6 +196,52 @@ def set_field(repo_root, ticket_id, field, value):
     ticket["updated"] = date.today().isoformat()
     _save(repo_root, config, ticket_id, ticket)
     return ticket
+
+
+class ClaimConflictError(RuntimeError):
+    """A claim attempt found the ticket already claimed by someone else
+    (T-017 FR-8, Edge Case §8). Named so a caller can report it as a refused
+    claim rather than a generic write failure or a silent overwrite."""
+
+
+def set_claim(repo_root, ticket_id, claimed_by, claimed_at=None):
+    """Set `claimed_by`/`claimed_at` (T-017 FR-8, decision-log a3).
+
+    A dedicated mutator, not `set_field`/`patch` — those are the user-editable
+    surface (`EDITABLE`), and a claim is a verb-driven fact, not a field a
+    human hand-edits. Pass `claimed_by=""` to release the claim.
+
+    Race-safe (task 3a-5): the read-check-write happens inside one
+    `tomlio.atomic_update` call, under the same lock file `atomic_write` uses
+    for a single write. A plain `load()` + `_save()` pair — what every other
+    mutator in this module still uses, and what this function used before
+    3a-5 — only locks the write half; two concurrent claims could both read
+    an empty `claimed_by` before either wrote, and both "win". Claiming an
+    already-claimed ticket for a *different* identity raises
+    `ClaimConflictError` instead of overwriting the existing claim. Claiming
+    by the *same* identity that already holds it is a no-op success that
+    refreshes `claimed_at` (task 3a-6); releasing (`claimed_by=""`) always
+    succeeds regardless of who currently holds the claim.
+    """
+    repo_root = repo_root or find_repo_root()
+    config = boards_mod.load_console_config(repo_root)
+    path = _toml_path(repo_root, config, ticket_id)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"no ticket.toml for {ticket_id}")
+    claimed_by = claimed_by or ""
+
+    def _mutate(raw):
+        ticket = raw.setdefault("ticket", {})
+        current = ticket.get("claimed_by") or ""
+        if claimed_by and current and current != claimed_by:
+            raise ClaimConflictError(
+                f"{ticket_id} is already claimed by {current!r}")
+        ticket["claimed_by"] = claimed_by
+        ticket["claimed_at"] = (claimed_at or "") if claimed_by else ""
+        ticket["updated"] = date.today().isoformat()
+
+    raw = tomlio.atomic_update(path, _mutate)
+    return raw["ticket"]
 
 
 def patch(repo_root, ticket_id, fields):

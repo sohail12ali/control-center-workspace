@@ -41,7 +41,7 @@ window.ConsoleIcons = (function () {
     external:   "M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5",
     mic:        "M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z M5 11a7 7 0 0014 0 M12 18v3 M8 21h8",
     speaker:    "M11 5L6 9H3v6h3l5 4V5z M16 9a3.5 3.5 0 010 6 M19 6.5a7 7 0 010 11",
-    send:       "M4 12l16-8-6 8 6 8-16-8z",
+    send:       "M22 2L11 13 M22 2l-7 20-4-9-9-4 20-7z",
     steer:      "M12 3a9 9 0 100 18 9 9 0 000-18z M12 8l4 4-4 4-4-4 4-4z",
     queue:      "M4 6h16 M4 12h16 M4 18h10 M18 15v6 M15 18h6",
     trash:      "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6",

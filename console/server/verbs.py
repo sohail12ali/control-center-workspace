@@ -42,6 +42,7 @@ import os
 from . import boards as boards_mod
 from . import tickets as tickets_mod
 from . import tomlio
+from .paths import resolve_rel
 
 CONFIG_REL = os.path.join("console", "config", "verbs.toml")
 
@@ -104,7 +105,7 @@ class Verb:
 def load_config(repo_root, force=False):
     if not force and repo_root in _cache:
         return _cache[repo_root]
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     data = tomlio.load(path) if os.path.isfile(path) else {"verb": []}
     _cache[repo_root] = data
     return data

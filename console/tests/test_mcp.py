@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from server import mcp, tickets, verbs
+from server import bus, mcp, tickets, verbs
 
 VERBS = """\
 [[verb]]
@@ -35,7 +35,24 @@ id = "guarded"
 label = "Mutates things"
 handler = "verb_handlers.open_todos"
 needs_confirm = true
+
+[[verb]]
+id = "ticket-move"
+label = "Move a ticket"
+handler = "verb_handlers.ticket_move"
+needs_ticket = true
+needs_confirm = true
 """
+
+
+@pytest.fixture(autouse=True)
+def _clean_bus():
+    """The bus is a process-wide singleton (see bus.py) — clear it around
+    every test so subscriptions/pending notifications never leak across
+    tests that happen to reuse the same `id(session)`."""
+    bus._default = bus.Bus()
+    yield
+    bus._default = bus.Bus()
 
 
 @pytest.fixture
@@ -86,10 +103,13 @@ class TestHandshake:
         assert result["serverInfo"]["name"] == mcp.SERVER_NAME
 
     def test_only_implemented_capabilities_are_declared(self, wired):
-        # Declaring resources or prompts here would have clients calling
-        # methods that do not exist.
+        # Declaring prompts or sampling here would have clients calling
+        # methods that do not exist. `resources` was added additively in
+        # T-017 FR-3 — a tools-only client that never calls resources/* sees
+        # no change in behavior (still exercised by the tests below).
         caps = Session(wired).send("initialize", {})["result"]["capabilities"]
-        assert set(caps) == {"tools"}
+        assert set(caps) == {"tools", "resources"}
+        assert caps["resources"]["subscribe"] is True
 
     def test_initialized_notification_gets_no_reply(self, session):
         # Answering a notification is a protocol violation some clients treat
@@ -100,7 +120,9 @@ class TestHandshake:
         assert session.send("notifications/whatever", notification=True) is None
 
     def test_unknown_method_is_a_jsonrpc_error(self, session):
-        reply = session.send("resources/list")
+        # `resources/list` is now implemented (T-017 FR-3) — use a method
+        # that genuinely doesn't exist.
+        reply = session.send("prompts/list")
         assert reply["error"]["code"] == mcp.METHOD_NOT_FOUND
 
     def test_a_non_jsonrpc_message_is_rejected(self, wired):
@@ -112,7 +134,7 @@ class TestHandshake:
 class TestToolList:
     def test_tools_come_from_the_verb_registry(self, session):
         names = {t["name"] for t in session.send("tools/list")["result"]["tools"]}
-        assert names == {"context", "telemetry", "guarded"}
+        assert names == {"context", "telemetry", "guarded", "ticket-move"}
 
     def test_adding_a_verb_adds_a_tool_with_no_code_change(self, wired, session):
         path = os.path.join(wired, "console", "config", "verbs.toml")
@@ -196,6 +218,112 @@ class TestToolCall:
 
     def test_tools_call_without_a_name_is_invalid_params(self, session):
         assert session.send("tools/call", {})["error"]["code"] == mcp.INVALID_PARAMS
+
+
+class TestResourcesList:
+    """Task 1e-2: `resources/list` enumerates ticket-context resources."""
+
+    def test_lists_one_resource_per_ticket(self, session):
+        resources = session.send("resources/list")["result"]["resources"]
+        assert len(resources) == 1
+        assert resources[0]["uri"] == "ticket://CC-T001"
+        assert resources[0]["name"] == "CC-T001"
+        assert resources[0]["mimeType"] == "text/markdown"
+
+    def test_reflects_a_newly_created_ticket(self, wired, session):
+        tickets.create(wired, "CC-T002", "A second ticket")
+        uris = {r["uri"] for r in session.send("resources/list")["result"]["resources"]}
+        assert "ticket://CC-T002" in uris
+
+
+class TestResourcesRead:
+    """Task 1e-3: `resources/read` delegates to `verb_handlers.ticket_context`
+    — the same content the `context` tool/verb produces."""
+
+    def test_returns_the_same_content_as_the_context_tool(self, session):
+        via_resource = session.send("resources/read",
+                                    {"uri": "ticket://CC-T001"})["result"]["contents"][0]["text"]
+        via_tool = session.send("tools/call", {
+            "name": "context", "arguments": {"ticket": "CC-T001"},
+        })["result"]["content"][0]["text"]
+        assert via_resource == via_tool
+
+    def test_mime_type_is_markdown(self, session):
+        contents = session.send("resources/read",
+                                {"uri": "ticket://CC-T001"})["result"]["contents"][0]
+        assert contents["mimeType"] == "text/markdown"
+        assert contents["uri"] == "ticket://CC-T001"
+
+    def test_an_unknown_ticket_is_invalid_params_not_a_crash(self, session):
+        reply = session.send("resources/read", {"uri": "ticket://CC-T999"})
+        assert reply["error"]["code"] == mcp.INVALID_PARAMS
+
+    def test_a_uri_outside_the_ticket_scheme_is_invalid_params(self, session):
+        reply = session.send("resources/read", {"uri": "file:///etc/passwd"})
+        assert reply["error"]["code"] == mcp.INVALID_PARAMS
+
+
+class TestResourcesSubscribeAndNotify:
+    """Tasks 1e-4/1e-5/1e-6: subscribe, then a verb mutation on that ticket
+    delivers `notifications/resources/updated` to the subscribed session —
+    scoped to this MCP session, never the console board UI (decision-log a8)."""
+
+    def test_subscribe_acknowledges_with_an_empty_result(self, session):
+        reply = session.send("resources/subscribe", {"uri": "ticket://CC-T001"})
+        assert reply["result"] == {}
+
+    def test_subscribe_without_a_uri_is_invalid_params(self, session):
+        reply = session.send("resources/subscribe", {})
+        assert reply["error"]["code"] == mcp.INVALID_PARAMS
+
+    def test_a_mutation_on_a_subscribed_ticket_pushes_a_notification(self, session):
+        session.send("resources/subscribe", {"uri": "ticket://CC-T001"})
+        # The mutation and the notification are both produced by this single
+        # `tools/call` turn — `Session.send` returns only the JSON-RPC reply,
+        # so read the raw buffer to see the notification alongside it.
+        before = session.out.tell()
+        session.server.handle({
+            "jsonrpc": "2.0", "id": 99, "method": "tools/call",
+            "params": {"name": "ticket-move",
+                      "arguments": {"ticket": "CC-T001", "stage": "blocked", "confirm": True}},
+        })
+        session.out.seek(before)
+        lines = [json.loads(l) for l in session.out.read().strip().splitlines()]
+        session.out.seek(0, io.SEEK_END)
+
+        notifications = [m for m in lines if m.get("method") ==
+                        "notifications/resources/updated"]
+        assert len(notifications) == 1
+        assert notifications[0]["params"]["uri"] == "ticket://CC-T001"
+        assert "id" not in notifications[0]  # a notification, not a reply
+
+    def test_a_mutation_on_an_unsubscribed_ticket_notifies_nobody(self, wired, session):
+        tickets.create(wired, "CC-T002", "Not subscribed")
+        session.send("resources/subscribe", {"uri": "ticket://CC-T001"})
+        before = session.out.tell()
+        session.server.handle({
+            "jsonrpc": "2.0", "id": 99, "method": "tools/call",
+            "params": {"name": "ticket-move",
+                      "arguments": {"ticket": "CC-T002", "stage": "blocked", "confirm": True}},
+        })
+        session.out.seek(before)
+        lines = [json.loads(l) for l in session.out.read().strip().splitlines()]
+        session.out.seek(0, io.SEEK_END)
+        assert not any(m.get("method") == "notifications/resources/updated" for m in lines)
+
+    def test_unsubscribe_stops_future_notifications(self, session):
+        session.send("resources/subscribe", {"uri": "ticket://CC-T001"})
+        session.send("resources/unsubscribe", {"uri": "ticket://CC-T001"})
+        before = session.out.tell()
+        session.server.handle({
+            "jsonrpc": "2.0", "id": 99, "method": "tools/call",
+            "params": {"name": "ticket-move",
+                      "arguments": {"ticket": "CC-T001", "stage": "blocked", "confirm": True}},
+        })
+        session.out.seek(before)
+        lines = [json.loads(l) for l in session.out.read().strip().splitlines()]
+        session.out.seek(0, io.SEEK_END)
+        assert not any(m.get("method") == "notifications/resources/updated" for m in lines)
 
 
 class TestStreamProtocol:

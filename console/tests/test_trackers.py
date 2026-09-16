@@ -19,7 +19,7 @@ def ticket(repo):
 
 class TestAdd:
     @pytest.mark.parametrize("kind,prefix", [
-        ("questions", "Q"), ("bugs", "D-"), ("todos", "TD-"),
+        ("questions", "Q"), ("bugs", "D-"), ("todos", "TD-"), ("comments", "C"),
     ])
     def test_ids_follow_the_kind_format_and_increment(self, ticket, kind, prefix):
         first = trackers.add(ticket, "CC-T001", kind, "one")
@@ -106,6 +106,35 @@ class TestListAndUpdate:
     def test_remove_unknown_item_raises(self, ticket):
         with pytest.raises(KeyError):
             trackers.remove(ticket, "CC-T001", "todos", "TD-99")
+
+
+class TestComments:
+    """T-017 FR-9 / decision-log a2: the `comment` verb's storage kind —
+    same CRUD shape as questions/bugs/todos, never a release blocker."""
+
+    def test_add_attributes_and_timestamps(self, ticket):
+        item = trackers.add(ticket, "CC-T001", "comments", "looks good",
+                            author="alice")
+        assert item["id"] == "C1"
+        assert item["text"] == "looks good"
+        assert item["author"] == "alice"
+        assert item["posted_on"]
+        assert item["status"] == "open"
+
+    def test_defaults_author_to_agent(self, ticket):
+        item = trackers.add(ticket, "CC-T001", "comments", "note")
+        assert item["author"] == "agent"
+
+    def test_list_and_update(self, ticket):
+        trackers.add(ticket, "CC-T001", "comments", "one")
+        trackers.add(ticket, "CC-T001", "comments", "two")
+        assert len(trackers.list_items(ticket, "CC-T001", "comments")) == 2
+        trackers.update(ticket, "CC-T001", "comments", "C1", text="edited")
+        assert trackers.list_items(ticket, "CC-T001", "comments")[0]["text"] == "edited"
+
+    def test_never_blocks_even_when_flagged(self, ticket):
+        trackers.add(ticket, "CC-T001", "comments", "urgent!!", priority="critical")
+        assert trackers.blockers(ticket, "CC-T001") == {}
 
 
 class TestBlockers:
