@@ -1,0 +1,984 @@
+<title>Control Center Agentic Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#E6E9E7;
+  --surface:#F3F5F3;
+  --surface-2:#DCE0DD;
+  --ink:#141B20;
+  --ink-soft:#4A5560;
+  --ink-faint:#77828B;
+  --rule:#C3C9C5;
+  --hazard:#8A5A00;
+  --hazard-mark:#C98A05;
+  --steel:#1E5560;
+  --pass:#356E46;
+  --halt:#A03A29;
+  --term-bg:#141B20;
+  --term-ink:#DDE3E0;
+  --display:"Saira Condensed","Arial Narrow",Impact,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#101519;--surface:#181F24;--surface-2:#232C32;
+    --ink:#E4E8E6;--ink-soft:#A3AEB5;--ink-faint:#7A868E;--rule:#2E383F;
+    --hazard:#F0A400;--hazard-mark:#F0A400;--steel:#68AEB9;
+    --pass:#5FBE7B;--halt:#E0705C;--term-bg:#0A0E11;--term-ink:#DDE3E0;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#101519;--surface:#181F24;--surface-2:#232C32;
+  --ink:#E4E8E6;--ink-soft:#A3AEB5;--ink-faint:#7A868E;--rule:#2E383F;
+  --hazard:#F0A400;--hazard-mark:#F0A400;--steel:#68AEB9;
+  --pass:#5FBE7B;--halt:#E0705C;--term-bg:#0A0E11;--term-ink:#DDE3E0;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:var(--body);font-size:16px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+
+.deck{position:relative}
+.slide{
+  min-height:100vh;
+  padding:clamp(22px,3.2vh,46px) clamp(22px,3.2vw,58px) clamp(54px,6.6vh,74px) clamp(78px,6.8vw,128px);
+  display:flex;flex-direction:column;justify-content:center;
+  border-bottom:1px solid var(--rule);position:relative;
+}
+.js .slide{display:none;border-bottom:0}
+.js .slide.is-active{display:flex}
+
+.rail{
+  position:absolute;left:0;top:0;bottom:0;
+  width:clamp(48px,4.4vw,82px);border-right:1px solid var(--rule);
+  display:flex;flex-direction:column;justify-content:space-between;align-items:center;
+  padding:clamp(18px,2.8vh,32px) 0;
+}
+.rail-num{font-family:var(--mono);font-size:clamp(11px,1vw,13px);font-weight:600;color:var(--hazard);letter-spacing:.06em}
+.rail-sec{
+  font-family:var(--mono);font-size:clamp(9px,.78vw,11px);
+  writing-mode:vertical-rl;text-orientation:mixed;
+  letter-spacing:.28em;text-transform:uppercase;color:var(--ink-faint);
+}
+.rail-tot{font-family:var(--mono);font-size:clamp(9px,.78vw,11px);color:var(--ink-faint)}
+
+.eyebrow{
+  font-family:var(--mono);font-size:clamp(10px,.82vw,12px);font-weight:500;
+  letter-spacing:.26em;text-transform:uppercase;color:var(--steel);
+  margin:0 0 clamp(11px,1.6vh,18px);
+}
+h1{
+  font-family:var(--display);font-weight:700;
+  font-size:clamp(38px,6.2vw,98px);line-height:.94;letter-spacing:-.015em;
+  margin:0;text-wrap:balance;text-transform:uppercase;
+}
+h2{
+  font-family:var(--display);font-weight:600;
+  font-size:clamp(25px,3.4vw,50px);line-height:1.04;letter-spacing:-.01em;
+  margin:0 0 clamp(12px,1.8vh,22px);text-wrap:balance;
+}
+h3{font-family:var(--display);font-weight:600;font-size:clamp(15px,1.42vw,21px);line-height:1.15;margin:0 0 6px}
+.lede{
+  font-size:clamp(14.5px,1.3vw,20px);line-height:1.5;color:var(--ink-soft);
+  max-width:66ch;margin:0 0 clamp(14px,2vh,24px);
+}
+.lede strong{color:var(--ink);font-weight:600}
+p{max-width:68ch}
+.fine{font-size:clamp(11.5px,.92vw,13.5px);color:var(--ink-faint);max-width:80ch;line-height:1.55}
+code{
+  font-family:var(--mono);font-size:.86em;background:var(--surface-2);color:var(--ink);
+  padding:.12em .36em;border-radius:2px;
+}
+.hazard-rule{
+  height:7px;width:clamp(110px,13vw,210px);margin:clamp(16px,2.4vh,28px) 0;
+  background:repeating-linear-gradient(115deg,var(--hazard-mark) 0 11px,transparent 11px 22px);
+}
+
+.title-meta{display:flex;flex-wrap:wrap;margin-top:clamp(20px,3.2vh,38px);border-top:1px solid var(--rule)}
+.title-meta div{
+  padding:clamp(10px,1.5vh,16px) clamp(14px,1.6vw,23px) 0 0;
+  margin-right:clamp(14px,1.6vw,23px);border-right:1px solid var(--rule);
+}
+.title-meta div:last-child{border-right:0;margin-right:0}
+.title-meta b{
+  display:block;font-family:var(--display);font-weight:700;
+  font-size:clamp(19px,2.1vw,32px);line-height:1;color:var(--ink);font-variant-numeric:tabular-nums;
+}
+.title-meta span{
+  font-family:var(--mono);font-size:clamp(8.5px,.74vw,10.5px);
+  letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);
+}
+
+.cols{display:grid;gap:clamp(12px,1.6vw,26px)}
+.c2{grid-template-columns:repeat(2,1fr)}
+.c3{grid-template-columns:repeat(3,1fr)}
+.c4{grid-template-columns:repeat(4,1fr)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:clamp(18px,2.6vw,44px);align-items:start}
+.split-wide{display:grid;grid-template-columns:1.35fr .65fr;gap:clamp(18px,2.6vw,40px);align-items:start}
+.split-narrow{display:grid;grid-template-columns:.62fr 1.38fr;gap:clamp(18px,2.6vw,40px);align-items:start}
+@media (max-width:900px){.c2,.c3,.c4,.split,.split-wide,.split-narrow{grid-template-columns:1fr}}
+
+.card{background:var(--surface);border:1px solid var(--rule);padding:clamp(12px,1.4vw,20px);border-radius:3px}
+.card p{margin:0;font-size:clamp(12px,.98vw,15px);color:var(--ink-soft);max-width:none}
+.card .tag{
+  font-family:var(--mono);font-size:clamp(8.5px,.72vw,10.5px);font-weight:600;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--hazard);
+  display:block;margin-bottom:7px;
+}
+.card.warn{border-left:3px solid var(--halt)}
+.card.warn .tag{color:var(--halt)}
+.card.ok{border-left:3px solid var(--pass)}
+.card.ok .tag{color:var(--pass)}
+.card.steel{border-left:3px solid var(--steel)}
+.card.steel .tag{color:var(--steel)}
+
+.stats{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px}
+.s2{grid-template-columns:repeat(2,1fr)}
+.s3{grid-template-columns:repeat(3,1fr)}
+.s4{grid-template-columns:repeat(4,1fr)}
+.s5{grid-template-columns:repeat(5,1fr)}
+@media (max-width:900px){.s2,.s3,.s4,.s5{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--surface);padding:clamp(11px,1.3vw,19px)}
+.stat b{
+  display:block;font-family:var(--display);font-weight:700;
+  font-size:clamp(22px,2.8vw,42px);line-height:1;
+  font-variant-numeric:tabular-nums;color:var(--ink);
+}
+.stat span{
+  display:block;margin-top:5px;font-family:var(--mono);
+  font-size:clamp(8.5px,.72vw,10.5px);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-faint);line-height:1.5;
+}
+
+ul.plain{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:clamp(7px,.95vh,12px)}
+ul.plain li{
+  padding-left:18px;position:relative;
+  font-size:clamp(12px,1vw,15.5px);color:var(--ink-soft);line-height:1.45;
+}
+ul.plain li::before{content:"";position:absolute;left:0;top:.6em;width:8px;height:2px;background:var(--hazard-mark)}
+ul.plain li b{color:var(--ink);font-weight:600}
+ul.plain.halt li::before{background:var(--halt)}
+ul.plain.pass li::before{background:var(--pass)}
+
+table.kv{width:100%;border-collapse:collapse;font-size:clamp(11px,.94vw,14.5px)}
+table.kv th,table.kv td{
+  text-align:left;padding:clamp(5px,.78vh,10px) clamp(6px,.8vw,13px);
+  border-bottom:1px solid var(--rule);vertical-align:top;
+}
+table.kv th{
+  font-family:var(--mono);font-weight:600;font-size:clamp(8px,.7vw,10px);
+  letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);
+  border-bottom-color:var(--ink-faint);
+}
+table.kv td{color:var(--ink-soft)}
+table.kv tr:last-child td{border-bottom:0}
+table.kv td.k{font-family:var(--mono);font-weight:600;color:var(--ink);font-size:.94em;white-space:nowrap}
+table.kv td.lane{
+  font-family:var(--display);font-weight:700;color:var(--hazard);
+  font-size:clamp(14px,1.3vw,20px);white-space:nowrap;line-height:1;
+}
+table.kv td.role{font-family:var(--display);font-weight:600;color:var(--ink);font-size:clamp(13px,1.2vw,19px);white-space:nowrap}
+table.kv td.risk{font-family:var(--mono);font-weight:600;white-space:nowrap}
+.r-low{color:var(--pass)}
+.r-med{color:var(--hazard)}
+.r-high{color:var(--halt)}
+.r-crit{color:var(--halt);text-decoration:underline}
+.tablewrap{overflow-x:auto}
+
+pre.term{
+  margin:0;background:var(--term-bg);color:var(--term-ink);
+  border:1px solid var(--rule);border-radius:3px;
+  padding:clamp(11px,1.3vw,19px);overflow-x:auto;
+  font-family:var(--mono);font-size:clamp(10px,.88vw,13.5px);line-height:1.72;
+}
+pre.term b{color:var(--hazard-mark);font-weight:600}
+pre.term i{color:#8FA3AD;font-style:normal}
+pre.term u{color:#7FC08F;text-decoration:none}
+pre.term s{color:#E0705C;text-decoration:none}
+
+figure{margin:0}
+figure svg{display:block;width:100%;min-width:690px;max-width:100%;height:auto;color:var(--ink)}
+figure svg text{fill:currentColor}
+.d-haz-f{fill:var(--hazard)}
+.d-haz-s{stroke:var(--hazard)}
+.d-halt-s{stroke:var(--halt)}
+.d-halt-f{fill:var(--halt)}
+.d-pass-f{fill:var(--pass)}
+.d-pass-s{stroke:var(--pass)}
+.d-steel-f{fill:var(--steel)}
+.d-steel-s{stroke:var(--steel)}
+.d-fill{fill:var(--surface)}
+figcaption{
+  margin-top:clamp(8px,1.1vh,14px);font-size:clamp(10px,.86vw,13px);
+  color:var(--ink-faint);max-width:84ch;line-height:1.55;
+}
+.figwrap{overflow-x:auto}
+
+.thesis{
+  font-family:var(--display);font-weight:600;
+  font-size:clamp(23px,3vw,48px);line-height:1.09;
+  max-width:40ch;margin:0;text-wrap:balance;
+}
+.thesis em{font-style:normal;color:var(--hazard)}
+
+.chrome{
+  position:fixed;right:clamp(14px,2vw,28px);bottom:clamp(12px,1.8vh,22px);
+  display:none;align-items:center;gap:10px;z-index:20;
+  background:var(--ground);border:1px solid var(--rule);border-radius:3px;padding:5px 9px 5px 5px;
+}
+.js .chrome{display:flex}
+.chrome button{
+  font-family:var(--mono);font-size:12px;font-weight:600;
+  width:30px;height:30px;border-radius:2px;cursor:pointer;
+  background:var(--surface);color:var(--ink);border:1px solid var(--rule);line-height:1;
+}
+.chrome button:hover{border-color:var(--hazard);color:var(--hazard)}
+.chrome button:focus-visible{outline:2px solid var(--hazard);outline-offset:2px}
+.counter{
+  font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-faint);
+  font-variant-numeric:tabular-nums;min-width:56px;text-align:right;
+}
+.counter b{color:var(--ink)}
+.progress{
+  position:fixed;left:0;top:0;height:3px;background:var(--hazard-mark);
+  width:0;z-index:30;transition:width .28s ease;display:none;
+}
+.js .progress{display:block}
+@media (prefers-reduced-motion:reduce){.progress{transition:none}}
+
+@media print{
+  .js .slide{display:flex!important;page-break-after:always;min-height:0;border-bottom:0}
+  .chrome,.progress{display:none!important}
+}
+</style>
+
+<div class="progress" id="prog"></div>
+
+<main class="deck" id="deck">
+
+
+<!-- 1 ============================================================ -->
+<section class="slide is-active">
+  <div class="rail"><span class="rail-num">01</span><span class="rail-sec">Overview</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Engineering guide &middot; control-center &middot; September 2026</p>
+  <h1>Control Center<br>Agentic Setup</h1>
+  <div class="hazard-rule"></div>
+  <p class="lede">A <strong>project-independent</strong> harness for structured software delivery &mdash; six gates, seven role agents, a vault of artifacts, and a Delivery Console that computes what agents would otherwise guess. Nothing in it is coupled to a company, a product, or a stack.</p>
+  <div class="title-meta">
+    <div><b>6</b><span>Gates</span></div>
+    <div><b>7</b><span>Role agents</span></div>
+    <div><b>39</b><span>Skills</span></div>
+    <div><b>31</b><span>Console verbs</span></div>
+    <div><b>0</b><span>Runtime deps</span></div>
+    <div><b>16&times;</b><span>Context reduction</span></div>
+  </div>
+</section>
+
+<!-- 2 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">02</span><span class="rail-sec">Problem</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Why this exists</p>
+  <h2>A capable model with no method<br>is an expensive improviser.</h2>
+  <div class="split">
+    <div>
+      <p class="lede">Hand a coding agent a ticket and it will produce something. The question is whether you can tell, six weeks later, what it decided and why &mdash; and whether it would do the same thing twice.</p>
+      <ul class="plain">
+        <li><b>It fills gaps instead of stopping.</b> Missing scope gets answered confidently rather than asked about.</li>
+        <li><b>Reasoning evaporates.</b> The plan, the objections and the rejected options live in a chat log nobody re-reads.</li>
+        <li><b>Facts get re-derived.</b> The same eight artifacts are opened and reduced at the start of every turn, at full token price.</li>
+        <li><b>"Done" is a claim, not evidence.</b> Nothing forces a build, a test, or a <code>file:line</code> behind the word.</li>
+      </ul>
+    </div>
+    <div class="stats s2">
+      <div class="stat"><b>~6,700</b><span>Tokens to re-read<br>one ticket, per turn</span></div>
+      <div class="stat"><b>~420</b><span>Tokens for the same<br>facts, computed</span></div>
+      <div class="stat"><b>6</b><span>Gates that halt<br>rather than guess</span></div>
+      <div class="stat"><b>1</b><span>File per fact<br>&mdash; enforced</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">03</span><span class="rail-sec">Idea</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The core idea</p>
+  <h2>The model does not decide how we work.<br>It follows how we work.</h2>
+  <p class="lede">The agent writes the code. It does not choose the order of work, the shape of the files, or the points at which it must stop and ask. Those are <strong>fixed in advance and checkable</strong>.</p>
+  <div class="cols c3">
+    <div class="card">
+      <span class="tag">So what changes</span>
+      <h3>Same steps every time</h3>
+      <p>Every ticket runs the same six gates in the same order &mdash; regardless of who started it, which model answered, or how busy the day was.</p>
+    </div>
+    <div class="card">
+      <span class="tag">So what changes</span>
+      <h3>It stops instead of guessing</h3>
+      <p>Unclear scope halts the run and raises a question. A gap is never filled with a confident-sounding answer.</p>
+    </div>
+    <div class="card">
+      <span class="tag">So what changes</span>
+      <h3>The reasoning survives</h3>
+      <p>Requirements, plans, critiques and decisions are files in a vault &mdash; so next quarter you can still find out why.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">04</span><span class="rail-sec">Scope</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">What it is, and what it is not</p>
+  <h2>A template you drop in &mdash;<br>not a platform you adopt.</h2>
+  <div class="split">
+    <div>
+      <ul class="plain pass">
+        <li><b>Project-independent.</b> No company, product or stack is named anywhere in the harness. Sub-projects join as workspace folders, each with its own ticket ids and artifact subtree.</li>
+        <li><b>Editor-agnostic.</b> The console sits at the workspace root beside <code>.claude/</code> and <code>.cursor/</code>, owned by neither.</li>
+        <li><b>Zero runtime dependencies.</b> Stdlib Python, vanilla JS, no build step. <code>pytest</code> is dev-only.</li>
+        <li><b>Files you can read.</b> Markdown for prose, TOML for state, git for history. No database, no service.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="card warn">
+        <span class="tag">Not this</span>
+        <h3>Not an autonomous developer</h3>
+        <p>The pipeline needs a human at three points: open questions, plan approval, and anything irreversible. It is a method with an engine, not a replacement for judgement.</p>
+      </div>
+      <div class="card warn" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Not this</span>
+        <h3>Not a hosted product</h3>
+        <p>Everything binds to <code>127.0.0.1</code>. There is no account, no tenant, and nothing leaves the machine except the model calls you configure.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">05</span><span class="rail-sec">Gates</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The method</p>
+  <h2>Six gates. Each one stops the run.</h2>
+  <p class="lede">They are loaded into <strong>every session</strong>, not recited per ticket &mdash; a single always-on file small enough to never be skipped.</p>
+  <div class="tablewrap">
+  <table class="kv">
+    <thead><tr><th>Gate</th><th>What it demands</th><th>What it prevents</th></tr></thead>
+    <tbody>
+      <tr><td class="lane">GROUND</td><td>Survey the code and prior artifacts before drafting anything</td><td>A requirement invented from the prompt rather than read from the repo</td></tr>
+      <tr><td class="lane">CLARIFY</td><td>Ask every open question before producing output</td><td>Ambiguity resolved silently in the model's favour</td></tr>
+      <tr><td class="lane">CANONICAL</td><td>Every fact lives in exactly one file; search before creating</td><td>Three files that disagree, and no way to tell which is current</td></tr>
+      <tr><td class="lane">TEMPLATE</td><td>Every file type derives from a template &mdash; stop if none exists</td><td>Artifacts whose shape drifts per ticket, so nothing can be validated</td></tr>
+      <tr><td class="lane">SIMPLIFY</td><td>Write the minimum that works</td><td>Speculative abstraction built for a requirement nobody stated</td></tr>
+      <tr><td class="lane">VERIFY</td><td>Cited evidence behind every "done"; artifacts link up and down</td><td>A completion claim with nothing behind it</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="fine" style="margin-top:clamp(10px,1.5vh,18px)">Running across all six: <b style="color:var(--ink)">BE HONEST</b> &mdash; report outcomes faithfully. If tests fail, show the output. If a step was skipped, say so. Label what is assumed. Surface bad news early.</p>
+</section>
+
+<!-- 6 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">06</span><span class="rail-sec">Roles</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Who does what</p>
+  <h2>Seven agents, one shared shell.</h2>
+  <div class="tablewrap">
+  <table class="kv">
+    <thead><tr><th>Agent</th><th>Stages</th><th>Owns</th></tr></thead>
+    <tbody>
+      <tr><td class="role">harness</td><td>all</td><td>Routes the ticket. Never does the work itself &mdash; delegates, then reconciles.</td></tr>
+      <tr><td class="role">analyst</td><td>GROUND &middot; CLARIFY</td><td>Analysis, requirements, decisions. Drafts, red-teams its own draft, then freezes.</td></tr>
+      <tr><td class="role">planner</td><td>CANONICAL</td><td>Frozen requirements &rarr; stories, components, tasks, risks. No code.</td></tr>
+      <tr><td class="role">builder</td><td>TEMPLATE &middot; SIMPLIFY</td><td>One plan task at a time, then a simplification pass.</td></tr>
+      <tr><td class="role">verifier</td><td>VERIFY</td><td>Test cases, evidence, traceability, artifact integrity &mdash; then closes.</td></tr>
+      <tr><td class="role">fixer</td><td>any</td><td>Root-cause and minimal patch when something fails mid-flight.</td></tr>
+      <tr><td class="role">deployer</td><td>after close</td><td>Publish. <b style="color:var(--halt)">Always ASK-gated</b> &mdash; never triggered by a clean verify.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="fine" style="margin-top:clamp(10px,1.5vh,18px)">Exactly seven, by design. A new role is a change to the method, not a convenience &mdash; so it needs explicit intent, not a quiet addition.</p>
+</section>
+
+<!-- 7 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">07</span><span class="rail-sec">Route</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">How a ticket moves</p>
+  <h2>One route. Two critique passes.<br>Three times we ask you.</h2>
+  <div class="figwrap">
+  <figure>
+    <svg viewBox="0 0 1000 250" role="img" aria-label="Ticket route from kickoff through analyst, planner, builder and verifier to close, with three human gates">
+      <g font-family="IBM Plex Mono, monospace" font-size="11">
+        <rect x="8" y="92" width="96" height="46" rx="3" class="d-fill d-steel-s" stroke-width="1.5"/>
+        <text x="56" y="112" text-anchor="middle" font-size="12" font-weight="600">kickoff</text>
+        <text x="56" y="128" text-anchor="middle" font-size="9" opacity=".7">seed vault</text>
+
+        <rect x="136" y="92" width="112" height="46" rx="3" class="d-fill d-haz-s" stroke-width="1.5"/>
+        <text x="192" y="112" text-anchor="middle" font-size="12" font-weight="600">analyst</text>
+        <text x="192" y="128" text-anchor="middle" font-size="9" opacity=".7">ground · clarify</text>
+
+        <rect x="280" y="92" width="112" height="46" rx="3" class="d-fill d-haz-s" stroke-width="1.5"/>
+        <text x="336" y="112" text-anchor="middle" font-size="12" font-weight="600">planner</text>
+        <text x="336" y="128" text-anchor="middle" font-size="9" opacity=".7">canonical</text>
+
+        <rect x="424" y="92" width="112" height="46" rx="3" class="d-fill d-haz-s" stroke-width="1.5"/>
+        <text x="480" y="112" text-anchor="middle" font-size="12" font-weight="600">builder</text>
+        <text x="480" y="128" text-anchor="middle" font-size="9" opacity=".7">template · simplify</text>
+
+        <rect x="568" y="92" width="112" height="46" rx="3" class="d-fill d-haz-s" stroke-width="1.5"/>
+        <text x="624" y="112" text-anchor="middle" font-size="12" font-weight="600">verifier</text>
+        <text x="624" y="128" text-anchor="middle" font-size="9" opacity=".7">verify</text>
+
+        <rect x="712" y="92" width="96" height="46" rx="3" class="d-fill d-pass-s" stroke-width="1.5"/>
+        <text x="760" y="112" text-anchor="middle" font-size="12" font-weight="600">close-work</text>
+        <text x="760" y="128" text-anchor="middle" font-size="9" opacity=".7">lane → done</text>
+
+        <rect x="840" y="92" width="96" height="46" rx="3" class="d-fill d-halt-s" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="888" y="112" text-anchor="middle" font-size="12" font-weight="600">deployer</text>
+        <text x="888" y="128" text-anchor="middle" font-size="9" opacity=".7">ask only</text>
+
+        <g class="d-haz-s" stroke-width="1.5" fill="none">
+          <path d="M104 115 H132"/><path d="M248 115 H276"/><path d="M392 115 H420"/>
+          <path d="M536 115 H564"/><path d="M680 115 H708"/>
+        </g>
+        <path d="M808 115 H836" class="d-halt-s" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+
+        <g class="d-halt-f" font-size="9" font-weight="600" text-anchor="middle">
+          <text x="192" y="62">ASK 1</text>
+          <text x="336" y="62">ASK 2</text>
+          <text x="888" y="62">ASK 3</text>
+        </g>
+        <g class="d-halt-s" stroke-width="1.2" fill="none" stroke-dasharray="3 3">
+          <path d="M192 70 V88"/><path d="M336 70 V88"/><path d="M888 70 V88"/>
+        </g>
+        <g font-size="9" opacity=".75" text-anchor="middle">
+          <text x="192" y="46">open questions</text>
+          <text x="336" y="46">plan approval</text>
+          <text x="888" y="46">publish</text>
+        </g>
+
+        <g class="d-steel-f" font-size="9" font-weight="600" text-anchor="middle">
+          <text x="264" y="170">challenge-requirements</text>
+          <text x="624" y="170">challenge-implementation</text>
+        </g>
+        <g class="d-steel-s" stroke-width="1.2" fill="none" stroke-dasharray="3 3">
+          <path d="M264 158 V142"/><path d="M624 158 V142"/>
+        </g>
+        <text x="500" y="205" text-anchor="middle" font-size="9" opacity=".7">every stage transition passes through `handoff` — a gating checklist that refuses to advance</text>
+      </g>
+    </svg>
+    <figcaption>Two adversarial passes are built into the route, not bolted on: the requirements draft is red-teamed before it can freeze, and the implementation is red-teamed before formal verification. Both are find-don't-fix &mdash; they raise items, they do not quietly edit.</figcaption>
+  </figure>
+  </div>
+</section>
+
+<!-- 8 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">08</span><span class="rail-sec">Entry</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The free-form entry point</p>
+  <h2>One command. Five lanes. First match wins.</h2>
+  <p class="lede">Not every request is a ticket. <code>/do {request}</code> classifies first, then dispatches &mdash; so a question does not become a delivery pipeline, and a delivery does not become an improvisation.</p>
+  <div class="tablewrap">
+  <table class="kv">
+    <thead><tr><th>If the request&hellip;</th><th>Lane</th><th>What runs</th></tr></thead>
+    <tbody>
+      <tr><td>names a ticket id, or is end-to-end delivery</td><td class="lane">A deliver</td><td>Full kickoff &rarr; the seven-agent route</td></tr>
+      <tr><td>maps onto one or more skills</td><td class="lane">B skill</td><td>The matched skills, in dependency order</td></tr>
+      <tr><td>is a whole role-phase with no ticket</td><td class="lane">C role</td><td>That role agent, loaded and run</td></tr>
+      <tr><td>is read-only &mdash; where, why, trace, show</td><td class="lane">D investigate</td><td>Grep, read, trace &mdash; no writes</td></tr>
+      <tr><td>is a sub-project build, test or publish</td><td class="lane">E cross-repo</td><td>That repo's own commands, via its own manifest</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="fine" style="margin-top:clamp(10px,1.5vh,18px)">Ambiguous lane &rarr; <b style="color:var(--halt)">ask, never guess</b>. The classifier states which lane it chose, which was runner-up, and why &mdash; so a bad route is visible in one line rather than discovered three files later.</p>
+</section>
+
+<!-- 9 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">09</span><span class="rail-sec">Vault</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Where the work lives</p>
+  <h2>One folder per ticket.<br>One file per fact.</h2>
+  <div class="split-wide">
+    <div>
+      <pre class="term">knowledge-center/artifacts/<b>T-016</b>/
+  <i>T-016-summary.md</i>          <s>status, owner, scope</s>
+  <i>T-016-analysis.md</i>         <s>ground survey</s>
+  <i>T-016-requirements.md</i>     <s>frozen spec</s>
+  <i>T-016-decision-log.md</i>     <s>why, + rejected</s>
+  <i>T-016-plan.md</i>             <s>tasks, deps, risks</s>
+  <i>T-016-progress.md</i>         <s>dated entries</s>
+  <i>T-016-verification.md</i>     <s>evidence</s>
+  <u>ticket.toml</u>               <s>← state, CLI only</s>
+  <u>T-016-questions.toml</u>      <s>← tracker, CLI only</s>
+  <u>T-016-bugs.toml</u>           <s>← tracker, CLI only</s></pre>
+      <p class="fine" style="margin-top:clamp(10px,1.4vh,16px)">Flat, not nested. Every file is <code>{TICKET}-{artifact}.md</code> and ends with a <code>## Links</code> block naming its siblings &mdash; which is what makes traceability checkable by a script rather than by reading.</p>
+    </div>
+    <div>
+      <div class="card steel">
+        <span class="tag">The split that matters</span>
+        <h3>Markdown holds prose</h3>
+        <p>Reasoning, specs, critique. Human-authored, model-authored, diffable, reviewable in a PR.</p>
+      </div>
+      <div class="card ok" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">The split that matters</span>
+        <h3>TOML holds state</h3>
+        <p>Lane, owner, links, open questions, bugs, todos &mdash; <b>mutated only through the CLI</b>. Never hand-edited, by a human or an agent.</p>
+      </div>
+      <div class="card warn" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Why</span>
+        <h3>A status you can trust</h3>
+        <p>If an agent can hand-write the lane, the board is a rumour. One mutation path means the board and the vault cannot disagree.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">10</span><span class="rail-sec">Console</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The Delivery Console</p>
+  <h2>One local server.<br>Every board, every tab.</h2>
+  <div class="split">
+    <div>
+      <p class="lede">A web app and a CLI over the same files the agents write. It does not own the data &mdash; it is <strong>a window onto the vault</strong>, not a second copy of it.</p>
+      <ul class="plain">
+        <li><b>Boards.</b> Tickets and Investigations on by default; Migrations and Releases ship as config with <code>enabled = false</code>, so a project turns them on without a code change.</li>
+        <li><b>Tabs.</b> Overview, Agents, Work, Analytics, Todos, Vault, About, Settings.</li>
+        <li><b>Same state.</b> Board lanes come from the same TOML the CLI mutates. There is no sync step because there is nothing to sync.</li>
+      </ul>
+    </div>
+    <div class="stats s2">
+      <div class="stat"><b>32k</b><span>Lines of stdlib<br>Python</span></div>
+      <div class="stat"><b>60</b><span>Test modules</span></div>
+      <div class="stat"><b>4</b><span>Board kinds<br>(2 on by default)</span></div>
+      <div class="stat"><b>0</b><span>Build steps<br>for the frontend</span></div>
+    </div>
+  </div>
+  <p class="fine" style="margin-top:clamp(10px,1.5vh,18px)">Honest about what is <b style="color:var(--ink)">not</b> built: Projects and Files tabs do not exist in this template, and the two extra board kinds are config stubs rather than working boards.</p>
+</section>
+
+<!-- 11 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">11</span><span class="rail-sec">Verbs</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The central economy</p>
+  <h2>Compute, don't reason.</h2>
+  <p class="lede">If a question has <strong>exactly one right answer and no judgement in it</strong>, asking a language model is paying tokens for arithmetic &mdash; and arithmetic that can come back subtly wrong.</p>
+  <div class="split">
+    <div>
+      <div class="card warn">
+        <span class="tag">Model turn</span>
+        <h3>"Which plan tasks are unchecked?"</h3>
+        <p>Reads the plan, reduces it, answers. Costs tokens. May miscount. Answers slightly differently next time.</p>
+      </div>
+      <div class="card ok" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Verb</span>
+        <h3><code>console plan-status T-016</code></h3>
+        <p>Parses the plan in Python. Costs nothing. Same answer every time. Reports what it could not parse rather than guessing.</p>
+      </div>
+    </div>
+    <div>
+      <ul class="plain">
+        <li><b>Declared in config, not code.</b> A verb row names a handler as a dotted path; the registry imports it. Adding a verb is one TOML block.</li>
+        <li><b>Gates travel with the verb.</b> <code>needs_ticket</code>, <code>needs_confirm</code>, which board kinds and lanes &mdash; so the CLI, the board, the scheduler and the MCP server all enforce the same rules without reimplementing any of them.</li>
+        <li><b>Broken handlers fail at startup</b>, named &mdash; not at the moment someone finally runs them, which is always the worst moment.</li>
+        <li><b>Mutating verbs need confirmation.</b> That stops a stray click or a hallucinated tool call &mdash; it is not the human approval gate, which lives elsewhere.</li>
+      </ul>
+      <div class="stats s2" style="margin-top:clamp(14px,2vh,22px)">
+        <div class="stat"><b>31</b><span>Verbs declared</span></div>
+        <div class="stat"><b>1</b><span>TOML row to<br>add another</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">12</span><span class="rail-sec">Context</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The number that pays for the rest</p>
+  <h2>Eight files, every turn &mdash;<br>replaced by one call.</h2>
+  <div class="split-wide">
+    <div>
+      <pre class="term"><i>$</i> python console/kanban.py <b>context T-016</b>
+
+<b>T-016</b>  Make the Assistant the home…
+lane <u>verify</u>   owner Sohail Ali   stage VERIFY
+
+<b>blocking</b>     none
+<b>plan</b>         3 of 24 tasks unchecked
+<b>questions</b>    0 open · <b>bugs</b> 1 unverified
+<b>artifacts</b>    22 files + ticket-scripts/
+<b>progress</b>     2026-09-16 · slice D landed
+<b>spend</b>        $4.18 to date
+
+<i>(trackers capped at 8 — 0 dropped)</i></pre>
+      <p class="fine" style="margin-top:clamp(10px,1.4vh,16px)">Every cap is stated in the output. <b style="color:var(--ink)">Silence means the picture is complete</b> &mdash; a digest that quietly omits the newest blocker is worse than one that is honestly incomplete, because the reader cannot tell the difference.</p>
+    </div>
+    <div>
+      <div class="stats s1" style="grid-template-columns:1fr">
+        <div class="stat"><b>~27 KB</b><span>Raw artifacts read<br>by hand, per turn</span></div>
+        <div class="stat"><b>~1.7 KB</b><span>The same facts,<br>already reduced</span></div>
+        <div class="stat"><b>16&times;</b><span>Reduction, measured<br>on a real ticket</span></div>
+      </div>
+      <p class="fine" style="margin-top:clamp(12px,1.8vh,20px)">And it arrives as <b style="color:var(--ink)">conclusions</b>, not as material the model still has to reduce &mdash; identically, on every turn, for every agent.</p>
+      <p class="fine" style="margin-top:clamp(8px,1.2vh,14px)">Composed from the readers that already own each fact. Nothing is recomputed by a second route, because a digest that derives lane state its own way is a second source of truth that will eventually disagree with the board.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 13 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">13</span><span class="rail-sec">MCP</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">How agents reach it</p>
+  <h2>The verbs are the tool set.</h2>
+  <p class="lede">Claude Code, Cursor and API-backed agents all need the same thing: to <strong>ask the console what it knows</strong> instead of reading eight files to work it out. Writing that three times means three surfaces that drift, so it is implemented once as MCP.</p>
+  <div class="cols c3">
+    <div class="card steel">
+      <span class="tag">Tools</span>
+      <h3>Generated, not listed</h3>
+      <p>There is no tool table in the server. It walks the verb registry and derives each schema from the handler's own signature &mdash; so a new TOML row is a new tool with no code change.</p>
+    </div>
+    <div class="card steel">
+      <span class="tag">Resources</span>
+      <h3>Every ticket is a URI</h3>
+      <p><code>ticket://{ID}</code> returns the same digest the <code>context</code> verb produces &mdash; delegated, never a second representation. Clients can subscribe and be pushed an update when it changes.</p>
+    </div>
+    <div class="card steel">
+      <span class="tag">Setup</span>
+      <h3>One command per editor</h3>
+      <p><code>setup cursor|claude|vscode</code> writes that editor's MCP config plus a warning against hand-editing ticket TOML. Idempotent &mdash; it merges rather than overwrites.</p>
+    </div>
+  </div>
+  <p class="fine" style="margin-top:clamp(12px,1.8vh,22px)">Deliberately small: three methods plus resources. Prompts, sampling and completion are not implemented, and the server says so through its declared capabilities rather than failing calls at runtime.</p>
+</section>
+
+<!-- 14 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">14</span><span class="rail-sec">Agents</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Running the work</p>
+  <h2>Five backends. Adding one is config.</h2>
+  <div class="split">
+    <div>
+      <div class="tablewrap">
+      <table class="kv">
+        <thead><tr><th>Backend</th><th>Transport</th><th>Can steer?</th></tr></thead>
+        <tbody>
+          <tr><td class="k">claude</td><td>stream_json</td><td class="risk r-low">yes</td></tr>
+          <tr><td class="k">cursor-agent</td><td>resume</td><td class="risk r-med">queue only</td></tr>
+          <tr><td class="k">openrouter</td><td>openai_api</td><td class="risk r-low">yes</td></tr>
+          <tr><td class="k">ollama</td><td>openai_api</td><td class="risk r-low">yes</td></tr>
+          <tr><td class="k">lm-studio</td><td>openai_api</td><td class="risk r-low">yes</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="fine" style="margin-top:clamp(10px,1.4vh,16px)">The UI reads steerability from the transport and <b style="color:var(--ink)">hides the control where the CLI cannot do it</b> &mdash; rather than offering a button that lies. An <code>openai_api</code> backend runs the agent loop in-process, which is what lets it hold the console's own verbs as tools and use the same approval gate.</p>
+    </div>
+    <div>
+      <div class="card warn">
+        <span class="tag">The approval gate</span>
+        <h3>Gated: Bash, Write, Edit, WebFetch, Task, screenshot, clipboard-read</h3>
+        <p>Each raises a "Permission needed" card. Screenshot and clipboard-read are answerable <b>at the desk only</b> &mdash; a screenshot sends whatever is on screen; a clipboard read can send a password.</p>
+      </div>
+      <div class="card ok" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Not gated, on purpose</span>
+        <h3>Reads are free</h3>
+        <p>Asking a human to approve "look up this ticket's lane" trains them to click allow without reading &mdash; which is how a gate stops working for the calls that actually matter.</p>
+      </div>
+      <p class="fine" style="margin-top:clamp(10px,1.4vh,16px)">Full-bypass permission modes are deliberately absent. Turning the gate off is a decision for a terminal you are sitting in front of, not a button on a web page.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 15 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">15</span><span class="rail-sec">Runs</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Concurrency</p>
+  <h2>One isolated checkout per run.</h2>
+  <div class="split">
+    <div>
+      <p class="lede">One agent at a time with a human watching is merely untidy. The moment runs are <strong>scheduled, queued or triggered remotely</strong>, shared working trees become a correctness problem: two agents interleave their edits and nothing records that it happened.</p>
+      <ul class="plain">
+        <li><b>Never create over an existing path.</b> Reusing a directory silently inherits whatever the last run left there, half-applied edits included.</li>
+        <li><b>Never remove a worktree with uncommitted work</b> unless forced &mdash; and when refusing, say exactly what would be lost. A run's entire output can be uncommitted.</li>
+        <li><b>Never guess a branch name.</b> The pattern comes from config, because branch conventions belong to the project, not to the tool.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="card steel">
+        <span class="tag">Read-only hint</span>
+        <h3>PR state via <code>gh</code></h3>
+        <p>No GitHub client, no token storage. It shells out to a CLI that manages its own auth, parses exactly what is needed, and surfaces a lane hint. It never becomes a second tracker or a write path back to GitHub.</p>
+      </div>
+      <div class="card steel" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Coordination</span>
+        <h3>ready · claim · comment</h3>
+        <p>An agent asks what is ready, claims it, and reports back &mdash; through the same mutation API as everything else. A session stop-hook reminds anyone who claimed a ticket and then recorded nothing.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 16 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">16</span><span class="rail-sec">Cost</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">What it costs to run</p>
+  <h2>Spend is a first-class fact.</h2>
+  <p class="lede">Token spend is recorded per run and attributed, so "what did this ticket cost" is a query rather than an argument.</p>
+  <div class="tablewrap">
+  <table class="kv">
+    <thead><tr><th>Grouping</th><th>Answers</th></tr></thead>
+    <tbody>
+      <tr><td class="k">--by ticket</td><td>What has this piece of work cost end to end &mdash; and it shows up in the ticket digest, so an agent sees it too</td></tr>
+      <tr><td class="k">--by model</td><td>Whether the expensive model is earning its place against the cheap one</td></tr>
+      <tr><td class="k">--by skill</td><td>Which parts of the method are expensive &mdash; the input to trimming them</td></tr>
+      <tr><td class="k">--by backend</td><td>Local vs hosted, in money rather than in impressions</td></tr>
+      <tr><td class="k">--by day</td><td>Whether a change to the harness moved the number</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="fine" style="margin-top:clamp(10px,1.5vh,18px)">Paired with <code>harness lint</code> and <code>telemetry skills</code>, which report structural breakage across the harness and which skills are actually invoked. A skill nothing calls is <b style="color:var(--ink)">evidence</b> it may be dead &mdash; reported as a warning, never an error, because a lint that cries wolf gets disabled and then the real errors go unseen too.</p>
+</section>
+
+<!-- 17 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">17</span><span class="rail-sec">Shell</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Beyond the browser tab</p>
+  <h2>A native shell, and what<br>a browser tab cannot do.</h2>
+  <div class="split">
+    <div>
+      <p class="lede">The console is honest about its own limits: a page on <code>127.0.0.1</code> <strong>cannot</strong> capture the screen, run OCR, drive the mouse, or hold a microphone open. Those need a real host.</p>
+      <ul class="plain">
+        <li><b>Tauri 2 host</b> wrapping the same server &mdash; it does not replace it.</li>
+        <li><b>The tray is a remote control</b> for the live chat: show, talk, new chat, mute, interrupt, quit. Built <i>from</i> a feature registry file, not described by one.</li>
+        <li><b>Local speech.</b> Whisper for listening, Piper for speaking &mdash; on the machine, not in a cloud.</li>
+        <li><b>Never one-click.</b> The tray may open a window or start listening. It may never approve anything.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="card warn">
+        <span class="tag">Status, plainly</span>
+        <h3>Phase 1, and unfinished</h3>
+        <p>The shell is a spike. Hands-free listening was rebuilt this month after the original design proved unusable &mdash; it detected the wake word by transcribing every sound in the room and matching text. The rebuild moves detection onto the audio itself.</p>
+      </div>
+      <div class="card warn" style="margin-top:clamp(12px,1.6vw,20px)">
+        <span class="tag">Not signed off</span>
+        <h3>Three tickets still in Verify</h3>
+        <p>The Assistant, the tray, and hands-free listening are all implemented and none is closed. They are shown here as work in progress, not as capability you can rely on today.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 18 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">18</span><span class="rail-sec">Adopt</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Getting started</p>
+  <h2>Empty folder to agreed requirements.</h2>
+  <div class="split-wide">
+    <div>
+      <pre class="term"><i>$</i> python console/kanban.py <b>onboard</b>
+
+  <u>1</u> identity          <s>who is writing the logs</s>
+  <u>2</u> project name      <s>what this workspace is</s>
+  <u>3</u> boards            <s>which kinds are on</s>
+  <u>4</u> agent CLI         <s>which backend</s>
+  <u>5</u> first ticket      <s>kickoff</s>
+  <u>6</u> <b>requirements</b>      <s>missing → stub → drafted → frozen</s>
+
+<i>nothing above writes. every step reports state
+and names the command that changes it.</i></pre>
+    </div>
+    <div>
+      <p class="lede">The last step is the point of the list, not an afterthought.</p>
+      <ul class="plain">
+        <li><b>It tracks every ticket</b> through missing &rarr; stub &rarr; drafted &rarr; frozen, and names the pre-freeze skill chain &mdash; whose order is the part people forget.</li>
+        <li><b>Nothing is guessed.</b> The remaining work is decisions: what this is called, which boards, what the requirements are. A wizard that guesses at those just produces a workspace somebody has to un-guess.</li>
+        <li><b>It can be switched off</b> with one config row, once it stops earning its place.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 19 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">19</span><span class="rail-sec">Evidence</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">How we know it holds</p>
+  <h2>The harness checks itself.</h2>
+  <p class="lede">Prompt-facing config has <strong>no compiler behind it</strong>. A skill whose name drifts from its directory, a path reference to a renamed file, a skill nothing calls &mdash; all silent, all surfacing later as an agent behaving oddly mid-ticket.</p>
+  <div class="cols c3">
+    <div class="card warn">
+      <span class="tag">Error &mdash; fails CI</span>
+      <h3>Unambiguously broken</h3>
+      <p>A missing frontmatter field. A name that disagrees with its own directory. A path that resolves to nothing. No judgement involved, so no argument about it.</p>
+    </div>
+    <div class="card">
+      <span class="tag">Warning &mdash; never fails</span>
+      <h3>Judgement required</h3>
+      <p>An orphan skill is <i>evidence</i> it may be dead, not proof &mdash; a skill can be legitimately user-invoked only. Warnings do not fail CI, because a lint that cries wolf gets turned off.</p>
+    </div>
+    <div class="card ok">
+      <span class="tag">Narrow on purpose</span>
+      <h3>Explicit paths only</h3>
+      <p>It follows real path references, never a bare word in backticks. Guessing at prose produces a false positive on every ordinary noun, and a linter wrong a third of the time is worse than none.</p>
+    </div>
+  </div>
+  <p class="fine" style="margin-top:clamp(12px,1.8vh,22px)">Alongside it: <b style="color:var(--ink)">60 test modules</b> over the console, and a validator that reports the full requirement &rarr; task &rarr; code &rarr; verification chain with coverage percentages &mdash; report-only, never modifying files.</p>
+</section>
+
+<!-- 20 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">20</span><span class="rail-sec">Limits</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">Being honest about it</p>
+  <h2>What this does not do.</h2>
+  <p class="lede">BE HONEST is a gate in the method. It would be a poor advertisement for it to leave this slide out.</p>
+  <div class="cols c2">
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>Built and exercised by one engineer</h3>
+      <p>A second concurrent user is unproven and will surface gaps in the conventions that one person never hit.</p>
+    </div>
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>Three features sit in Verify</h3>
+      <p>The Assistant-as-home model, the tray, and hands-free voice are implemented and unclosed. Implemented is not the same as signed off.</p>
+    </div>
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>Two boards are stubs</h3>
+      <p>Migrations and Releases exist as config with <code>enabled = false</code>. Projects and Files tabs are not built at all. That is a choice, but it is still an absence.</p>
+    </div>
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>The gates bind the agent, not you</h3>
+      <p>Nothing stops a human hand-editing a TOML file and desynchronising the board. The discipline is enforced on the automated path, which is where it was being lost.</p>
+    </div>
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>The desktop shell needs a Rust toolchain</h3>
+      <p>Which works against the drop-in-anywhere property the rest of the template holds to. The web console has no such requirement.</p>
+    </div>
+    <div class="card warn">
+      <span class="tag">Honest limit</span>
+      <h3>Model quality still varies</h3>
+      <p>The method makes failures visible and recoverable. It does not make a weak model into a strong one.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 21 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">21</span><span class="rail-sec">Shape</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The whole thing, on one slide</p>
+  <h2>Four layers, one direction of trust.</h2>
+  <div class="figwrap">
+  <figure>
+    <svg viewBox="0 0 1000 300" role="img" aria-label="Four layers: editors, harness, console, vault and git">
+      <g font-family="IBM Plex Mono, monospace" font-size="11">
+        <rect x="120" y="14" width="760" height="52" rx="3" class="d-fill d-steel-s" stroke-width="1.5"/>
+        <text x="500" y="36" text-anchor="middle" font-size="13" font-weight="600">EDITORS &amp; CLIENTS</text>
+        <text x="500" y="54" text-anchor="middle" font-size="10" opacity=".72">Claude Code · Cursor · VS Code · MCP clients · the desktop shell</text>
+
+        <rect x="120" y="86" width="760" height="62" rx="3" class="d-fill d-haz-s" stroke-width="1.5"/>
+        <text x="500" y="108" text-anchor="middle" font-size="13" font-weight="600">HARNESS &mdash; the method</text>
+        <text x="500" y="126" text-anchor="middle" font-size="10" opacity=".72">6 gates · 7 role agents · 39 skills · handoff between every stage</text>
+        <text x="500" y="141" text-anchor="middle" font-size="9" opacity=".6">prompt-facing config, checked by harness lint</text>
+
+        <rect x="120" y="168" width="760" height="62" rx="3" class="d-fill d-pass-s" stroke-width="1.5"/>
+        <text x="500" y="190" text-anchor="middle" font-size="13" font-weight="600">CONSOLE &mdash; the engine</text>
+        <text x="500" y="208" text-anchor="middle" font-size="10" opacity=".72">31 verbs · one mutation API · boards · MCP server · runs &amp; worktrees</text>
+        <text x="500" y="223" text-anchor="middle" font-size="9" opacity=".6">stdlib Python · everything with one right answer lives here</text>
+
+        <rect x="120" y="250" width="760" height="40" rx="3" class="d-fill" stroke="currentColor" stroke-width="1.5" opacity=".9"/>
+        <text x="500" y="266" text-anchor="middle" font-size="13" font-weight="600">VAULT &amp; GIT &mdash; the record</text>
+        <text x="500" y="281" text-anchor="middle" font-size="10" opacity=".72">markdown prose · TOML state · daily logs · full history</text>
+
+        <g stroke-width="1.5" fill="none" class="d-haz-s">
+          <path d="M500 66 V84"/><path d="M500 148 V166"/><path d="M500 230 V248"/>
+        </g>
+
+        <g font-size="9" opacity=".75">
+          <text x="30" y="44">asks</text>
+          <text x="30" y="122">decides</text>
+          <text x="30" y="204">computes</text>
+          <text x="30" y="274">remembers</text>
+        </g>
+        <g class="d-halt-f" font-size="9" font-weight="600" text-anchor="end">
+          <text x="970" y="204">nothing above writes</text>
+          <text x="970" y="218">to the layer below</text>
+          <text x="970" y="232">except through here</text>
+        </g>
+      </g>
+    </svg>
+    <figcaption>The direction is the point. An agent may not hand-edit the record; it goes through the console, which is the only writer. That single constraint is what makes the board trustworthy, the digest cheap, and the audit trail complete.</figcaption>
+  </figure>
+  </div>
+</section>
+
+<!-- 22 ============================================================ -->
+<section class="slide">
+  <div class="rail"><span class="rail-num">22</span><span class="rail-sec">Close</span><span class="rail-tot">22</span></div>
+  <p class="eyebrow">The takeaway</p>
+  <p class="thesis">The gain isn't that a model writes the code.<br>It's that <em>the method can no longer be skipped</em> &mdash; and the boring parts stopped costing tokens.</p>
+  <div class="hazard-rule"></div>
+  <div class="stats s4">
+    <div class="stat"><b>6</b><span>Gates that halt<br>rather than guess</span></div>
+    <div class="stat"><b>16&times;</b><span>Less context read<br>per agent turn</span></div>
+    <div class="stat"><b>0</b><span>Runtime dependencies<br>to install</span></div>
+    <div class="stat"><b>0</b><span>Irreversible acts<br>without a human</span></div>
+  </div>
+</section>
+
+</main>
+
+<div class="chrome">
+  <button id="prev" aria-label="Previous slide">&#8592;</button>
+  <button id="next" aria-label="Next slide">&#8594;</button>
+  <span class="counter"><b id="cur">1</b>&thinsp;/&thinsp;<span id="tot">22</span></span>
+</div>
+
+<script>
+(function(){
+  var deck = document.getElementById('deck');
+  if(!deck) return;
+  var slides = Array.prototype.slice.call(deck.querySelectorAll('.slide'));
+  if(!slides.length) return;
+  document.documentElement.classList.add('js');
+
+  var i = 0;
+  var curEl = document.getElementById('cur');
+  var totEl = document.getElementById('tot');
+  var prog  = document.getElementById('prog');
+  totEl.textContent = slides.length;
+
+  function show(n, push){
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function(s, k){ s.classList.toggle('is-active', k === i); });
+    curEl.textContent = i + 1;
+    prog.style.width = ((i + 1) / slides.length * 100) + '%';
+    if(push){ try { history.replaceState(null, '', '#' + (i + 1)); } catch(e){} }
+    window.scrollTo(0, 0);
+  }
+
+  function fromHash(){
+    var n = parseInt((location.hash || '').replace('#',''), 10);
+    show(isNaN(n) ? 0 : n - 1, false);
+  }
+
+  document.getElementById('next').addEventListener('click', function(){ show(i + 1, true); });
+  document.getElementById('prev').addEventListener('click', function(){ show(i - 1, true); });
+
+  document.addEventListener('keydown', function(e){
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key;
+    if(k === 'ArrowRight' || k === 'PageDown' || k === ' '){ e.preventDefault(); show(i + 1, true); }
+    else if(k === 'ArrowLeft' || k === 'PageUp'){ e.preventDefault(); show(i - 1, true); }
+    else if(k === 'Home'){ e.preventDefault(); show(0, true); }
+    else if(k === 'End'){ e.preventDefault(); show(slides.length - 1, true); }
+  });
+
+  window.addEventListener('hashchange', fromHash);
+  fromHash();
+})();
+</script>
