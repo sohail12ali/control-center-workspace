@@ -12,8 +12,11 @@ routes but still need to appear in the manifest.
 
 from ..plugins.base import Plugin
 
-# Nav order. Ids not present here sort after, alphabetically — so a
-# third-party plugin's tab still shows up without editing this list.
+# Nav order for the browser (`kanban.py serve` without html.in-shell).
+# The Assistant tab is registered by its plugin but is *not* listed here:
+# putting it first is a frontend sort when `html.in-shell` is set
+# (T-016 FR-1 / BR-4). The CSS class is client-only, so this list cannot
+# branch on it. Ids not present here sort after, alphabetically.
 NAV_ORDER = [
     "overview",
     "board:tickets",

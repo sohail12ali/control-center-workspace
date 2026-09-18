@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T001"
+title = "Phase 0 - harness foundation: defects, tests, CI, telemetry"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

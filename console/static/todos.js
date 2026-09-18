@@ -178,7 +178,9 @@
       label === null
         ? C.el("span", { class: "gname muted", text: "General (no ticket)" })
         : C.el("button", {
-            class: "gname link-ish", title: "Open the tickets board",
+            // `.gname` already carries the pointer and the hover underline;
+            // the `link-ish` that used to sit here matched no rule at all.
+            class: "gname", title: "Open the tickets board",
             onclick: function () { if (api) api.go("board:tickets"); },
           }, [label]),
       C.el("span", { class: "ghair" }),

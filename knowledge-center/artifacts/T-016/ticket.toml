@@ -1,0 +1,14 @@
+[ticket]
+id = "T-016"
+title = "Make the Assistant the home, and every piece of work a Run you can watch"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-11"
+updated = "2026-09-11"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

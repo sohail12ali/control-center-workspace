@@ -1,0 +1,53 @@
+[meta]
+ticket = "T-016"
+tracker = "questions"
+updated = "2026-09-11T09:32:14Z"
+seq = 4
+
+[[items]]
+id = "Q1"
+status = "resolved"
+text = "How does the console launch a harness role if Cursor IDE has no inbound start API? (a) durable Run plus a prompt package a human or Cursor opens (b) spawn cursor-agent CLI as a console chat despite the hybrid lock (c) MCP tool only callable from inside an already-running Cursor session"
+type = "design"
+priority = "critical"
+raised_by = "agent"
+raised_on = "2026-09-11"
+affects = "FR-6"
+answer = "Spawn the cursor-agent CLI as a console chat with the harness persona. The Run executor is that chat id. This amends hybrid-harness-runs: work is not the Cursor IDE."
+resolved_on = "2026-09-11"
+
+[[items]]
+id = "Q2"
+status = "resolved"
+text = "Is a Run a new record type, a wrapper around agent_manager chat ids, an extension of jobs.py (verb-only today), or a tagged union of chat / job / cursor-pointer?"
+type = "technical"
+priority = "high"
+raised_by = "agent"
+raised_on = "2026-09-11"
+affects = "FR-2"
+answer = "Tagged union: a small Run record pointing at chat-id and/or job-id and/or cursor-pointer. Reuse existing stores; do not extend jobs.py to track chats."
+resolved_on = "2026-09-11"
+
+[[items]]
+id = "Q3"
+status = "resolved"
+text = "Besides ticket move/set and tracker add/update, are progress-append, close-work, and log-work verbs in T-016 or deferred?"
+type = "scope"
+priority = "high"
+raised_by = "agent"
+raised_on = "2026-09-11"
+affects = "FR-5"
+answer = "Defer progress-append, close-work, and log-work. T-016 ships ticket move/set and tracker add/update only."
+resolved_on = "2026-09-11"
+
+[[items]]
+id = "Q4"
+status = "resolved"
+text = "When html.in-shell, is Assistant-as-home a new first tab, or chrome that hides the tab strip until the person asks for a drawer?"
+type = "design"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-09-11"
+affects = "FR-1"
+answer = "New first tab via register_tab, first in NAV_ORDER when html.in-shell. Other tabs stay in the strip."
+resolved_on = "2026-09-11"

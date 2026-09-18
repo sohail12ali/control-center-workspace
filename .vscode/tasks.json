@@ -1,0 +1,47 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "desktop: cargo build",
+      "type": "shell",
+      "command": "cargo build --manifest-path desktop/src-tauri/Cargo.toml",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \". '${workspaceFolder}/desktop/msvc-env.ps1'; cargo build --manifest-path '${workspaceFolder}/desktop/src-tauri/Cargo.toml'\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "desktop: cargo build (release)",
+      "type": "shell",
+      "command": "cargo build --release --manifest-path desktop/src-tauri/Cargo.toml",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \". '${workspaceFolder}/desktop/msvc-env.ps1'; cargo build --release --manifest-path '${workspaceFolder}/desktop/src-tauri/Cargo.toml'\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Launch Delivery Console",
+      "type": "shell",
+      "command": "cargo run --manifest-path desktop/src-tauri/Cargo.toml -- --console",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \". '${workspaceFolder}/desktop/msvc-env.ps1'; cargo run --manifest-path '${workspaceFolder}/desktop/src-tauri/Cargo.toml' -- --console\""
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

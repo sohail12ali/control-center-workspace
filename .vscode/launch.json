@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Delivery Console (desktop)",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "command": "cargo run --manifest-path desktop/src-tauri/Cargo.toml -- --console",
+      "windows": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \". '${workspaceFolder}/desktop/msvc-env.ps1'; cargo run --manifest-path '${workspaceFolder}/desktop/src-tauri/Cargo.toml' -- --console\""
+      }
+    },
+    {
+      "name": "Delivery Console (desktop, release)",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "command": "./desktop/src-tauri/target/release/delivery-console-desktop --console",
+      "windows": {
+        "command": "& '${workspaceFolder}/desktop/src-tauri/target/release/delivery-console-desktop.exe' --console"
+      }
+    }
+  ]
+}

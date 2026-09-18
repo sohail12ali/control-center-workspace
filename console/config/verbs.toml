@@ -1,0 +1,275 @@
+# Verbs — deterministic jobs that run without a model.
+#
+# The rule for what belongs here: if the work has exactly one right answer and
+# no judgement in it, it is a verb. Asking a language model to compute it costs
+# tokens and can come back subtly wrong; computing it in Python costs nothing
+# and is the same answer every time.
+#
+# Fields:
+#   id             what callers name. Stable — an agent, a board button, a
+#                  scheduler and an MCP tool all address the verb by this.
+#   handler        dotted path into a console module, resolved at REGISTRY
+#                  LOAD. A typo fails at startup, listed with the verb id,
+#                  rather than when someone finally runs it.
+#   needs_ticket   a ticket id is required
+#   needs_confirm  the caller must pass confirm — for anything that mutates
+#                  git or the filesystem, so a stray click or a hallucinated
+#                  tool call cannot trigger it
+#   kinds / lanes  which board kinds and lanes it applies to (empty = any)
+#   enabled        false removes it from every caller at once
+#
+# Handlers all take `(repo_root, ticket=None, **args)`. That fixed signature is
+# what lets a verb be dispatched from config with no per-verb glue anywhere.
+# Adapters live in console/server/verb_handlers.py and should stay one-liners.
+#
+# Most verbs here are READ-ONLY. The ones that are not say so with
+# `needs_confirm` (see verbs.py, which enforces it): `kickoff` writes a ticket
+# directory, `remember` writes the Assistant's memory, `desktop-clipboard-write`
+# replaces the system clipboard. `needs_confirm` stops a stray click or a
+# hallucinated tool call; it is NOT the human approval gate — that lives in
+# `agents.toml`'s `gated_tools` and shows a card in the chat.
+
+[[verb]]
+id = "context"
+label = "Ticket context"
+hint = "Everything about one ticket in one call — replaces reading 8 artifacts"
+handler = "verb_handlers.ticket_context"
+needs_ticket = true
+
+[[verb]]
+id = "blockers"
+label = "Blocking items"
+hint = "Open critical questions and unverified critical bugs, by each tracker's own rule"
+handler = "verb_handlers.ticket_blockers"
+needs_ticket = true
+
+[[verb]]
+id = "plan-status"
+label = "Plan status"
+hint = "Which plan tasks are still unchecked"
+handler = "verb_handlers.plan_status"
+needs_ticket = true
+
+[[verb]]
+id = "artifacts"
+label = "Ticket artifacts"
+hint = "Markdown artifacts and any ticket-scripts folder"
+handler = "verb_handlers.ticket_artifacts"
+needs_ticket = true
+
+[[verb]]
+id = "todos"
+label = "Open todos"
+hint = "This ticket's open todos, or every scope's when no ticket is given"
+handler = "verb_handlers.open_todos"
+
+[[verb]]
+id = "harness-lint"
+label = "Harness lint"
+hint = "Frontmatter, dead .claude paths, orphan skills, stale roster counts"
+handler = "verb_handlers.harness_lint_verb"
+
+[[verb]]
+id = "telemetry"
+label = "Token and cost totals"
+hint = "Per ticket by default; pass by=model|skill|backend|day to regroup"
+handler = "verb_handlers.telemetry_summary"
+
+[[verb]]
+id = "skill-usage"
+label = "Skill usage"
+hint = "Which skills have fired, and which never have"
+handler = "verb_handlers.skill_usage"
+
+# Read-only by default — it serves the cached catalogue. `refresh=1` is the one
+# argument that reaches the provider's network, which is why re-fetching is an
+# explicit ask rather than what happens when you merely look.
+[[verb]]
+id = "agent-models"
+label = "Agent models"
+hint = "Cached model catalogue per API provider; pass backend=<id> refresh=1 to re-fetch"
+handler = "verb_handlers.agent_models"
+
+# T-016: pipeline mutations agents currently shell `kanban.py` for. Same
+# writers as the CLI (`tickets.move` / `set_field`, `trackers.add` / `update`).
+# `needs_confirm` is the stray-click guard; lane validation stays in `tickets.move`.
+[[verb]]
+id = "launch-role"
+label = "Launch a harness role"
+hint = "Start analyst/planner/builder/verifier/fixer/harness/deployer as a cursor-agent chat Run"
+handler = "verb_handlers.launch_role"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "run-list"
+label = "List runs"
+hint = "Watchable work records; pass state= to filter"
+handler = "verb_handlers.run_list"
+
+[[verb]]
+id = "run-show"
+label = "Show a run"
+hint = "One Run by run_id"
+handler = "verb_handlers.run_show"
+
+[[verb]]
+id = "ticket-move"
+label = "Move ticket lane"
+hint = "Set the board lane (open, in-progress, blocked, verify, done)"
+handler = "verb_handlers.ticket_move"
+needs_ticket = true
+needs_confirm = true
+
+# T-017 FR-7/FR-8/FR-9: ready/claim/comment share the vault backend registered
+# by `backends.default_backend()` (2b-3) — reached identically via CLI
+# (`kanban.py verb run`), MCP, and HTTP because they are ordinary verbs, not a
+# separate surface (one-api, decision-log a4).
+[[verb]]
+id = "ready"
+label = "Ready tickets"
+hint = "Unblocked, unclaimed tickets across the board; pass kind=/stage=/owner= to filter"
+handler = "verb_handlers.ticket_ready"
+
+[[verb]]
+id = "claim"
+label = "Claim ticket"
+hint = "Set claimed_by/claimed_at for an agent identity (pass agent=<id>); refuses a conflicting claim by name"
+handler = "verb_handlers.ticket_claim"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "comment"
+label = "Add comment"
+hint = "Append an attributed, timestamped comment (pass text=, optional author=); never blocks release"
+handler = "verb_handlers.ticket_comment"
+needs_ticket = true
+needs_confirm = true
+
+# T-018 FR-6/FR-7: reads PR state via the `gh` CLI (decision-log a1, no API
+# client/token) and writes `pr_url`/`pr_state` back onto `ticket.toml`, then
+# surfaces a lane-hint suggestion (never a `ticket_move`/`close-work` call —
+# decision-log a4) on a state transition. Schedulable via `schedules.toml`
+# like any other registered verb — no scheduler code change needed.
+[[verb]]
+id = "pr-check"
+label = "Check PR state"
+hint = "Read PR state for this ticket's branch via gh CLI; updates pr_url/pr_state and suggests a lane move on open/merge"
+handler = "verb_handlers.pr_check"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "ticket-set"
+label = "Set ticket field"
+hint = "Set title, owner, priority, status, url, tags, links, or scripts_dir"
+handler = "verb_handlers.ticket_set"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "tracker-add"
+label = "Add tracker item"
+hint = "Add a questions, bugs, or todos item on this ticket"
+handler = "verb_handlers.tracker_add"
+needs_ticket = true
+needs_confirm = true
+
+[[verb]]
+id = "tracker-update"
+label = "Update tracker item"
+hint = "Change status/answer/priority/type on a questions, bugs, or todos item"
+handler = "verb_handlers.tracker_update"
+needs_ticket = true
+needs_confirm = true
+
+# T-004: the Assistant's own verbs. `kickoff` mutates the vault (a new ticket
+# directory, artifact-map row) — needs_confirm so a stray click or a
+# hallucinated tool call cannot trigger it (BR-5's own paragraph on this).
+# T-014: the talk model handing work to the work model. `needs_confirm`
+# because it starts a process with this workspace's files in reach — but that
+# is only the stray-click guard. The human gate is `console_delegate` in the
+# local rows' `gated_tools` in agents.toml, which raises the Allow/Deny card:
+# a 9B running on your laptop should not be able to spend money on a hosted
+# model without you seeing it. Remove it from those rows if you want the
+# hand-off to be seamless.
+[[verb]]
+id = "delegate"
+label = "Hand a task to the work model"
+hint = "Code, builds, test runs — anything the talk model should not attempt itself"
+handler = "verb_handlers.delegate"
+needs_confirm = true
+
+[[verb]]
+id = "kickoff"
+label = "Create ticket"
+hint = "Same 3 artifacts the kickoff skill produces: ticket.toml, rendered templates, artifact-map row"
+handler = "verb_handlers.kickoff"
+needs_confirm = true
+
+[[verb]]
+id = "tickets-digest"
+label = "Tickets digest"
+hint = "A capped what's-open summary across every ticket"
+handler = "verb_handlers.tickets_digest"
+
+# Mutates console/.cache/assistant/memory.md — not the vault (BR-4) — but
+# still a write, so it goes through needs_confirm like every other mutating
+# verb here.
+[[verb]]
+id = "remember"
+label = "Remember a fact"
+hint = "Append to the Assistant's memory; declines anything that looks like a credential"
+handler = "verb_handlers.remember"
+needs_confirm = true
+
+# ---------------------------------------------------------------- desktop ----
+# T-005. These are the only verbs that leave the repo: they ask the native
+# shell to look at, or touch, the actual desktop. Two of them are gated in
+# `agents.toml` rather than here, because `needs_confirm` guards against a
+# HALLUCINATED call while the approval card guards against an unwanted one —
+# different problems, and a screenshot needs the second.
+
+[[verb]]
+id = "desktop-windows"
+label = "Open windows"
+hint = "Titles and geometry of windows the desktop shell can capture"
+handler = "verb_handlers.desktop_windows"
+
+[[verb]]
+id = "desktop-monitors"
+label = "Monitors"
+hint = "Monitors the desktop shell can capture"
+handler = "verb_handlers.desktop_monitors"
+
+[[verb]]
+id = "desktop-screenshot"
+label = "Screenshot"
+hint = "Capture the screen, a monitor, a window by title, or a region; returns a PNG path"
+handler = "verb_handlers.desktop_screenshot"
+
+[[verb]]
+id = "desktop-ocr"
+label = "Read text in a capture"
+hint = "Text and line boxes from a capture already taken; needs its capture_id"
+handler = "verb_handlers.desktop_ocr"
+
+[[verb]]
+id = "desktop-clipboard-peek"
+label = "Clipboard size"
+hint = "How much text is on the clipboard, and a short preview - never the whole thing"
+handler = "verb_handlers.desktop_clipboard_peek"
+
+[[verb]]
+id = "desktop-clipboard-read"
+label = "Read clipboard"
+hint = "The clipboard's full text; gated on every backend"
+handler = "verb_handlers.desktop_clipboard_read"
+
+[[verb]]
+id = "desktop-clipboard-write"
+label = "Write clipboard"
+hint = "Put text on the clipboard"
+handler = "verb_handlers.desktop_clipboard_write"
+needs_confirm = true

@@ -1,0 +1,14 @@
+[ticket]
+id = "T-015"
+title = "Make the Assistant fast, the tray honest, and the popup dismissible"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "high"
+created = "2026-09-10"
+updated = "2026-09-10"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

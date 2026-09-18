@@ -227,6 +227,16 @@ a { color: var(--accent); }
 .grow  { flex: 1; }
 .row   { display: flex; align-items: center; gap: 8px; }
 .hidden { display: none !important; }
+
+/* The `hidden` ATTRIBUTE, which until now nothing here declared — so the only
+   thing honouring it was the browser's own stylesheet. Author styles beat the
+   UA stylesheet whatever their specificity, so any component that sets its own
+   `display` silently stopped being hideable: `el.hidden = true` set the
+   attribute, the attribute did nothing, and the element stayed on screen.
+   `.fpick-panel` (display: flex) was the first to hit it and never closed.
+   One rule, so the next component that toggles `hidden` simply works. */
+[hidden] { display: none !important; }
+
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Screen-reader-only, but focusable (skip links). */
@@ -269,6 +279,38 @@ svg.ico { width: 15px; height: 15px; flex: none; stroke-width: 1.9; }
   height: var(--topbar-h); padding: 0 14px;
   min-width: 0;
 }
+
+/* Desktop shell only (html.in-shell from the Tauri host). Browser stays
+   unchanged: .win-controls stays hidden and there is no extra padding. */
+html.in-shell.os-mac .brandrow { padding-left: 78px; }
+html.in-shell:not(.os-mac) .brandrow { padding-right: 0; }
+
+.win-controls {
+  display: none;
+  align-items: stretch;
+  align-self: stretch;
+  height: 100%;
+  margin-left: 4px;
+  flex: none;
+}
+html.in-shell:not(.os-mac) .win-controls { display: flex; }
+
+.win-btn {
+  width: 46px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.win-btn svg.ico { width: 12px; height: 12px; }
+.win-btn:hover { background: var(--surface-hi); color: var(--ink); }
+.win-btn.win-close:hover { background: #e81123; color: #fff; }
 
 .brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .brand h1 { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -437,6 +479,120 @@ main#view.flush { padding: 0; }
 .panel > header .hico.ok { background: var(--ok-soft); color: var(--ok); }
 .panel > header .hico.info { background: var(--info-soft); color: var(--info); }
 
+/* ---- collapsible panels ----------------------------------------------
+   A settings page is a list of subjects, only one of which anyone is here
+   for. Folded, a panel is its header: the page becomes a menu you can see
+   whole, and the one you open is the only thing spending height. The state
+   is per-panel and remembered, so the page you come back to is the page you
+   left. */
+.panel.collapsible > header { cursor: pointer; user-select: none; }
+.panel.collapsible > header:hover { background: var(--surface-2); }
+.panel.collapsible > header:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+.panel > header .chev {
+  flex: none; display: grid; place-items: center; color: var(--ink-3);
+  transition: transform .16s var(--ease);
+}
+.panel > header .chev svg.ico { width: 14px; height: 14px; }
+.panel.collapsed > header { border-bottom: 0; }
+.panel.collapsed > header .chev { transform: rotate(-90deg); }
+.panel.collapsed > .body { display: none; }
+
+/* The ⓘ button: chrome until it is on, then it reads as pressed so the note
+   below is obviously something the reader asked for. */
+.helpbtn { color: var(--ink-3); }
+.helpbtn.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.helpnote {
+  margin: 0; padding: 8px 10px; font-size: 11.8px; line-height: 1.5;
+  color: var(--ink-2); background: var(--accent-soft);
+  border-left: 2px solid var(--accent-line); border-radius: var(--r-sm);
+}
+.helpnote code { font-size: 11px; }
+
+/* ---- a collapsible block inside a panel ------------------------------
+   Quieter than a panel on purpose: no surface of its own, just a rule and a
+   label, because nesting two card looks inside each other reads as two
+   unrelated things rather than as a part of one. */
+.group { border-top: 1px solid var(--line-soft); }
+.group:first-child { border-top: 0; }
+.group > header {
+  display: flex; align-items: center; gap: 7px; padding: 8px 2px;
+  cursor: pointer; user-select: none; color: var(--ink-2);
+}
+.group > header:hover { color: var(--ink); }
+.group > header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.group > header h4 {
+  flex: 1; min-width: 0; font-size: 11.5px; font-weight: 700;
+  letter-spacing: .02em;
+}
+.group > header > svg.ico { width: 13px; height: 13px; color: var(--ink-3); flex: none; }
+.group > .gbody { display: flex; flex-direction: column; gap: 8px; padding: 0 0 8px; }
+.group.collapsed > .gbody { display: none; }
+.group > header .chev { flex: none; display: grid; place-items: center; color: var(--ink-3); transition: transform .16s var(--ease); }
+.group > header .chev svg.ico { width: 13px; height: 13px; }
+.group.collapsed > header .chev { transform: rotate(-90deg); }
+
+/* ---- "what will actually answer" -------------------------------------
+   Reads as a readout, not a control: a tinted block with no switches in it,
+   above the pickers it explains. */
+.route {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--bg-sunk); border: 1px solid var(--line-soft);
+}
+.route .rrow { display: flex; align-items: flex-start; gap: 8px; }
+.route .rrow > svg.ico { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--ink-3); }
+.route .rrow.bad > svg.ico { color: var(--warn); }
+.route .rrow b { display: block; font-size: 12.5px; font-weight: 600; }
+.route .rrow span.muted { font-size: 11.5px; }
+.route .why { font-size: 11.5px; }
+.route .why summary { cursor: pointer; color: var(--ink-3); padding: 2px 0; }
+.route .why summary:hover { color: var(--ink-2); }
+.route .why .rows { margin-top: 4px; }
+
+/* ---- where the keys live ---------------------------------------------
+   A path you can select and copy, because the next thing you do with it is
+   open it in an editor. */
+.envfile {
+  margin-top: 10px; padding: 8px 10px;
+  border-top: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.envfile .row { gap: 6px; align-items: center; }
+.envfile svg.ico { width: 13px; height: 13px; color: var(--ink-3); }
+.envfile b { font-size: 12px; font-weight: 600; }
+.envfile .envpath {
+  font-size: 11.5px; word-break: break-all; user-select: all;
+  padding: 4px 6px; border-radius: var(--r-sm);
+  background: var(--bg-sunk); border: 1px solid var(--line-soft);
+}
+
+/* ---- the Settings jump bar -------------------------------------------
+   Sticky, because the reason to want it is that you are far down the page.
+   Each chip opens its section and scrolls to it — a fold that you then have
+   to find is not navigation. */
+.secnav {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 0 10px; margin-bottom: 2px; background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
+}
+.secnav .chips {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.secnav .btn { flex: none; }
+
+/* Narrow: the chips scroll sideways in one row rather than wrapping into a
+   sticky block that eats a third of the fold. Collapse/Expand all keep their
+   place at the end, because they are the two you want when the page is
+   taller than the screen — which is always, here. */
+@media (max-width: 720px) {
+  .secnav .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .secnav .chips::-webkit-scrollbar { display: none; }
+}
+
 /* `align-items:start` so a short panel keeps its own height instead of being
    stretched to the tallest in its row; the max-width stops content sprawling
    into unreadable line lengths on a wide monitor. */
@@ -446,6 +602,11 @@ main#view.flush { padding: 0; }
   align-items: start;
   max-width: 1500px; margin-inline: auto;
 }
+
+.as-home { max-width: 1500px; }
+.as-talk { display: flex; gap: 8px; align-items: flex-end; }
+.as-talk textarea { flex: 1; min-height: 72px; padding-right: 8px; }
+.as-log { max-height: 240px; overflow: auto; margin-top: 8px; }
 .grid .span2 { grid-column: span 2; }
 .grid .span3 { grid-column: span 3; }
 
@@ -648,6 +809,42 @@ main#view.app { padding: 0; overflow: hidden; min-height: 0; }
 }
 .ap-items { flex: 1 1 auto; overflow-y: auto; padding: 7px; min-height: 0; }
 
+/* -- folding the list away --------------------------------------------------
+
+   ONE state (`agents.js`'s `listShown`) written to two classes, because the
+   two widths need different mechanics: above the breakpoint `.hide-list`
+   collapses the grid column, below it `.show-main` is the pane swap this shell
+   already had. Only one of them does anything at a given width.
+
+   `.list-reveal` is the only control left once the list is gone. */
+.list-reveal {
+  display: none; position: absolute; top: 8px; left: 8px; z-index: 6;
+  width: 26px; height: 26px; padding: 0;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--ink-2); cursor: pointer;
+  box-shadow: var(--shadow-1);
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.list-reveal:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.appshell.hide-list .list-reveal { display: inline-flex; }
+/* Room for it, so it never lands on the chat title. */
+.appshell.hide-list .ap-main > header { padding-left: 42px; }
+
+@media (min-width: 901px) {
+  .appshell.hide-list { grid-template-columns: 0 1fr; }
+  /* display:none rather than a zero-width column — nothing focusable should
+     survive off-screen in a pane the user folded away. */
+  .appshell.hide-list .ap-rail { display: none; }
+  /* ...but display:none also takes the rail OUT of grid flow, and then
+     auto-placement slides the main pane into column 1 — the `0` one, blanking
+     the whole tab. Both children are pinned so neither moves when the other
+     leaves. Only inside this query: below the breakpoint the grid is a single
+     column, where a pinned `grid-column: 2` would invent a second one. */
+  .ap-rail { grid-column: 1; }
+  .ap-main { grid-column: 2; }
+}
+
 .ap-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .ap-main > header {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap; row-gap: 5px;
@@ -736,6 +933,54 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 .ct-wire { margin-top: 5px; }
 .ct-wire > summary { cursor: pointer; font-size: 11px; }
 
+/* The reply. It had this class and no rule, so it rendered as bare unlabelled
+   text next to a user message with an icon and a filled bubble — the two
+   halves of one conversation looking like two different kinds of thing.
+
+   Deliberately NOT a matching bubble: a reply is long-form prose with
+   headings, lists and code, and boxing that costs more in readability than
+   the symmetry is worth. A quiet rule down the side marks the turn instead. */
+.ct-assistant {
+  border-left: 2px solid var(--line);
+  padding-left: 11px; margin-left: 1px;
+}
+.ct-assistant .ct-who { color: var(--ink-3); }
+.ct-assistant .ct-who svg.ico { color: var(--accent); }
+.ct-assistant .ct-who > span { text-transform: none; letter-spacing: .01em;
+  font-family: var(--mono); font-size: 10px; font-weight: 600; max-width: 30ch; }
+
+/* A resolved reference, marked in the message it was sent in.
+
+   `/do` as prose and `/do` naming a real skill are the same six characters and
+   do entirely different things — one is text, the other loads a file into the
+   agent's instructions. `prompt_tokens` already draws that line on the wire
+   (a token is rewritten ONLY when it resolves); this is the same line, drawn
+   where a person can see it. Anything that did not resolve is left looking
+   exactly like the prose it will be treated as. */
+.ct-ref {
+  border-radius: 5px; padding: 0 3px; font-family: var(--mono);
+  font-size: .92em; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.ct-ref.ref-skill   { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.ct-ref.ref-persona { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
+.ct-ref.ref-path    { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+
+/* Live echo of the same judgement, under the composer: what WILL resolve if
+   this is sent now. Without it the only way to find out that `/pln` is a typo
+   is to send it and read the reply. */
+.ct-refs {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 11px; color: var(--ink-3);
+}
+.ct-refs .ct-ref { font-size: 10.5px; }
+
+/* A reference in the OPENING message that sets the chat's skill or agent for
+   every turn, rather than applying to this message alone. That scope is what
+   the two dropdowns used to carry, and dropping them without marking it would
+   have lost the distinction rather than simplified it. */
+.ct-ref-sets { box-shadow: 0 0 0 2px var(--accent-soft); }
+
 .ct-md { font-size: 13.2px; line-height: 1.62; }
 .ct-md .md > *:first-child { margin-top: 0; }
 .ct-md .md > *:last-child { margin-bottom: 0; }
@@ -819,6 +1064,48 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 }
 .ct-apphead b { color: var(--ink); }
 .ct-appbtns { margin-top: 8px; gap: 7px; }
+
+/* -- what the call would do: diff, command, or a note --
+   The card used to show the tool's raw arguments, which for a file write is a
+   wall of escaped JSON nobody reads. These styles exist so the answer to
+   "what changes?" is legible at a glance. */
+.ct-preview {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); overflow: hidden;
+}
+.ct-prevhead {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 6px 9px; border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px; color: var(--ink-3);
+}
+.ct-prevhead code { color: var(--ink-2); font-size: 11.5px; }
+.ct-diffstat { margin-left: auto; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ct-command { margin: 0; border: 0; border-radius: 0; max-height: 200px; }
+
+.ct-diff {
+  max-height: 340px; overflow: auto;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11.3px;
+  line-height: 1.55;
+}
+.ct-dl { display: flex; gap: 0; white-space: pre; }
+.ct-dmark {
+  flex: none; width: 1.4em; text-align: center; user-select: none;
+  color: var(--ink-3);
+}
+.ct-dtext { flex: 1 1 auto; padding-right: 9px; }
+
+/* Colour AND a mark character, so the diff is still readable without relying
+   on hue — the add/remove distinction must survive a colour-blind reader. */
+.ct-d-add    { background: var(--ok-soft); color: var(--ink); }
+.ct-d-add .ct-dmark { color: var(--ok); }
+.ct-d-remove { background: var(--danger-soft); color: var(--ink); }
+.ct-d-remove .ct-dmark { color: var(--danger); }
+.ct-d-context { color: var(--ink-3); }
+.ct-d-hunk {
+  background: var(--line-soft); color: var(--ink-3);
+  padding: 1px 0; font-size: 10.8px;
+}
+.ct-dnote { padding: 5px 9px; font-size: 11.3px; border-top: 1px solid var(--line-soft); }
 .ct-approval.decided {
   display: flex; align-items: center; gap: 7px; font-size: 12px;
   color: var(--ink-3); margin: 9px 0;
@@ -837,7 +1124,11 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
 .ct-autoread input { width: auto; margin: 0; }
 .ct-inputrow { display: flex; gap: 8px; align-items: flex-end; }
 .ct-input { min-height: 40px; max-height: 34vh; resize: vertical; }
-.ct-go { flex: none; align-self: stretch; }
+.btn.iconly.ct-go, .btn.iconly.as-send {
+  flex: none; align-self: flex-end;
+  width: 36px; height: 36px; padding: 0;
+}
+.btn.iconly.ct-go svg.ico, .btn.iconly.as-send svg.ico { width: 16px; height: 16px; }
 .ct-dead {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
   font-size: 12.5px; color: var(--ink-3);
@@ -1045,6 +1336,175 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pick-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Why an unavailable backend cannot be used. It sits ON the card because that
+   is where the choice is made — "not installed" in a tooltip taught nobody
+   that the real problem was an unset key or a server that was not running. */
+.pick-why {
+  font-size: 10.8px; line-height: 1.42; color: var(--warn, var(--ink-3));
+  white-space: normal;
+}
+.pick-why.muted { color: var(--ink-3); }
+
+/* -- the two kinds of agent, as a fork ---------------------------------------
+
+   They were a pair of group headings over one flat card list. That understated
+   it: a CLI backend and a console backend overlap on exactly ONE control (the
+   model) and are disjoint on every other — permission modes belong to the CLI,
+   tool-round and history budgets belong to the console loop. Two disjoint
+   control sets sharing one form is why the old one rendered a segmented
+   "permission mode" control with a single button in it for every API backend.
+
+   Tabs rather than a one-time chooser: the lane is remembered across sessions,
+   and a remembered choice you can still SEE is a preference, while one that
+   silently skips a step is a trapdoor. */
+.lane-tabs {
+  display: grid; gap: 8px; margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.lane-tab {
+  text-align: left; font: inherit; cursor: pointer; padding: 10px 12px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  display: flex; flex-direction: column; gap: 5px;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
+}
+.lane-tab:hover:not(:disabled) { border-color: var(--accent-line); }
+.lane-tab.on { border-color: var(--accent); box-shadow: var(--glow); }
+.lane-tab:disabled { opacity: .5; cursor: not-allowed; }
+.lane-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lane-top b { font-size: 13px; }
+.lane-tab.on .lane-top { color: var(--accent); }
+.lane-tab.on .lane-top svg.ico { color: var(--accent); }
+.lane-count { margin-left: auto; font-size: 10.5px; white-space: nowrap; }
+.lane-blurb { font-size: 11.3px; line-height: 1.45; color: var(--ink-2); }
+
+/* What a console agent shows in place of permission modes: the limits its loop
+   will actually enforce. Reported by the server as EFFECTIVE values, so a row
+   that configures nothing reads the same as one that spells out the default. */
+.budgets {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 7px 10px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+}
+.budgets > svg.ico { color: var(--ink-3); flex: none; }
+.budgets .muted { font-size: 11px; line-height: 1.4; }
+
+/* One chat list for both kinds, filterable — not two lists. Once a chat is
+   running the kinds are identical (same transcript, same composer, same
+   approval card), and splitting the history would mean looking in two places
+   for what you ran yesterday. */
+.lane-filter { display: flex; gap: 3px; padding: 2px 2px 8px; }
+.lane-filter button {
+  flex: 1; font: inherit; font-size: 11px; padding: 4px 6px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: transparent; color: var(--ink-3);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+}
+.lane-filter button:hover { background: var(--surface-2); color: var(--ink-2); }
+.lane-filter button[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  color: var(--accent); font-weight: 600;
+}
+
+/* Which gate was in force, at a glance, for every past chat. */
+.lrow .kind-dot {
+  width: 20px; height: 20px; flex: none;
+  display: grid; place-items: center; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3);
+}
+.lrow.k-api .kind-dot {
+  border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent);
+}
+
+/* Budget pressure while a turn is still running.
+
+   `ct-gauge`, NOT `ct-bar`: `.ct-bar` is already the composer's toolbar, 300
+   lines up. Defining it a second time here silently won on cascade order and
+   gave that toolbar `height: 4px; overflow: hidden`, so every control in it —
+   send/queue, mic, read-aloud, announce — was clipped to a 4px sliver. The
+   rule looked local and reached across the whole file. */
+.ct-meter { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+.ct-meter b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ct-gauge {
+  height: 4px; border-radius: 3px; background: var(--bg-sunk);
+  overflow: hidden; margin: 4px 0 8px;
+}
+.ct-gauge > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.ct-gauge.warn > i { background: var(--warn); }
+
+/* -- inline / @ # picker ----------------------------------------------------
+   Floats over the transcript rather than pushing the composer around as rows
+   arrive: an input that jumps while you type is one you mistype into. */
+.cpick-anchor { position: relative; display: flex; min-width: 0; }
+.cpick-anchor > textarea { width: 100%; }
+.cpick {
+  position: absolute; bottom: calc(100% + 6px); left: 0;
+  width: min(460px, 100%); max-height: 264px; overflow-y: auto; z-index: 20;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); box-shadow: var(--shadow-2, var(--shadow-1));
+  padding: 4px;
+}
+.cpick-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 7px 6px; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--line-soft); margin-bottom: 3px;
+}
+.cpick-head svg.ico { width: 13px; height: 13px; }
+.cpick-row { cursor: pointer; }
+
+/* -- filter picker: a dropdown you can type into -----------------------------
+
+   A native <select> stops being usable somewhere around fifty options, and the
+   model picker is handed a fetched catalogue — OpenRouter alone returns 396
+   rows, each carrying a price and a context window that a <select> can only
+   put in a `title` you hover one row at a time. Reuses the palette's `.cp-row`
+   / `.cp-label` / `.cp-hint` so a row looks the same wherever it is listed. */
+.fpick { position: relative; min-width: 0; display: flex; }
+.fpick-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+  padding: 5px 8px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  transition: border-color .14s var(--ease);
+}
+.fpick-btn:hover { border-color: var(--accent-line); }
+.fpick-btn[aria-expanded="true"] { border-color: var(--accent); box-shadow: var(--glow); }
+.fpick-val { flex: 1 1 auto; min-width: 0; }
+.fpick-btn > svg.ico { flex: none; color: var(--ink-3); }
+
+.fpick-panel {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0;
+  width: max(100%, 320px); max-width: min(460px, 88vw);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); box-shadow: var(--shadow-3);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* Above the control instead, when it sits low enough that a panel below would
+   fall off the viewport. */
+.fpick.up .fpick-panel { top: auto; bottom: calc(100% + 4px); }
+.fpick-search {
+  display: flex; align-items: center; gap: 7px; padding: 7px 9px;
+  border-bottom: 1px solid var(--line-soft); color: var(--ink-3);
+}
+.fpick-search svg.ico { flex: none; }
+.fpick-input {
+  flex: 1 1 auto; min-width: 0; border: 0; outline: none;
+  background: transparent; font: inherit; font-size: 12.5px; color: var(--ink);
+  padding: 0;
+}
+.fpick-list { max-height: 246px; overflow-y: auto; padding: 4px; }
+.fpick-row { cursor: pointer; border-radius: 6px; }
+.fpick-gap { width: 13px; flex: none; }
+.fpick-custom .cp-label { font-style: italic; }
+.fpick-empty { padding: 12px 10px; text-align: center; font-size: 11.5px; }
+.fpick-foot {
+  padding: 5px 10px; border-top: 1px solid var(--line-soft);
+  background: var(--surface-2); color: var(--ink-3);
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
 
 /* ---------------- vault ----------------
    Three columns: collapsible card sidebar, canvas stage, and a file viewer
@@ -1255,7 +1715,10 @@ pre.code.term { max-height: 52vh; font-size: 11.8px; }
    `ab-`-prefixed on purpose: `.steps`/`.step` belong to the Overview
    onboarding card (a grid ROW layout), and sharing the names let its
    grid-template-columns bleed into these cards and overlap the text. */
-.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+/* `.toc` itself lives with the prose rules further down — it is one component
+   with one rule, and it used to be two: this half set gap 6px and a 10px top
+   margin, the other set gap 5px and made it sticky. The second won on order,
+   so everything here except the top margin was already dead. */
 .ab-steps { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); margin: 8px 0 2px; }
 .ab-step { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r-md); padding: 10px 11px; }
 .ab-step .num {
@@ -1367,19 +1830,42 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
   display: flex; flex-wrap: wrap; gap: 5px;
   position: sticky; top: 0; z-index: 5;
   background: var(--bg); padding: 8px 0 9px;
-  border-bottom: 1px solid var(--line-soft); margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft); margin: 10px 0 2px;
 }
 .flowline { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 6px 0 12px; }
 .flowline .fbox { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r-sm); padding: 4px 9px; font-size: 11.5px; }
 .flowline .farrow { color: var(--ink-3); }
 
 /* -- settings rows -- */
+/* A settings row: an icon or control, a label with its explanation, and
+   whatever operates it. It must WRAP.
+
+   Panels are laid out at `minmax(290px, 1fr)`, so one can be 290px wide. A row
+   carrying two time inputs and the word "to" spends ~200px of that on
+   controls, and with `flex: 1` (basis 0) the label column takes whatever is
+   left — about 13px, which renders one word per line down a column. Giving the
+   text a real flex-basis makes the controls wrap to their own line instead,
+   which is the outcome that was wanted at every width. */
 .setrow {
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
   padding: 9px 4px; border-bottom: 1px solid var(--line-soft);
 }
 .setrow:last-child { border-bottom: 0; }
-.setrow .settext { flex: 1; min-width: 0; }
+.setrow .settext { flex: 1 1 min(13rem, 100%); min-width: 0; }
+
+/* Controls that belong together — a from/to pair split across two lines reads
+   as two unrelated fields.
+
+   `flex-basis: 100%` puts them on their own line ALWAYS, rather than at
+   whatever width the arithmetic happens to break: nothing can share a line
+   with an item that asks for all of it. Deterministic beats tuned, because the
+   panel width here depends on the viewport, the column count and the browser's
+   own idea of how wide a time input should be. */
+.setctl {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  flex: 1 1 100%;
+}
+.setctl input[type="time"] { min-width: 7.5em; }
 .setrow .settext b { display: block; font-size: 12.8px; font-weight: 600; }
 .setrow .settext span { font-size: 11.8px; color: var(--ink-3); }
 
@@ -1581,4 +2067,68 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
   .topbar, .tabs, .drawer, .scrim, .toasts { display: none !important; }
   main#view { overflow: visible; padding: 0; }
   .panel { break-inside: avoid; box-shadow: none; }
+}
+
+/* -- command palette (Ctrl/Cmd-K) --
+   Fixed overlay rather than an in-tab panel: it has to be reachable from every
+   tab, including one that is mid-render, and it must not inherit a tab's
+   layout constraints. */
+.cp-scrim {
+  position: fixed; inset: 0; z-index: 90;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgba(15, 17, 21, .38);
+  backdrop-filter: blur(2px);
+}
+.cp-scrim.on { display: flex; }
+
+.cp-panel {
+  width: min(640px, 100%); max-height: 70vh;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); overflow: hidden;
+  box-shadow: 0 18px 48px -12px rgba(15, 17, 21, .34);
+}
+
+.cp-inputwrap {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 14px; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-3);
+}
+.cp-input {
+  flex: 1 1 auto; border: 0; background: none; outline: none;
+  font: inherit; font-size: 14.5px; color: var(--ink);
+}
+.cp-input::placeholder { color: var(--ink-3); }
+
+.cp-list { flex: 1 1 auto; overflow: auto; padding: 5px 0; }
+.cp-group {
+  padding: 7px 14px 4px; font-size: 10.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.cp-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 14px; cursor: pointer; font-size: 13px;
+}
+.cp-row .ico { flex: none; color: var(--ink-3); }
+.cp-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+.cp-hint { flex: none; font-size: 11.5px; }
+/* Selection is shown by background AND a left rail, so it survives a
+   high-contrast mode that flattens backgrounds. */
+.cp-row.on { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+.cp-row.on .ico { color: var(--accent); }
+.cp-row.off { opacity: .55; cursor: default; }
+.cp-row.off:hover { background: none; }
+.cp-row:hover:not(.off) { background: var(--surface-2); }
+
+.cp-empty { padding: 18px 14px; color: var(--ink-3); font-size: 13px; }
+.cp-foot {
+  display: flex; gap: 14px; padding: 7px 14px;
+  border-top: 1px solid var(--line-soft); font-size: 11px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cp-scrim.on .cp-panel { animation: cp-in .12s ease-out; }
+  @keyframes cp-in { from { transform: translateY(-6px); opacity: .6; } }
 }

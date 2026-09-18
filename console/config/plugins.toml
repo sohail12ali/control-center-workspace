@@ -56,9 +56,43 @@ id = "todos"
 module = "features.todos_feature"
 enabled = true
 
+# Deterministic jobs over HTTP. No tab — verbs are run from wherever you
+# already are (the command palette, a card), not somewhere you navigate to.
+# Disabling this leaves the palette without its "run" section; everything else
+# keeps working.
+[[plugin]]
+id = "verbs"
+module = "features.verbs_feature"
+enabled = true
+
+# Read-only machine state (schedules, worktrees, notification health), shown
+# inside the tabs it qualifies rather than on a tab of its own. Disabling this
+# drops those panels; every tab that hosts one keeps working without it.
+[[plugin]]
+id = "ops"
+module = "features.ops_feature"
+enabled = true
+
 [[plugin]]
 id = "vault"
 module = "features.vault_feature"
+enabled = true
+
+# T-017 FR-4/2a: MCP Streamable HTTP transport (POST request/response + GET
+# SSE for server-initiated messages), mounted on this same process/port so
+# editor MCP clients don't need a separate process. No tab — this is a
+# protocol endpoint, not a UI surface. stdio (`console/mcp_server.py`) is
+# unaffected either way.
+[[plugin]]
+id = "mcp_http"
+module = "features.mcp_http_feature"
+enabled = true
+
+# T-004/T-016: one reused Assistant chat plus the home tab (talk, Runs,
+# ticket strip). Routes also serve the native bridge and `kanban assistant say`.
+[[plugin]]
+id = "assistant"
+module = "features.assistant_feature"
 enabled = true
 
 # The nav manifest itself. Disabling this leaves the frontend with no tab

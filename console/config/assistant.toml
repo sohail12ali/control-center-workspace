@@ -1,0 +1,176 @@
+# The Assistant's defaults — the persona's settings, not its instructions
+# (those are `console/config/assistant.md`).
+#
+# This file is COMMITTED: it states what this workspace ships with. Your own
+# choice of backend is not committed — `POST /api/assistant/settings` writes
+# it to `console/.cache/assistant/settings.json` (gitignored) so picking a
+# model on your laptop never lands in anyone else's diff. The merged view is
+# what `GET /api/assistant/settings` returns and what the native shell reads.
+#
+# Schema and per-key defaults: `console/server/assistant_config.py`'s
+# `DEFAULTS`. A key that is not in there is refused by a settings write, so a
+# typo fails loudly instead of being stored and quietly ignored.
+
+[assistant]
+
+# "" means resolve at use time: the first enabled+installed backend in
+# local-first order (ollama, lm-studio, claude, openrouter, cursor-agent).
+# Deliberately not a hardcoded id — that would be wrong on any machine that
+# doesn't have that particular CLI installed.
+backend = ""
+
+# "" means the backend's own default model.
+model = ""
+
+# `default`, not `plan`. The Assistant is asked to create tickets and write
+# to memory; in `plan` mode a CLI backend refuses every write, so the
+# gated-but-reachable mode is the honest one. Gated tools still raise the
+# "Permission needed" card — the mode does not remove the gate.
+mode = "default"
+
+# -- the work model ----------------------------------------------------------
+# `backend` and `model` above are the TALK pair — conversation, status, ticket
+# lookups. These are where real work goes: code changes, builds, test runs.
+#
+# The point of the split is that they want different things. A local 9B answers
+# "what's open?" in about a second and is a poor engineer; a CLI agent is the
+# other way round. The talk model hands a task over with `console_delegate`,
+# and this is what picks it up.
+#
+# Empty now means RESOLVE AT USE TIME, local-first, exactly as `backend` does
+# above — it used to mean "nowhere to delegate to", which made this a single id
+# you had to set by hand, and in practice pinned work to whichever CLI was
+# chosen once. A machine with two local runtimes installed still sent every
+# task to a hosted coding agent.
+#
+# The bar for being sent work is higher than for talking (see `work_ready` in
+# `console/server/assistant_config.py`): tool calling is not optional, and a
+# model needs about 16k of context to hold a file, an edit, a command's output
+# and a test log at once. A local model that fails those is still used for
+# TALKING — the roles are judged separately, which is the point of having two.
+#
+# What has NOT changed: `delegate` never runs the task on the talk model. If
+# nothing in the chain is ready it says so and names what it tried. A 4B chat
+# model quietly attempting a refactor is the worst outcome available.
+work_backend = ""
+work_model = ""
+
+# Which backends may be chosen, in order, when a role above is not pinned.
+# Comma-separated ids; empty means the built-in local-first order.
+#
+# This is how you say "never a CLI" without a second setting to mean it:
+#
+#     backend_chain = "ollama,lm-studio"
+#
+# and nothing else is reachable, so a role with no local model available FAILS
+# and reports what it tried rather than quietly falling through to a coding
+# CLI. Which of those you want is a real preference, not something a default
+# can settle — so the default keeps working and this makes it strict.
+backend_chain = ""
+
+# Model ids that can actually look at a screenshot. When one of these matches,
+# a capture is sent to the model as pixels; when none does, the model is told
+# to read the image with OCR instead — and to say that is what it did, rather
+# than describing a screen it never saw.
+#
+# Globs, not a fixed list, because model ids move faster than this file does.
+# Shipped populated so the feature works out of the box: every pattern names a
+# family that genuinely has vision. An empty list is the "assume none" setting,
+# which is safe but means captures are never actually looked at.
+vision_models = ["*vl*", "*vision*", "gpt-4o*", "gpt-5*", "claude*", "gemini*", "*llava*"]
+
+# How long an idle Assistant chat is still "the" Assistant chat. Past this,
+# the next message starts a fresh one rather than resuming a stale context.
+session_idle_minutes = 240
+
+# Whether replies are spoken aloud. Stored from T-004 so the setting exists
+# and round-trips; the speaking path itself is T-006's.
+speak = true
+
+# Cap on the spoken form of a reply (T-006). The full text always stays in
+# the chat — this only bounds what gets read out.
+reply_chars = 400
+
+# Ticket id prefix, used to canonicalise a spoken id ("t dash two" -> T-002).
+ticket_prefix = "T-"
+
+# What one left-click on the tray icon does.
+#
+# "listen" is state-aware, and is the default because the icon is the nearest
+# thing to a microphone button this app has: click to talk, click again to send
+# the take without waiting for silence, click while a reply is being read to
+# stop it. When only a human can help — a permission card, or a turn already
+# running — it shows the window instead.
+#
+# "show" restores the plain open-the-window behaviour. "hands_free" makes the
+# icon an arm/disarm switch for always-on listening.
+tray_click_action = "listen"
+
+# Which voice reads replies aloud, by name, matching a file in desktop/tts
+# (fetch one with ./desktop/get-piper.ps1). Blank means whichever is installed.
+# With no piper at all, the OS synthesiser speaks instead — on Windows that is
+# System.Speech, whose "Desktop" voices are the robotic ones.
+speak_voice = ""
+
+# Speaking speed, as a percentage of the voice's natural pace.
+speak_rate_percent = 100
+
+# -- listening and transcription ---------------------------------------------
+
+# A take ends when you stop talking. This is the backstop for a detector that
+# never sees silence; it was 20 seconds, and on a microphone with a high noise
+# floor it cost that on every single take before the detector learned to
+# measure the room first.
+listen_max_seconds = 12
+
+# How long a pause has to be before it counts as "finished". Long enough to
+# think mid-sentence, short enough not to feel like waiting.
+listen_silence_ms = 700
+
+# How long a pause is allowed while the utterance is still only a word or two
+# old. Hands-free only. 700ms is the right answer mid-sentence and the wrong
+# one straight after a wake word, where a pause is someone deciding what to
+# ask rather than someone finishing.
+listen_first_pause_ms = 1500
+
+# How much audio from BEFORE the wake word fired goes into the take. A spotter
+# can only recognise the phrase once it has been said, so with no pre-roll the
+# recogniser is handed the sentence with its opening missing.
+listen_preroll_ms = 1000
+
+# Which whisper.cpp model transcribes your voice, by name. base.en is accurate
+# enough for ticket ids; tiny.en is several times faster and noticeably worse
+# at exactly those. Fetch one with: ./desktop/get-whisper.ps1 -Model tiny.en
+stt_model = "base.en"
+
+# -- hands-free listening ----------------------------------------------------
+# Off unless you turn it on from the tray. An always-on microphone is a
+# different proposition from push-to-talk, so these default to the cautious
+# answer in every case.
+
+# With this on, audio is transcribed LOCALLY and the transcript is discarded
+# unless it is addressed to the assistant. Leaving the mic on therefore does
+# not mean sending the room to a model — only what you said to it. Turning it
+# off makes every utterance a turn, which is what you want with headphones on
+# and nobody else in the room, and not otherwise.
+hands_free_require_wake = true
+hands_free_wake_word = "console"
+
+# How readily the wake-word spotter fires, 0.0-1.0: higher fires more readily.
+# Since T-019 the word is recognised from the AUDIO by a small always-on
+# detector, so the recogniser never runs on speech that was not addressed to
+# the assistant — record the phrase under Settings > Listening. Until you have,
+# hands-free falls back to the old, slower behaviour: transcribe everything
+# and match the text.
+wake_sensitivity = 0.5
+
+# Keep listening while a reply is being read aloud?
+#
+# Off by default: through speakers the assistant hears its own voice and
+# answers itself. On headphones there is no echo, and turning this on is what
+# makes barge-in work by voice instead of by hotkey.
+hands_free_listen_while_speaking = false
+
+# Hands-free stops on its own after this long, so a microphone left on by
+# accident does not stay on.
+hands_free_max_minutes = 30

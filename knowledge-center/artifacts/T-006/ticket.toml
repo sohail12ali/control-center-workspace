@@ -1,0 +1,14 @@
+[ticket]
+id = "T-006"
+title = "Voice: mic capture, STT, hotkey, spoken replies"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-07"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

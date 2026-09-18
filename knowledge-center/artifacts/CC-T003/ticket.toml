@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T003"
+title = "Phase 2 - OpenRouter backend: API transport, tool loop, skill injection, model routing"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

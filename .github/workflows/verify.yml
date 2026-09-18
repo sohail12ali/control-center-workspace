@@ -1,0 +1,169 @@
+name: verify
+
+# Two things this repo had no way to catch before: a console regression, and
+# harness config that drifted out of agreement with itself (a skill renamed but
+# still referenced, a frontmatter name that no longer matches its directory).
+#
+# Both jobs run the SAME commands a developer runs locally — `python -m pytest`
+# and `python console/kanban.py harness lint`. Nothing CI-only, so a green
+# checkmark means what it appears to mean.
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: console tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The console runtime is stdlib-only and claims no version floor.
+        # These two are the range actually verified; a lower floor stays a
+        # claim until someone tests it here.
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dev dependencies
+        run: python -m pip install -r console/requirements-dev.txt
+
+      # Same annotation trick as the desktop job: this job was already red
+      # before the desktop work landed, and its cause was unreadable without a
+      # signed-in session.
+      - name: Run tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -o addopts="" 2>&1 | tee pytest.log || {
+            summary=$(grep -aE "^(FAILED|ERROR)|^E  " pytest.log | tail -25 | tr '\n' ' ')
+            [ -z "$summary" ] && summary=$(tail -c 1500 pytest.log | tr '\n' ' ')
+            echo "::error title=console pytest failed on py${{ matrix.python }}::$summary"
+            exit 1
+          }
+
+  harness:
+    name: harness lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # No dependencies: the linter is stdlib-only, like the console it ships
+      # with. Exits non-zero on errors; warnings (orphan skills, stale counts)
+      # are reported without failing the build.
+      - name: Lint skills and agents
+        run: python console/kanban.py harness lint
+
+  cli:
+    name: cli smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Read-only verbs against the real vault. These are the calls the session
+      # hooks make on every session start, so a break here breaks every agent
+      # turn — and it would otherwise surface as a silent `|| true` in the hook.
+      - name: Read-only CLI verbs
+        run: |
+          python console/kanban.py ticket list
+          python console/kanban.py agents backends
+          python console/kanban.py overview
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dev dependencies
+        run: python -m pip install -r console/requirements-dev.txt
+
+      # One package per reason, because a missing system library shows up as a
+      # linker error a long way from its cause. When T-003 wrote this list it
+      # covered only that ticket's crates and said so; T-005 and T-006 then
+      # added capture, clipboard and audio without extending it, which is
+      # exactly the failure the comment predicted.
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config patchelf \
+            libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev \
+            libayatana-appindicator3-dev \
+            libasound2-dev libpipewire-0.3-dev libgbm-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxdo-dev
+        # webkit2gtk/rsvg/ssl: the Tauri shell itself
+        # appindicator:       the tray icon on Linux
+        # asound + pipewire: cpal's Linux backends, for the microphone
+        # gbm:               Mesa buffer manager, linked in via that same stack
+        # xcb*:               arboard's clipboard and xcap's X11 capture
+        # xdo:                pulled in by the tray/indicator stack
+
+      # No Rust toolchain setup/pin step: every GitHub-hosted runner image
+      # preinstalls a Rust/Cargo well above this crate's rust-version floor
+      # (see T-003-decision-log.md § "CI Rust toolchain").
+      #
+      # Each step below echoes its own tail as a `::error::` annotation on
+      # failure. Actions logs need a signed-in session to read, but annotations
+      # come back from the public API, so this is what makes a red build
+      # diagnosable by whoever is looking — including from a machine that
+      # cannot sign in.
+      - name: cargo build --release
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | tee build.log || {
+            echo "::error title=cargo build failed on ${{ matrix.os }}::$(tail -c 1200 build.log | tr '\n' ' ')"
+            exit 1
+          }
+
+      - name: cargo test
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml 2>&1 | tee test.log || {
+            echo "::error title=cargo test failed on ${{ matrix.os }}::$(tail -c 1200 test.log | tr '\n' ' ')"
+            exit 1
+          }
+
+      - name: python -m pytest desktop/tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest desktop/tests -o addopts="" -rA 2>&1 | tee pytest.log || {
+            # pytest's own FAILED/ERROR lines say which test and why. A raw
+            # tail of the log lands in the middle of the first traceback,
+            # which is how the previous attempt reported `lose_fds=True,`.
+            summary=$(grep -aE "^(FAILED|ERROR)|^E  " pytest.log | tail -25 | tr '\n' ' ')
+            [ -z "$summary" ] && summary=$(tail -c 1200 pytest.log | tr '\n' ' ')
+            echo "::error title=desktop pytest failed on ${{ matrix.os }}::$summary"
+            exit 1
+          }

@@ -49,6 +49,8 @@ import threading
 import time
 import uuid
 
+from . import procs
+from . import telemetry
 from .agent_events import Stream
 from .agent_normalize import Normalizer
 
@@ -64,7 +66,7 @@ class BaseSession:
 
     def __init__(self, sid, backend, cwd, stream, *, log_path=None, title="",
                  model="", mode="", skill="", persona="", on_exit=None,
-                 settings_path=""):
+                 settings_path="", ticket="", system_append="", extra=""):
         self.id = sid
         self.backend = backend
         self.agent = backend.id
@@ -78,6 +80,31 @@ class BaseSession:
         self.persona = persona
         self.on_exit = on_exit
         self.settings_path = settings_path
+        # Which ticket this chat is working on, for telemetry attribution.
+        # Optional: an exploratory chat belongs to no ticket, and recording it
+        # against one would corrupt that ticket's cost.
+        self.ticket = ticket
+        # Persona/context injection, additive to skill/persona above: a second
+        # text a caller (the assistant feature) wants threaded to the backend
+        # without overloading `persona`'s existing meaning as an agent-file id.
+        # `system_append` is a raw string handed straight to a backend's own
+        # system-prompt flag; `extra` is folded into `prompt_build.build`'s
+        # "extra" section for the `openai_api` transport. Empty by default so
+        # no existing chat changes at all.
+        self.system_append = system_append
+        self.extra = extra
+        #: System text that still has to ride on the FIRST message, because
+        #: this backend has no flag to carry it.
+        #:
+        #: `agent_manager.create` used to prepend it to the opening message it
+        #: sent itself. A session opened with no message (`open=False`) has no
+        #: such message, so the text would simply be lost — and losing a
+        #: persona silently is the worst available outcome. Parked here and
+        #: consumed by the first `send`, wherever that call comes from: the
+        #: assistant feature talks to `send` directly rather than through
+        #: `agent_manager.send`, so a fix in either caller alone would leave
+        #: the other one broken.
+        self._pending_system_prefix = ""
 
         self.proc = None
         self.native_session_id = ""
@@ -91,7 +118,7 @@ class BaseSession:
         self._turn_in = 0
         self._turn_out = 0
 
-        self._norm = Normalizer(flavor=backend.id)
+        self._norm = Normalizer()
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._busy = False
@@ -99,6 +126,15 @@ class BaseSession:
         self._ctl = 0
         self._log_fh = None
         self._stopping = False
+
+    def defer_system_prefix(self, text):
+        """Have the first `send` carry `text` ahead of the message.
+
+        For a session opened with no message on a backend that has no
+        system-prompt flag of its own — see `_pending_system_prefix`.
+        """
+        with self._state_lock:
+            self._pending_system_prefix = text or ""
 
     # -- transport seam ------------------------------------------------------
     def start(self):
@@ -131,7 +167,7 @@ class BaseSession:
             "id": self.id, "title": self.title, "agent": self.agent,
             "backend_label": self.backend.label,
             "steerable": self.steerable, "transport": self.backend.transport,
-            "skill": self.skill, "persona": self.persona,
+            "skill": self.skill, "persona": self.persona, "ticket": self.ticket,
             "cwd": self.cwd, "model": self.model, "mode": self.mode,
             "native_session_id": self.native_session_id,
             "alive": self.alive, "busy": busy, "queued": queued,
@@ -172,6 +208,13 @@ class BaseSession:
                 self._busy = True
 
         shown = (display or "").strip() or text
+        # Claimed under the state lock above, so two concurrent first sends
+        # cannot both prepend it. Only the WIRE gets it; `shown` stays what the
+        # user actually typed, which is the same split `display` already makes.
+        with self._state_lock:
+            prefix, self._pending_system_prefix = self._pending_system_prefix, ""
+        if prefix:
+            text = prefix + "\n\n" + text
         extra = {"wire": text} if shown != text else {}
         if not busy:
             self.stream.publish({"type": "turn.start", "text": shown, "steered": False, **extra})
@@ -253,10 +296,68 @@ class BaseSession:
             # two for this turn and add THAT to the session totals: summing
             # both would double-count, and carrying a max across turns would
             # lose every turn but the biggest.
-            self.tokens_in += max(self._turn_in, int(ev.get("input_tokens") or 0))
-            self.tokens_out += max(self._turn_out, int(ev.get("output_tokens") or 0))
+            turn_in = max(self._turn_in, int(ev.get("input_tokens") or 0))
+            turn_out = max(self._turn_out, int(ev.get("output_tokens") or 0))
+            self.tokens_in += turn_in
+            self.tokens_out += turn_out
             self._turn_in = self._turn_out = 0
+            self._record_turn(ev, turn_in, turn_out)
+            self._notify_turn_end(ev)
             self._on_turn_end()
+
+    def _notify_turn_end(self, ev):
+        """Tell a phone the run finished.
+
+        Here rather than in either transport because every transport funnels
+        through `_observe` — the CLI sessions by reading their own stream, and
+        `agent_api_session` by calling this method directly — so one hook
+        covers both kinds of agent.
+
+        Best-effort and never raised: a notification that cannot be delivered
+        must not fail the turn it is describing.
+        """
+        try:
+            from . import notify
+            notify.send(self.cwd, "turn_end", notify.turn_end_message(
+                self.title, self.agent, self.model,
+                int(ev.get("num_turns") or 0), self.cost_usd,
+                error=bool(ev.get("is_error"))))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _record_turn(self, ev, turn_in, turn_out):
+        """Persist this turn's measurement.
+
+        Recorded per turn rather than per session because a session can run for
+        hours and a session-level total cannot answer "which stage cost that" —
+        which is the only question the data exists to answer. `self.cwd` is the
+        repo root the manager built this session with.
+
+        Cost is taken from the backend when it reported one and left to the
+        pricing table otherwise; `cost_usd=None` means unknown, and telemetry
+        reports it as unpriced rather than as zero.
+        """
+        reported = ev.get("cost_usd")
+        try:
+            telemetry.record_turn(
+                self.cwd,
+                session=self.id,
+                backend=self.agent,
+                model=self.model,
+                mode=self.mode,
+                ticket=self.ticket,
+                skill=self.skill,
+                persona=self.persona,
+                input_tokens=turn_in,
+                output_tokens=turn_out,
+                cost_usd=float(reported) if reported else None,
+                duration_ms=ev.get("duration_ms") or 0,
+                ttft_ms=ev.get("ttft_ms") or 0,
+                is_error=bool(ev.get("is_error")),
+            )
+        except Exception:  # noqa: BLE001
+            # Measurement must never be able to kill the chat it measures.
+            pass
 
     def _on_turn_end(self):
         """Drain on its own thread: `_drain` writes to the agent, and doing
@@ -304,13 +405,15 @@ class LiveSession(BaseSession):
         self._open_log()
         argv = self.backend.session_argv(
             mode=self.mode, model=self.model, persona=self.persona,
-            settings_path=self.settings_path)
+            settings_path=self.settings_path, system_append=self.system_append,
+            resume_id=self.native_session_id)
         self.proc = subprocess.Popen(
             argv, cwd=self.cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=self._log_fh or subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            creationflags=procs.no_window_flags(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)),
         )
         self.started = _now()
         self.stream.publish({
@@ -447,6 +550,7 @@ class TurnSession(BaseSession):
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
+                **procs.popen_kwargs(),
             )
         except FileNotFoundError as e:
             with self._state_lock:
@@ -523,11 +627,29 @@ class TurnSession(BaseSession):
 
 
 def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
-          skill="", persona="", on_exit=None, settings_path=""):
+          skill="", persona="", on_exit=None, settings_path="", ticket="",
+          system_append="", extra="", start_seq=0, resume_id=""):
     """Pick the transport the backend declared. The only place that decision
     is made, so a new transport is one branch here plus a class."""
-    cls = LiveSession if backend.transport == "stream_json" else TurnSession
-    stream = Stream(sid, path=log_path.replace(".log", ".events.jsonl") if log_path else None)
-    return cls(sid, backend, cwd, stream, log_path=log_path, title=title,
+    if backend.transport == "openai_api":
+        # Imported here, not at module scope: ApiSession subclasses BaseSession
+        # from this module, so a top-level import would be circular.
+        from .agent_api_session import ApiSession
+        cls = ApiSession
+    elif backend.transport == "stream_json":
+        cls = LiveSession
+    else:
+        cls = TurnSession
+    stream = Stream(sid,
+                    path=log_path.replace(".log", ".events.jsonl") if log_path else None,
+                    start_seq=start_seq)
+    sess = cls(sid, backend, cwd, stream, log_path=log_path, title=title,
                model=model, mode=mode, skill=skill, persona=persona,
-               on_exit=on_exit, settings_path=settings_path)
+               on_exit=on_exit, settings_path=settings_path, ticket=ticket,
+               system_append=system_append, extra=extra)
+    # A resumed session already has an identity on the CLI's side. Carrying it
+    # in before `start()` is what makes the process continue that conversation
+    # instead of opening a new one.
+    if resume_id:
+        sess.native_session_id = resume_id
+    return sess

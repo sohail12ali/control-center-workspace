@@ -11,6 +11,14 @@ Not implemented (by explicit choice, not oversight): **Migrations**/**Releases**
 boards (present in config, disabled by default — see Config below) and
 **Projects**/**Files** tabs (not built at all in this template).
 
+This stdlib server also does **not** capture the desktop, run OCR, drive
+mouse/keyboard, or keep a private microphone. A browser tab on `127.0.0.1`
+cannot do those things; live chat `/send` is text-only. Screen, voice, and
+OS control belong in a planned native shell that wraps this UI and reuses
+the Agents backends — see
+`knowledge-center/wiki/desktop-assistant.md`. Windows shell spike:
+`desktop/README.md`.
+
 ## Onboarding
 
 `python console/kanban.py onboard` (and the "Getting started" card on
@@ -45,15 +53,30 @@ ticket show ID
 ticket move ID STAGE
 ticket set ID FIELD VALUE
 
-tracker add ID {questions|bugs|todos} "text" [--set key=value ...]
-tracker list ID {questions|bugs|todos} [--status S]
-tracker update ID {questions|bugs|todos} ITEM_ID [--set key=value ...]
+tracker add ID {questions|bugs|todos|comments} "text" [--set key=value ...]
+tracker list ID {questions|bugs|todos|comments} [--status S]
+tracker update ID {questions|bugs|todos|comments} ITEM_ID [--set key=value ...]
 tracker blockers ID
 
 onboard [--json]        first-run setup steps, ending at the requirements pipeline
 serve [--host H] [--port N]
 export --out DIR
 refresh [--quiet]
+reset [--yes] [--dry-run] [--keep-logs] [--keep-investigations]
+                         wipe tickets/investigations/logs/telemetry back to an empty
+                         template — see knowledge-center/wiki/reset-to-clean-slate.md
+
+stop-hook check [--agent A] [--json]
+                         session stop-hook (T-017 FR-10): reminds the calling identity
+                         (default: knowledge-center/logs/author.local's slug) about a
+                         claimed ticket with no comment/move recorded since the claim.
+                         Never fails a session — wired from .claude/hooks/console-stop-
+                         reminder.sh.
+setup {cursor|claude|vscode} [--json]
+                         write that editor's MCP client config (pointed at this
+                         console's stdio server) plus an AGENTS.md snippet warning
+                         against hand-editing ticket/tracker TOML (T-017 FR-11).
+                         Idempotent — re-run any time, merges rather than overwrites.
 
 overview
 todos [--status S] [--owner O]
@@ -67,11 +90,427 @@ vault graph
 
 agents backends
 agents catalog
+agents doctor [--json]
+agents models [BACKEND] [--refresh] [--json]
 agents launch BACKEND "prompt" [--cwd DIR]
 agents jobs
 agents show JOB_ID
 agents stop JOB_ID
+
+telemetry [--by ticket|model|skill|persona|backend|day] [--ticket T]
+          [--skill S] [--since D] [--until D] [--json]
+telemetry skills [--json]
+
+harness lint [--strict] [--json]
+
+context TICKET [--json]
+
+verb list [--ticket T] [--json]
+verb run VERB [--ticket T] [--confirm] [--set KEY=VALUE ...]
+
+schedule list [--json]
+schedule due [--json]
+
+audit [--limit N] [--action A] [--since D] [--json]
+notify status
+notify chat-id [--json]
+notify test [--text "..."]
+
+job submit VERB [--ticket T] [--confirm] [--set K=V] [--detach] [--timeout N]
+job list [--state S] [--ticket T] [--json]
+job show JOB_ID
+job cancel JOB_ID
+
+worktree list [--json]
+worktree add NAME [--base REF] [--branch NAME]
+worktree remove NAME [--force]
+worktree prune
 ```
+
+`context` is the one-call ticket digest: lane, blockers, unchecked plan tasks,
+open trackers, artifacts, recent progress and spend, already reduced. On a
+mid-sized ticket it is ~1.7 KB against ~27 KB of raw artifacts — a 16x
+reduction, per turn. Every cap it applies is stated in the output, so silence
+means the picture is complete. `trace-context` calls this instead of opening
+eight files.
+
+`verb` runs deterministic jobs declared in `config/verbs.toml` — no model
+involved. Each verb declares its own gates (`needs_ticket`, `needs_confirm`,
+board `kinds`/`lanes`), so the CLI, the queue and the MCP server all enforce the
+same rules without reimplementing any of them. Handler paths resolve at registry
+load, so a typo is a startup error rather than a surprise mid-run.
+
+`job` is the durable queue those verbs run on: records on disk are the source of
+truth, the concurrency cap comes from `[jobs] max_concurrent`, and a job
+orphaned by a dead process is reported as `interrupted` — not `done` (a lie) and
+not `error` (a guess).
+
+`schedule` is cron-driven verbs, and **the running console is the clock** — there
+is no daemon to install, and nothing fires while `serve` is not running. That
+trade is stated rather than hidden: on startup the server prints either the
+enabled schedules and their next run, or `scheduler: idle (N schedule(s), all
+parked)`. Missed firings are **skipped, not replayed**; catching up after a
+weekend would run every job dozens of times at once, and these submit real work.
+A schedule whose verb needs confirmation must be granted it in the file, because
+a scheduled job runs with nobody watching. `schedule due` is a dry run.
+
+The cron subset is `*`, `N`, `A-B`, `*/S`, `A-B/S` and comma lists. Nicknames
+(`@daily`), `L`, `W` and `#` are **rejected at load with the schedule id** rather
+than silently treated as `*` — a schedule firing every minute because its
+expression was not understood is the worst outcome available here. Day-of-month
+and day-of-week together mean AND, not real cron's OR.
+
+`worktree` gives a run its own checkout. It refuses to reuse a path, refuses to
+remove uncommitted work without `--force`, and names what would be lost when it
+refuses.
+
+`telemetry` reports token and cost totals per turn. A cost the backend did not
+report and that `config/pricing.toml` cannot price is shown as **unpriced** and
+excluded from the total, marked with `*` — never as zero, because a total that
+quietly treats unknown as free is wrong in the direction that matters.
+`telemetry skills` partitions the skill roster into fired and never-fired; a
+skill invoked by hand in a terminal leaves no record, so never-fired is a
+candidate for review rather than a verdict.
+
+### Where these appear in the UI
+
+Everything above is also readable from the browser, placed **inside the tab
+that already answers the same question** rather than on an operations tab of
+its own. A tab you have to navigate to is a tab you check after it mattered.
+
+| What | Where | Can act? |
+| ---- | ----- | -------- |
+| Verbs | Command palette, "Run" group | Runs it; result opens in the drawer |
+| Jobs | Overview → **Jobs** | Cancels a *queued* job |
+| Schedules | Overview → **Scheduled** | Read-only |
+| Token and cost totals | Analytics → **Agent spend** | Read-only |
+| Audit trail | Work → **Console activity** | Read-only, collapsed by default |
+| Worktrees, notification health | Settings → **This machine** | Read-only |
+| Provider health, model cache | Settings → **Model providers** | Refreshes a catalogue |
+| Picker triggers, list folding | Settings → **Composer** | Browser-local prefs |
+
+Two rules run through that table.
+
+**The panels remove themselves when they have nothing to say.** A workspace
+that uses no schedules does not get a permanently empty box on its landing
+page; the empty state is a panel that is not there. The exception is a panel
+reporting a *problem* — a cron expression that failed to parse is shown, because
+hiding it means discovering it on the morning the job did not run.
+
+**Reads move to the UI; writes stay in the CLI.** Adding a worktree checks out
+a branch, editing a schedule changes what fires while nobody is watching, and
+this server has no authentication of its own — see below. Those belong in a
+terminal that shows you the error. Cancelling a queued job is the one exception,
+and it refuses a *running* job rather than pretending: stopping work mid-flight
+needs the worker's cooperation, and reporting "cancelled" while it carries on
+would be worse than saying no.
+
+The spend panel never treats an unpriced turn as free. A model with no row in
+`config/pricing.toml` contributes tokens but no cost, and every total drawn
+from such a window carries a `*` and a count of the turns it excluded. A
+dashboard that quietly under-reports spend is worse than one that reports
+nothing, because it gets believed.
+
+### Secrets: `.env` at the workspace root
+
+Create `<workspace root>/.env` — beside `CLAUDE.md`, **not** inside `console/`:
+
+```dotenv
+OPENROUTER_API_KEY=sk-or-v1-...
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+It is gitignored (`.gitignore` line 38, `.env`), and every entry point loads it —
+`kanban` for the CLI, `serve` for the web UI, `mcp_server.py` for MCP clients. So
+a key in this file reaches the Agents tab, the CLI and Cursor without exporting
+anything. There are no dependencies to install; the parser is forty lines of
+stdlib in `server/dotenv.py`.
+
+Three rules worth knowing:
+
+- **An exported variable always wins.** A stale value in `.env` will never
+  silently shadow one you set in your shell, because the resulting confusion is
+  unbounded: the key you can see is not the key in use, and nothing says so.
+- **Only names are ever printed.** On startup the console lists the variable
+  names it found (`.env: OPENROUTER_API_KEY`) and never a value, so you can
+  confirm the file was read without putting a credential in your scrollback, a
+  screenshot, or a CI log.
+- **Agents cannot read it.** `.env` and `.env.*` are in the workspace tools'
+  refused-paths list and are skipped by the search tool — an agent
+  authenticating with a key cannot read that key back.
+
+To use OpenRouter after setting the key, flip `enabled = true` on the
+`openrouter` row in `config/agents.toml`. The model shortlist ships empty on
+purpose — see **Model catalogues** below, which is how the picker gets filled.
+
+If a key does get committed, rotate it. Removing the commit does not un-publish
+it.
+
+### Why a backend is unusable, specifically
+
+`kanban agents doctor` answers it per row. This exists because "not installed"
+used to be the console's reply to four different problems, and one word for
+four fixes is no help:
+
+| Kind | Available when | Typical fix |
+| ---- | -------------- | ----------- |
+| CLI | the command is on PATH | install it, or correct `command` |
+| `auth = "key"` | the env var is set | put the key in `.env` |
+| `auth = "none"` | the server answers | start it (`ollama serve`) |
+| any | its row is `enabled = true` | flip the row |
+
+A local runtime is judged by a **probe**, not by a key it does not have. That
+was the bug: availability asked every API backend whether a key was set, so a
+keyless provider was unavailable forever.
+
+The probe is cached for ten seconds, because `/api/agents/backends` is polled
+by the open tab. On Windows a closed loopback port raises `TimeoutError`, not
+`ConnectionRefusedError` — so a timeout to `127.0.0.1` is reported as "not
+running" (a listening local port answers in microseconds) while a remote
+timeout keeps the honest "did not answer".
+
+### Local models: Ollama and LM Studio
+
+Both ship as `[[backend]]` rows with `enabled = false`. Flip the row, start the
+server, then:
+
+```bash
+ollama serve                                   # or LM Studio's Developer tab
+python console/kanban.py agents models ollama --refresh
+```
+
+One caveat decides whether this is useful to you: **the console runs the agent
+loop, and that loop needs tool calling.** Local support is uneven — a model
+without it will hold a conversation but never read a file or run a verb. Pick a
+tool-capable model. For LM Studio the server answering is not enough; a model
+must also be *loaded*.
+
+### Model catalogues
+
+A hand-written shortlist works for claude, which has eight ids worth naming. It
+is useless for OpenRouter (hundreds, changing weekly) and wrong for Ollama,
+whose list is a fact about your machine.
+
+```bash
+python console/kanban.py agents models                    # per-provider summary
+python console/kanban.py agents models openrouter --refresh
+```
+
+The result is cached to `console/.cache/models/{backend}.toml` — **gitignored**,
+because a fetched catalogue is a fact about one account at one moment, and
+committing it to a template other people clone is the mistake the audit log
+already avoids. The composer offers **cache → shortlist → paste box**, in that
+order, with the cache's age shown.
+
+Nothing here rewrites `agents.toml`. That file is hand-maintained and mostly
+comments, and the TOML writer does not preserve comments — one "save" would
+silently delete the documentation that makes it usable.
+
+Reading the cache is a `GET` and never touches the network; refreshing is a
+`POST` and is audited, because it leaves the machine with your credentials.
+
+### Naming a skill, an agent or a file inline
+
+In either composer — the New-chat form or a live chat — type:
+
+| Trigger | Offers | Example |
+| ------- | ------ | ------- |
+| `/` | skills from `.claude/skills/` | `/plan` |
+| `@` | agents from `.claude/agents/` | `@builder` |
+| `#` | workspace files and folders | `#console/server/audit.py` |
+
+Two rules keep this from ruining ordinary prose:
+
+- A trigger only opens the menu **at the start of a word**, so `and/or`, `24/7`
+  and `a@b.com` are left alone.
+- A token is rewritten **only if it names something real**. `#1234` is not a
+  file, so it stays as typed. A typo degrades to plain text rather than to a
+  broken reference.
+
+What a token *becomes* is resolved server-side per backend (`prompt_tokens.py`),
+which is why the tab and the CLI can never disagree about it: claude parses
+`/plan` itself and takes `@path` for a file; cursor-agent needs a sentence
+naming the file on disk; an API model gets the path and reads it with
+`read_file`. A file is **named, never inlined** — the prompt budget is 24k
+characters and one file can exceed it alone.
+
+The `#` picker refuses everything `agent_tools` refuses, sharing one pattern
+list. `.env` is the one that matters: offering it would be a menu item whose
+only outcome is the agent declining to read it, after the path is already on
+screen.
+
+### Telegram: making a parked approval reach you
+
+Without this, a remote run stalls at its first gated write and denies 300
+seconds later with nothing to tell you it happened. Four steps:
+
+1. **Make the bot.** In Telegram, message [@BotFather](https://t.me/BotFather),
+   send `/newbot`, and answer the two prompts. It replies with a token that
+   looks like `1234567890:AA...`. That token *is* the bot — treat it like a
+   password.
+2. **Put it in `.env`** as `TELEGRAM_BOT_TOKEN=`.
+3. **Find your chat id.** Telegram never tells you your own; you have to read it
+   out of an update. Send your new bot any message (for a group, add the bot to
+   it first and post there), then run:
+
+   ```bash
+   python console/kanban.py notify chat-id
+   ```
+
+   It prints one row per chat that has spoken to the bot — id, type, name — and
+   nothing else. Copy the id into `.env` as `TELEGRAM_CHAT_ID=`. Group ids are
+   negative; keep the minus sign, or you get an id that looks plausible and
+   silently delivers nowhere.
+
+   The documented alternative is pasting `getUpdates` into a browser with the
+   token in the URL, which writes a live credential into your history, your
+   address bar, and any screenshot of either. This command makes the same call
+   from the process that already holds the token.
+4. **Turn it on** — `enabled = true` under `[notify]` in `config/console.toml` —
+   then prove it end to end:
+
+   ```bash
+   python console/kanban.py notify test
+   ```
+
+   That sends a real message and exits non-zero if it did not arrive. A
+   notification path you have not tested is one you discover at the moment it
+   is least useful to discover.
+
+`notify status` answers "why didn't my phone buzz?" by reporting whether each
+piece is *present* — never its value.
+
+`events` is `["approval"]` by default, and widening it is a real trade: a phone
+that buzzes for every turn gets muted, and then it buzzes for nothing. The other
+kinds are `turn_end` and `job_error`.
+
+Two properties hold regardless: a send that fails **never** blocks, delays, or
+fails the run it describes — the approval still appears in the browser and still
+times out exactly as before, you are simply not told. And a bot token is a
+credential in a URL, so the failure path reports the status code and never the
+URL it called.
+
+### Reaching the console from elsewhere
+
+The console has **no authentication of its own**, and that is a decision rather
+than an omission. The supported way to reach it remotely is a private network —
+Tailscale or equivalent — that authenticates before traffic ever arrives. Adding
+a second, weaker authentication layer beside a working one would add risk
+without adding safety.
+
+That only holds while it is *known*, so set `[general] host` to the tailnet
+address (or `0.0.0.0` if the machine is only on the tailnet) and the server
+prints a warning at **every** start. A console listening beyond this machine
+must never be a fact you forgot configuring. Never expose the port to the
+internet.
+
+`[notify]` pushes a parked approval to a phone. This is what makes remote
+running work rather than a decoration on top of it: without it, a run started
+from anywhere but this desk stalls at its first gated tool and dies on the
+300-second timeout with nothing said about it. Telegram today; the seam is one
+function in `server/notify.py`. Credentials come from the environment, are read
+per send, and never reach an event, a transcript, an audit record or a log
+line — the failure path reports a status code and not the URL it called,
+because the URL contains the bot token.
+
+Delivery is best-effort and off the request thread. If the provider is
+unreachable the approval still appears in the browser and still denies on the
+same timeout — you are simply not told, which is no worse than not having it
+configured. Check with `notify status`, and prove it with `notify test`: a
+notification path you have not tested is one you find out about at the moment
+it matters.
+
+`audit` records what *starts work or changes state* — a chat started, a verb run
+or queued, an approval answered, with the client address. Not reads: a log that
+records every board poll is one nobody scrolls through. Local and gitignored,
+because those lines are a fact about your network rather than about the project.
+
+### Reviewing before approving
+
+A gated tool call parks on a "Permission needed" card. That card used to show the tool's
+arguments as JSON — for a file write, a wall of escaped text with an escaped newline between
+every line. Nobody reads that, so it got approved unread, which makes the gate a speed bump
+with a log rather than a gate.
+
+`server/tool_preview.py` now computes what the call would actually do and sends it with the
+request: a unified diff with `+N/-M` for a write or an edit, the command and working
+directory for a shell call. Computed server-side, so the CLI hook path and the in-process API
+loop get it from one implementation and cannot drift.
+
+It is honest about its limits. An edit whose target text is not in the file says the call
+will fail — before you approve it. An ambiguous edit says how many occurrences exist and
+which one wins. A shell command is shown, never predicted. And a preview that fails to build
+never stops the question being asked: a gated tool must not run unreviewed because a diff
+crashed.
+
+### Command palette
+
+`Ctrl`/`Cmd`-`K`. Every tab, ticket, verb and skill, filtered by subsequence — `hl` finds
+"harness lint". Sourced from the tab manifest, the boards, the verb registry and the skill
+catalogue, so anything that exists anywhere else appears here without this file changing. A
+verb that needs a ticket is greyed with the reason rather than offered and then failed.
+
+### The `openai_api` transport
+
+Three of the four transports spawn somebody else's agent and inherit its tools,
+its permission model, and its idea of what a skill is. `openai_api` has no
+process: the console talks to an OpenAI-compatible endpoint and runs the loop
+itself.
+
+That is the point rather than the cost. Because the loop is ours:
+
+- the agent holds **the console's own verbs as tools** (`console_context`,
+  `console_blockers`, …) alongside file and shell tools, so reading a ticket is
+  one call it *has* rather than a convention it has to remember;
+- gated calls raise the **same "Permission needed" card** — in-process, with no
+  hook subprocess and no HTTP round trip;
+- tokens and cost are recorded through the same telemetry path as every other
+  backend.
+
+A model with no slash-command system cannot resolve `/plan`, so choosing a skill
+here **injects its text** into the system prompt (`server/prompt_build.py`).
+That is why the roadmap's token work had to come first: every skill is now paid
+for, in tokens, on every turn that selects it. If a section does not fit the
+budget, the prompt says so — a silently truncated skill is the worst failure
+available, because the agent follows the half it received and the transcript
+gives no sign.
+
+To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console and
+flip `enabled = true` on the `openrouter` row in `config/agents.toml`. It ships
+disabled because this template has no key and cannot verify one. `installed` for
+an API backend means "the key is set", not "a binary is on PATH" — asking PATH
+would report it missing and grey out something that would have worked.
+
+The key is read per request, never stored on the session, and never written to
+an event, a transcript, or a telemetry record.
+
+Safety, honestly stated: file tools are confined to the workspace (resolved
+paths, so a symlink cannot step out) and refuse credential-shaped files; writes
+and shell are gated by a human. Read-only `console_*` verbs are deliberately
+**not** gated — asking someone to approve "look up this ticket's lane" trains
+them to click allow without reading, which is how a gate stops working for the
+calls that matter. A tool-call round cap ends a runaway turn with a visible
+notice rather than silently.
+
+### MCP
+
+`python console/mcp_server.py` serves the same verbs to any MCP client over
+stdio — Claude Code, Cursor, and the OpenRouter backend Phase 2 adds all get an
+identical tool set from one implementation instead of three integrations that
+drift. `.mcp.json` at the repo root wires it up.
+
+There is no tool table in the server: `tools/list` walks the verb registry and
+derives each schema from its handler's signature, so a new row in `verbs.toml`
+becomes a new tool with no code change. A failed gate comes back as a tool error
+with the reason, not a JSON-RPC error code, so the model can correct itself.
+
+`harness lint` type-checks `.claude/` config that nothing else validates:
+frontmatter names against their directory/filename, `.claude/...` paths against
+what exists, orphan skills, and the roster counts CLAUDE.md states. Exits
+non-zero on errors; warnings need `--strict` to fail. Run in CI by
+`.github/workflows/verify.yml` and, for harness-touching commits only, by
+`.githooks/pre-commit`.
 
 `questions`/`bugs`/`todos` skill docs (`.claude/skills/{questions,bugs,todos}/SKILL.md`)
 describe their own verbs (`answer`, `fix`, `verify`, `close`, `doing`, `done`,
@@ -88,11 +527,13 @@ vocabulary.
   `enabled = false` and placeholder lanes — flip the flag and edit lanes to
   turn either on, no code changes needed.
 
-- `config/console.toml`'s `[agents.backends.*]` — one table per launchable
-  CLI for the Agents tab (`command` + `args`, with `{prompt}` substituted).
-  Ships with `claude` (`--permission-mode plan` by default — safe/read-only
-  until you change it) and `cursor-agent`. Add more the same way; nothing is
-  hardcoded to a specific CLI.
+- `config/agents.toml`'s `[[backend]]` rows — one row per launchable CLI/API
+  backend for the Agents tab (`command`/`session_args`/`turn_args`, with
+  `{prompt}`/`{mode}`/`{model}` substituted). Ships with `claude`
+  (`--permission-mode plan` by default — safe/read-only until you change it)
+  and `cursor-agent`. Add more the same way; nothing is hardcoded to a
+  specific CLI. See § Agents tab below for what launching one does and
+  doesn't do.
 - `config/plugins.toml` — which **features** load. This, not `console.toml`,
   is what decides the non-board tabs. See Plugin architecture below.
 
@@ -113,14 +554,19 @@ difference is visible rather than assumed.
 ## Data model
 
 - `{TICKET}/ticket.toml` — id, title, kind, stage, status, owner, priority,
-  dates, tags, links, optional `scripts_dir`, optional `url`.
+  dates, tags, links, optional `scripts_dir`, optional `url`, `claimed_by`,
+  `claimed_at`.
 
   `priority` is one of `low|medium|high|critical` — anything else normalises
   to `medium` rather than producing a card that can't render. `url` links the
   ticket to whatever external tracker the team uses (Jira, Linear, GitHub, an
   internal tool); empty means "not tracked elsewhere" and the card simply
-  omits the link. Nothing here is specific to any one tracker.
-- `{TICKET}/{TICKET}-{questions,bugs,todos}.toml` — `[meta]` + `[[items]]`.
+  omits the link. `claimed_by`/`claimed_at` (T-017) record who currently has
+  the ticket claimed and since when — distinct from `owner` — and are set
+  only by the `claim` verb, never hand-edited or set via `ticket set`.
+- `{TICKET}/{TICKET}-{questions,bugs,todos,comments}.toml` — `[meta]` + `[[items]]`.
+  `comments` (T-017) is the `comment` verb's storage; like `todos` it never
+  blocks release.
 
 All of the above are **CLI-mutated only** (this CLI or the HTTP API, which
 share the same `server/` code) — never hand-edited. See
@@ -263,13 +709,32 @@ silently, and the connection pill reads `snapshot`.
 
 ## Agents tab — what it does and doesn't do
 
-Launches a configured backend (`console/config/console.toml`'s
-`[agents.backends.*]`) as a **headless one-shot subprocess** — `subprocess.Popen`
-with an argv list (never a shell string, so prompt content can't inject
-shell syntax), output captured in the background and polled by the UI.
+Backends (both the live chats below and the one-shot launcher this section
+describes) come from `console/config/agents.toml`'s `[[backend]]` rows —
+`agent_backends.py` is the one registry both read, so `kanban.py agents
+launch` and the tab's own chats can't disagree about a command, model, or
+permission mode. (Older revisions of this doc pointed at a `console.toml`
+`[agents.backends.*]` table; that table no longer exists.)
+
+This section covers `agents launch` (the one-shot CLI/verb path,
+`console/server/agents.py`) — a **headless one-shot subprocess**:
+`subprocess.Popen` with an argv list (never a shell string, so prompt content
+can't inject shell syntax), output captured in the background and polled by
+the UI, spawned windowless on Windows (`CREATE_NO_WINDOW`, `server/procs.py` —
+defensive hygiene, not a fix for an observed defect; see the desktop shell's
+own `T-003-decision-log.md`).
+
+**Live chats are a separate, more capable path** (`agent_session.py` /
+`agent_manager.py`): a `stream_json`-transport backend runs as one long-lived
+process per conversation with stdin held open, so a message can steer a turn
+already in flight — the limitation below is specific to the one-shot launcher,
+not to a live chat.
 
 Deliberately smaller than a full agent-orchestration UI:
-- **No live steering.** You can watch a run and stop it, not talk to it mid-turn.
+
+- **No live steering (one-shot launcher only).** `agents launch` starts a
+  process and lets you watch/stop it, not talk to it mid-turn — steering
+  needs the open stdin channel a live chat holds.
 - **No worktree isolation.** Every run executes directly in the workspace
   root (or a `cwd` you pass, still inside the workspace). Don't launch two
   runs against the same ticket/repo concurrently.
@@ -286,6 +751,424 @@ Job records live in process memory plus a best-effort JSON snapshot under
 `console/.cache/agent-runs/` (gitignored) written when a job finishes — a
 server restart mid-run loses live tracking of that job (the OS process
 itself is unaffected).
+
+### Two kinds of agent, shown as two groups
+
+The composer groups backends by which one is running the loop, because that is
+what the choice is actually between:
+
+- **CLI agents** (`stream_json`, `resume`, `oneshot`) — the console spawns
+  somebody else's agent. It inherits that CLI's tools, its permission model and
+  its idea of what a skill is. The console watches, records and gates what it
+  can.
+- **Console agents** (`openai_api`) — no process at all. The console runs the
+  loop, so the tools are its own verbs plus the workspace tools, the gate is
+  the same "Permission needed" card, the skill is text injected by
+  `prompt_build`, and the turn is attributable to a ticket.
+
+Both rendered as identical cards in one flat list until this was split out,
+which made the most consequential choice in the composer invisible.
+
+### Folding the chat list
+
+The chat list folds away, and one flag drives both behaviours because they are
+one state: above 900px it collapses the grid column, below it swaps panes.
+
+The preference is written **only from a desktop**. Below the breakpoint the
+list is a pane you swap to, and swapping away from it after picking a chat is
+navigation rather than a setting — persisting it would silently fold the list
+away on the next wide session.
+
+## The Assistant
+
+One reused chat you can talk to in short commands. It exists so the tray voice
+assistant (T-006) is testable **by typing today** — same endpoint, same
+dispatch, no microphone and no native shell required.
+
+It is not a second orchestrator. Every message does exactly one of two things:
+match one fast command and run its handler, or get sent once to an ordinary
+Agents chat. Nothing inspects the model's reply to pick a follow-up action.
+
+### Try it without a server
+
+```bash
+python console/kanban.py assistant say "what's open"
+python console/kanban.py assistant say "status T-002"
+python console/kanban.py assistant settings
+```
+
+The CLI runs the same handler the HTTP route runs (`assistant_feature.handlers`),
+so there is one implementation and no CSRF bypass — CSRF is enforced by
+`httpd.py` on the way in, not by the handler.
+
+One caveat: chat sessions live in the serving process's memory, so a message
+that reaches the **model** from the CLI dies with the command. Fast commands
+are fully useful from the CLI; model turns want a running server (that is how
+the desktop shell will call it anyway).
+
+### Fast commands
+
+Matched on the **whole utterance** only, after stripping a wake word and
+trailing punctuation. That is deliberate: `stop the server` must reach the
+model, not silently interrupt the turn. The cost is that a command buried
+mid-sentence is not recognised, which is the right way round.
+
+| Say | It does |
+|---|---|
+| `new chat`, `start over`, `reset` | ends the current Assistant chat and starts one |
+| `stop`, `cancel`, `interrupt` | interrupts the turn in flight |
+| `mute` / `unmute` | stores the `speak` setting (T-006 honours it) |
+| `use claude` / `use cursor` / `use ollama` … | backend for the **next** chat; a live chat keeps its context |
+| `status T-002`, `status t dash two` | lane, open tasks, blockers — **no model call** |
+| `what's open`, `standup` | the tickets digest — no model call |
+| `create ticket for {title}` | the `kickoff` verb: `ticket.toml`, rendered templates, artifact-map row |
+| `remember {fact}` | appends to memory; refuses anything shaped like a credential |
+| `copy that` | needs the native shell (see below) |
+| `do`/`fix`/`build`/`run {task}` | one send, rewritten through the `do` skill |
+| `screenshot of X and Y` | one send, rewritten to an explicit instruction; the tool itself is T-005's |
+| anything else | sent to the chat unchanged |
+
+Spoken ticket ids are canonicalised, so `t dash two`, `t 2`, `ticket 4` and
+`T-002` all resolve. A span with no number in it falls through to the model
+rather than inventing an id — `status of the migration` is a question, not a
+command.
+
+### Persona and injected context
+
+`console/config/assistant.md` is the persona — console-owned, deliberately
+**not** an eighth file under `.claude/agents/`, which stays at exactly seven.
+It reaches a Claude CLI backend on `--append-system-prompt`, an `openai_api`
+backend through the prompt builder's `extra=`, and a backend with no
+system-prompt flag as a first-turn prefix.
+
+Each new chat is also given a capped context block: the open-tickets digest,
+whatever has been remembered, and one line naming the backend, whether it is
+local or hosted, and whether the native bridge is up. Every section states it
+when truncated.
+
+### Settings
+
+`console/config/assistant.toml` holds the **committed defaults**. Your own
+choice — which backend, which model — is written by
+`POST /api/assistant/settings` to `console/.cache/assistant/settings.json`,
+which is gitignored, so picking a model on one laptop never lands in anyone
+else's diff. `GET` returns the merged view, which is what the desktop shell
+reads. A write is rejected whole if any key is unknown or any value invalid;
+a half-applied settings write is worse than a refused one.
+
+`backend = ""` means "resolve at use time": the first enabled and installed
+backend, local models first. A hardcoded id would be wrong on any machine
+without that particular CLI.
+
+### Desktop tools
+
+Six verbs reach the native shell over a loopback bridge, so they work from any
+backend and from the palette, MCP or the CLI like any other verb:
+
+| Verb | Gated? | What it does |
+|---|---|---|
+| `desktop-windows` | no | titles and geometry of capturable windows |
+| `desktop-monitors` | no | monitors, sizes, which is primary |
+| `desktop-screenshot` | **yes** | screen / monitor / window-by-title / region, returns a PNG path |
+| `desktop-clipboard-peek` | no | how much text is on the clipboard, and a 40-char preview |
+| `desktop-clipboard-read` | **yes** | the clipboard's full text |
+| `desktop-clipboard-write` | no (`needs_confirm`) | put text on the clipboard |
+
+Two of them are the most sensitive things this console can do, and they are
+guarded accordingly:
+
+- **A screenshot and a clipboard read can only be approved at this machine.**
+  A Telegram tap on one of those cards is refused — the person tapping cannot
+  see what is on the screen, or what a password manager last copied. A *deny*
+  is accepted from anywhere; refusing to let someone stop something would be a
+  strange reading of "this needs a human here".
+- **Neither gets "allow for this chat."** Each screen, and each clipboard, is
+  a fresh decision. `desktop-clipboard-peek` exists so the card can say "will
+  read 1,204 characters" without performing the read it is gating.
+- The window LIST is deliberately not gated, and returns titles and geometry
+  only — never a process path. Asking for approval to read a window list
+  trains people to click allow without reading, which is how a gate stops
+  working for the calls that matter.
+
+Captures are written to `console/.cache/desktop-captures/` and the tool returns
+a **path**, not image bytes: that is what lets a Claude or Cursor backend open
+it with its own file tools, keeps a multi-megabyte PNG out of a JSON response,
+and leaves a reviewable artefact on disk.
+
+`needs_confirm` on the clipboard write is a different guard from the approval
+card: it stops a *hallucinated* call, not an unwanted one.
+
+### Talking to it
+
+Click the tray icon (or press Ctrl+Alt+Space; Cmd+Option+Space on macOS) and
+speak. One click does whatever the icon is currently showing you: talk when
+idle, **send the take you are in the middle of** when it is listening (rather
+than waiting for the silence detector), stop a reply that is being read aloud,
+and open the window when only a human can help — a permission card, or a turn
+already running. Change that to plain "show the window", or to arming
+hands-free, with **Tray icon click** in Settings → Assistant. On Linux a click
+opens the menu instead (libappindicator gives the app no left-click), so the
+menu's **Talk** row is the same action there. Recording stops when **you** stop — a voice-activity detector ends the
+take after about 700 ms of silence, so there is no timer to race and no need to
+finish a sentence early. A 20-second cap applies in case the detector wedges.
+
+The transcript goes to the same `POST /api/assistant/say` a typed message goes
+to, so a spoken command and a typed one are the same thing. Replies are read
+back aloud unless muted, and the tray icon shows which state it is in:
+
+| Icon | Meaning |
+|---|---|
+| grey disc | idle |
+| red disc, hollow ring | hands-free is armed — the microphone is open, and nothing is sent unless you say the wake word |
+| red disc, mic glyph | listening — the microphone is open and what you say is on its way out |
+| amber ring | working |
+| green disc, speaker waves | reading a reply aloud |
+| orange dot overlay | a permission card is waiting for you |
+| grey with a slash | replies muted |
+
+Every state is distinguishable by shape as well as colour, because the macOS
+menu bar renders it monochrome and because colour alone is not an accessible
+signal.
+
+A small panel also appears near the tray while you talk: a level meter that
+moves with your voice, then what it heard, then the reply. It is a read-out —
+no buttons, no API access — and it hides itself a few seconds after the turn
+ends. Two short tones go with it: rising when the microphone is actually open
+(which is about a second after you click, so the tone is worth waiting for),
+and again when the take is sent. Muting replies silences the tones too.
+
+### How it sounds
+
+Two things decide that, and the voice is only one of them.
+
+**What gets spoken.** A model writes for a screen: `**bold**`, bullet lists,
+fenced code, links with URLs in them, `T-002`. Read literally, that is most of
+why a spoken reply sounds like a machine. The shell now shapes the text first —
+markdown out, links reduced to their text, code blocks skipped with a note that
+they were, ticket ids said the way a person says them ("T two", not "T dash
+zero zero two").
+
+**Which voice.** By default the operating system's own synthesiser, which on
+Windows means `System.Speech` and its "Desktop" voices — the robotic ones.
+Fetch a neural voice once and it uses that instead:
+
+```bash
+pwsh -File desktop/get-piper.ps1
+```
+
+That is Piper: ~65 MB, offline, runs on the CPU at about eight times real
+time. Pick the voice and the speed in Settings → Assistant (`speak_voice`,
+`speak_rate_percent`). With no Piper installed nothing breaks — the OS voice
+speaks, and `/health` says which one is doing the talking.
+
+The Assistant is also *told* when a reply will be read aloud, so it writes two
+or three sentences of prose instead of a bulleted answer for a synthesiser to
+read out.
+
+### How long a turn takes
+
+Roughly five seconds from click to answer, on this machine, for a short
+command. The shell logs the breakdown of every take, so a slow one can be
+diagnosed rather than described:
+
+```
+listen: took 5317ms (checks 1ms, record 4509ms for 3.7s of audio, stt 753ms, post 12ms)
+```
+
+`record` includes about a second of opening the microphone, which is what the
+tone is for. Hands-free opens it once for the whole session instead.
+
+Two settings bound the take: `listen_silence_ms` (how much quiet ends it) and
+`listen_max_seconds` (the backstop if the detector never hears you stop).
+`stt_model` chooses the whisper model — `base.en` by default, `tiny.en` if you
+want speed more than accuracy on ticket ids.
+
+Talking while it is speaking interrupts it — the reply stops and a new take
+begins. Pressing the hotkey during a take ends that take rather than starting
+a second one.
+
+### Setting speech up
+
+Speech recognition needs an engine, and nothing here downloads one on its own:
+
+```powershell
+powershell -File desktop/get-whisper.ps1              # base.en, ~150 MB
+powershell -File desktop/get-whisper.ps1 -Model small.en   # better, ~470 MB
+powershell -File desktop/get-whisper.ps1 -WhatIf      # show sizes, fetch nothing
+```
+
+That puts a pinned `whisper.cpp` build and a ggml model in `desktop/stt/`
+(gitignored). Until then the tray reports listening as unavailable and says
+exactly what to run — it does not fail when you speak.
+
+Everything stays on the machine: the engine runs as a local process, the model
+is local, and audio never leaves. Reading replies aloud uses whatever
+synthesiser the OS already has (`System.Speech` on Windows, `say` on macOS,
+`spd-say` or `espeak-ng` on Linux), so there is nothing to install for that.
+
+### Spoken ticket ids
+
+"status ticket two" resolves to `T-002`, and so do "t dash two", "t 2" and
+"T-002". Homophones are handled too, because they are what a recogniser
+actually returns: asked to transcribe "status ticket two", whisper base.en
+gives back **"Status ticket too"**. So `too`, `to`, `won`, `for`, `fore`, `ate`
+and `oh` map to digits — but only inside a span an anchored command has
+already identified as a ticket id, never in general text.
+
+A span with no number in it falls through to the model rather than becoming an
+invented id, so "status of the migration" is answered rather than mistaken for
+a ticket.
+
+
+### What a model actually receives from a screenshot
+
+`desktop-screenshot` returns a **path**. What happens next depends on the
+backend, because they can do genuinely different things with one:
+
+| Backend | What it gets |
+|---|---|
+| Claude / Cursor CLI | the path, and it opens the file with its own tools — the method that works on Windows, where pasting an image into a CLI does not |
+| an `openai_api` model matching `vision_models` | the path, then the **picture itself** as an image part, because this transport has no file tools at all |
+| an `openai_api` model that does not match | the path, then a sentence telling it to call `desktop-ocr` and to say it worked from OCR text |
+
+That last row is the one worth caring about. A model with no vision, handed
+only a path, will otherwise describe a screen nobody looked at — confidently.
+Being told is the difference between a useful answer and a fabricated one.
+
+`vision_models` in `console/config/assistant.toml` decides which models count.
+It ships populated with globs (`*vl*`, `gpt-4o*`, `claude*`, …) rather than a
+fixed list, because model ids move faster than that file does. Set it to `[]`
+to stop sending pixels anywhere.
+
+Attachments are capped at 4 MB and confined to the captures directory. The
+path arrives inside a tool result — text a model influenced — so it is
+resolved and refused if it escapes, and an oversized capture is refused with
+its size and a pointer to OCR rather than silently truncated.
+
+### What still needs the shell, or a later ticket
+
+With no shell running, every desktop verb returns
+`{"ok": false, "reason": "shell not running"}` — the pointer file
+`console/.cache/desktop/bridge.json` is written by the shell at startup and is
+the only thing that advertises the port. A shell killed outright leaves the
+file behind, so availability is a `/health` probe rather than a file check.
+
+With no shell running, every desktop verb — and speech — reports
+`shell not running`. Speech additionally needs the engine fetched (above); the
+tray says which of the two is missing.
+
+Each capability is **probed, not assumed**: `GET /health` asks whether an
+engine actually answers on this machine, so `ocr`, `speak` and `stt` describe
+this build rather than what the platform supports in principle.
+
+Hands-free listening exists too: turn it on from the tray, or with
+`POST /listen {"mode":"hands_free"}` on the native bridge. Audio is
+transcribed **on this machine** and the transcript is thrown away unless it
+starts with the wake word, so leaving the microphone on means the room is
+heard locally and forgotten rather than sent anywhere. It pauses while a reply
+is being read aloud (otherwise the assistant answers its own voice) and while
+an approval card is open, and it stops on its own after
+`hands_free_max_minutes`. All four settings live in
+`console/config/assistant.toml`.
+
+Still to come: a Settings-tab control for the backend picker (the service side
+exists and round-trips through `GET`/`POST /api/assistant/settings`), OS
+actuation, and watch mode.
+
+### Choosing where the model runs
+
+Every OpenAI-compatible endpoint is a provider: OpenRouter, **Ollama**, **LM
+Studio**, or anything else that speaks that API — a vLLM box, llama.cpp, a
+hosted gateway. Settings → **Model providers** switches them on and off and
+adds your own; `kanban agents provider list|enable|disable|add|remove` does the
+same from a terminal.
+
+Two things worth knowing:
+
+- **Your choices are per-machine.** They go to
+  `console/.cache/agents/providers.json` (gitignored). The committed
+  `agents.toml` keeps stating what this workspace ships with, comments and all
+  — nothing here ever rewrites it.
+- **A key is named, never pasted.** Give the NAME of an environment variable
+  (`TOGETHER_API_KEY`); put the value in the workspace `.env`. The console
+  reports whether it is set and never reads it into a page or a log. Ollama
+  and LM Studio need no key at all.
+
+**Test** probes an endpoint before you save it, so a wrong port is a sentence
+rather than a failed turn later. For a local server, the caveat that decides
+whether it is useful to you is tool calling: the console runs the agent loop
+and that loop needs tools. Ollama answers `does not support tools` for a model
+that lacks them, and the console shows you that verbatim.
+
+### Two models: one to talk to, one to work
+
+The Assistant has two slots, and they want different animals. A small local
+model answers "what's open?" in about a second and is a poor engineer; a CLI
+agent is the other way round.
+
+- **Talk** (`backend` / `model`) — conversation, status, ticket lookups, memory.
+- **Work** (`work_backend` / `work_model`) — code changes, builds, test runs.
+
+The talk model does not attempt the second kind. It calls `console_delegate`,
+which starts a chat on the work backend with the task and reports where it
+went; when that chat's turn ends, a notice comes back into the Assistant chat
+with the gist, and the full transcript stays in the Agents tab.
+
+Delegating **raises the approval card** on every API-backed talk model: a
+local model starting a second, often paid, agent is exactly the shape of thing
+this console asks about first. Remove `console_delegate` from a row's
+`gated_tools` if you would rather it were seamless.
+
+With no work backend configured, `console_delegate` says so and does **not**
+fall back to running the task on the talk model.
+
+### Where a model actually is
+
+The shipped rows point at defaults — LM Studio at `127.0.0.1:1234`. If yours
+is a box on the LAN, re-point it per machine without touching the committed
+file:
+
+```bash
+python console/kanban.py agents provider enable lm-studio
+```
+
+then use the pencil beside it in Settings → Model providers. A shipped row
+offers two fields — the address, and the NAME of its key — and a **Reset to
+default** once it has been moved; a `moved` chip beside the name says it is not
+where the committed file puts it. A provider you added yourself is fully
+editable: label, address and key name.
+
+Only the address and the key's env-var name can be overridden on a shipped row.
+Everything else about it — its tool gates, its context caps, its transport — is
+a reviewed decision that stays in `agents.toml`, which is also why the form
+shows two fields rather than pretending everything is editable and refusing on
+save.
+
+### Which models are loaded
+
+A local runtime keeps one model resident and swaps on demand, so choosing a
+different one is a ~20-second decision rather than a dropdown. The model picker
+shows what is loaded, what each model's server says about tool training, and
+asks once before you pick something that is not resident. Nothing is ever
+loaded silently.
+
+A provider that cannot report residency says **unknown** — never "not loaded",
+which would invite you to wait for a load that never starts.
+
+### Resuming a chat
+
+A chat used to die with the console. Now a past chat carries a **Resume**
+button when two things are true: its transcript recorded the CLI's own session
+id, and its backend row in `console/config/agents.toml` says how to hand that
+id back (`resume_session_args`). Resuming keeps the same chat id and the same
+transcript — it is the same conversation, and the model still has its context.
+
+`POST /api/agents/chats/{id}/resume` does it without the UI, and is audited as
+`chat.resume`. The Assistant does the same for its own chat, so a restart
+continues where you left off instead of quietly starting over.
+
+A chat that cannot be resumed says so rather than starting a fresh one under
+the same name.
 
 ## Security notes
 

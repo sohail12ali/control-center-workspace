@@ -52,6 +52,24 @@
     return { open: open, close: close };
   })();
 
+  function inShell() {
+    return document.documentElement.classList.contains("in-shell");
+  }
+
+  /* T-016 FR-1: native shell opens on Assistant. The server NAV_ORDER cannot
+     see html.in-shell (the class is client-only), so the browser keeps the
+     shipped Overview-first list and only this sort moves Assistant first. */
+  function orderManifest(tabs) {
+    tabs = (tabs || []).slice();
+    if (!inShell()) return tabs;
+    var home = [], rest = [];
+    tabs.forEach(function (t) {
+      if (t.id === "assistant") home.push(t);
+      else rest.push(t);
+    });
+    return home.concat(rest);
+  }
+
   /* ---------------- nav ---------------- */
   function buildNav() {
     var nav = C.clear(document.getElementById("tabs"));
@@ -251,7 +269,12 @@
   function bindKeys() {
     document.addEventListener("keydown", function (e) {
       var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ""));
-      if (e.key === "/" && !typing) {
+      /* Ctrl/Cmd-K works even while typing — it is the one shortcut whose
+         whole point is "get me out of here and somewhere else". */
+      if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (C.palette) C.palette.open();
+      } else if (e.key === "/" && !typing) {
         e.preventDefault();
         document.getElementById("search").focus();
       } else if (e.key === "r" && !typing && !e.metaKey && !e.ctrlKey) {
@@ -295,7 +318,7 @@
   /* ---------------- boot ---------------- */
   C.get("/api/config").then(function (cfg) {
     state.cfg = cfg;
-    state.manifest = cfg.tabs || [];
+    state.manifest = orderManifest(cfg.tabs || []);
     document.getElementById("brandTitle").textContent = cfg.title || "Delivery Console";
     document.getElementById("brandSub").textContent = cfg.subtitle || "";
     markConnection(true);

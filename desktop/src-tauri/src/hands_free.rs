@@ -1,0 +1,584 @@
+//! Always-on listening.
+//!
+//! Push-to-talk asks you to say when you are talking to the assistant.
+//! Hands-free removes that, and in doing so raises three problems that
+//! push-to-talk simply does not have. Each one is answered here rather than
+//! left to the user to discover.
+//!
+//! ## 1. Everything in the room would go to a model
+//!
+//! It does not, and since T-019 it does not in the stronger sense. A wake-word
+//! spotter scores the audio itself (`wake`), and the recogniser is not started
+//! at all unless it fires. Unaddressed speech is therefore not transcribed and
+//! discarded — it is never transcribed. Nothing about it is written down and
+//! nothing about it leaves this machine.
+//!
+//! That can be switched off, for headphones-on, nobody-else-in-the-room use,
+//! and it is off-by-default precisely because the alternative is a surprise.
+//!
+//! The old arrangement — record everything, transcribe everything, match the
+//! text — is still here as a fallback for a machine with no wakeword recorded
+//! yet, because a tray switch that does nothing is worse. It is slower, it is
+//! less accurate, and the log says which one is running.
+//!
+//! ## 2. The assistant would hear itself
+//!
+//! Through speakers, a spoken reply is picked up by the microphone,
+//! transcribed, and answered — the assistant talking to itself in a loop. So
+//! listening pauses while a reply is being read aloud. On headphones there is
+//! no echo, and a setting keeps the microphone open, which is what makes
+//! barge-in work by voice instead of by hotkey.
+//!
+//! ## 3. It would run forever
+//!
+//! A microphone left on by accident stops on its own after a configured
+//! number of minutes, and says why.
+//!
+//! Everything else — how a take ends, transcription, dispatch — is the same
+//! machinery push-to-talk uses. This module is a loop and three policies, not
+//! a second voice pipeline.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use crate::tray_state::{Assistant, Event};
+use crate::{listen, tray_paint, tts, wake};
+
+/// Whether the loop should keep going. Also what `stop()` clears.
+static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Why the loop last stopped, for the tray and `/listen/state`.
+static LAST_STOP: Mutex<String> = Mutex::new(String::new());
+
+/// How long to wait before looking again while paused (speaking, or a
+/// permission card is open). Short enough to feel responsive, long enough not
+/// to spin.
+const PAUSE_POLL: Duration = Duration::from_millis(200);
+
+/// How long to wait between reads of the microphone while armed.
+///
+/// Much shorter than `PAUSE_POLL`: this one is in the path of hearing the wake
+/// word, and every millisecond here is a millisecond of the phrase that has to
+/// sit in the ring before anyone looks at it. The ring makes that safe rather
+/// than lossy, but latency is still latency.
+const SPOT_POLL: Duration = Duration::from_millis(30);
+
+/// Settings the loop needs, fetched from the console so `assistant.toml`
+/// stays the single source of truth rather than being parsed twice.
+#[derive(Clone, Debug)]
+pub struct Policy {
+    pub require_wake: bool,
+    pub wake_word: String,
+    pub listen_while_speaking: bool,
+    pub max_minutes: u64,
+    /// How readily the spotter fires, 0.0..1.0, in the direction a person
+    /// expects: higher is more sensitive.
+    pub wake_sensitivity: f32,
+    /// How much audio before the firing goes into the take. A wake word is
+    /// recognised only once it has been said, so without this the recogniser
+    /// gets the sentence with its first word missing.
+    pub preroll: Duration,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        // Matches `assistant_config.DEFAULTS`. Used only when the console
+        // cannot be asked, and deliberately the cautious set.
+        Self {
+            require_wake: true,
+            wake_word: "console".into(),
+            listen_while_speaking: false,
+            max_minutes: 30,
+            wake_sensitivity: 0.5,
+            preroll: Duration::from_millis(1000),
+        }
+    }
+}
+
+pub fn running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
+
+pub fn last_stop_reason() -> String {
+    LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn set_stop_reason(why: &str) {
+    *LAST_STOP.lock().unwrap_or_else(|e| e.into_inner()) = why.to_string();
+}
+
+/// Ask the loop to finish. The take in flight is released, not abandoned.
+pub fn stop(why: &str) {
+    if RUNNING.swap(false, Ordering::SeqCst) {
+        set_stop_reason(why);
+        listen::release();
+        log::info!("hands-free: stopping ({why})");
+    }
+}
+
+/// Tell the tray the microphone is open, or no longer is.
+///
+/// The bool is `require_wake`, because that is the difference the icon is
+/// reporting: a gated mic (armed) or one where everything said is sent
+/// (listening).
+fn show_armed(assistant: &Arc<Mutex<Assistant>>, on: bool, require_wake: bool) {
+    tray_paint::note(assistant, Event::Armed(on && require_wake));
+}
+
+/// Is `transcript` addressed to the assistant?
+///
+/// Deliberately forgiving about what surrounds the wake word — a recogniser
+/// adds punctuation and capitalisation of its own — and deliberately strict
+/// about where it appears. Requiring it at the START is what makes the rule
+/// predictable: "ask the console about X" addresses the assistant, while "the
+/// console is slow today" does not, and a rule matching anywhere in the
+/// sentence could not tell those apart.
+pub fn is_addressed(transcript: &str, wake_word: &str) -> bool {
+    let wake = wake_word.trim().to_lowercase();
+    if wake.is_empty() {
+        return true;
+    }
+    let text = transcript.trim().to_lowercase();
+    // Strip leading filler a recogniser reliably produces before a name.
+    let text = text
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+    for prefix in ["hey ", "ok ", "okay ", "hi ", "yo "] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return starts_with_word(rest, &wake);
+        }
+    }
+    starts_with_word(&text, &wake)
+}
+
+/// `text` begins with `wake` as a whole word, not as a prefix of a longer one
+/// — so "console" matches "console, what's open" but not "consolidate".
+fn starts_with_word(text: &str, wake: &str) -> bool {
+    match text.strip_prefix(wake) {
+        None => false,
+        Some("") => true,
+        Some(rest) => !rest.chars().next().map(char::is_alphanumeric).unwrap_or(false),
+    }
+}
+
+
+/// Ask the console for the current hands-free policy.
+///
+/// Fetched rather than parsed from `assistant.toml` directly: the console
+/// already merges committed defaults with this machine's overrides, and a
+/// second TOML reader here would be a second answer to the same question.
+/// Falls back to the cautious defaults when the console cannot be reached,
+/// which is the right way to be wrong about an always-on microphone.
+pub fn fetch_policy(console_url: &str) -> Policy {
+    match crate::console_settings::fetch(console_url) {
+        Ok(v) => {
+            let get_bool = |k: &str, d: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(d);
+            let d = Policy::default();
+            Policy {
+                require_wake: get_bool("hands_free_require_wake", d.require_wake),
+                wake_word: v
+                    .get("hands_free_wake_word")
+                    .and_then(|x| x.as_str())
+                    .filter(|s| s.trim().len() >= 2)
+                    .unwrap_or(&d.wake_word)
+                    .to_string(),
+                listen_while_speaking: get_bool(
+                    "hands_free_listen_while_speaking", d.listen_while_speaking),
+                max_minutes: v
+                    .get("hands_free_max_minutes")
+                    .and_then(|x| x.as_u64())
+                    .filter(|m| *m >= 1)
+                    .unwrap_or(d.max_minutes),
+                wake_sensitivity: v
+                    .get("wake_sensitivity")
+                    .and_then(|x| x.as_f64())
+                    .map(|x| x as f32)
+                    .unwrap_or(d.wake_sensitivity),
+                preroll: Duration::from_millis(
+                    v.get("listen_preroll_ms")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(d.preroll.as_millis() as u64),
+                ),
+            }
+        }
+        Err(e) => {
+            log::warn!("hands-free: could not read settings ({e}); using cautious defaults");
+            Policy::default()
+        }
+    }
+}
+
+/// Start the loop. Returns an error the caller can show if it cannot run.
+pub fn start(
+    repo_root: &std::path::Path,
+    assistant: Arc<Mutex<Assistant>>,
+    console_url: String,
+    policy: Policy,
+) -> Result<(), String> {
+    if !listen::available(repo_root) {
+        return Err(listen::hint(repo_root));
+    }
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("hands-free is already on".into());
+    }
+    set_stop_reason("");
+
+    // Summarised before the policy moves into the thread.
+    let summary = policy_summary(&policy);
+    show_armed(&assistant, true, policy.require_wake);
+    let root = repo_root.to_path_buf();
+    std::thread::Builder::new()
+        .name("hands-free".into())
+        .spawn(move || run(root, assistant, console_url, policy))
+        .map_err(|e| {
+            RUNNING.store(false, Ordering::SeqCst);
+            format!("cannot start hands-free: {e}")
+        })?;
+    log::info!("hands-free: on (wake word required: {summary})");
+    Ok(())
+}
+
+fn policy_summary(policy: &Policy) -> String {
+    if policy.require_wake {
+        format!("yes, {:?}", policy.wake_word)
+    } else {
+        "no - every utterance is sent".into()
+    }
+}
+
+fn run(
+    repo_root: std::path::PathBuf,
+    assistant: Arc<Mutex<Assistant>>,
+    console_url: String,
+    policy: Policy,
+) {
+    let started = Instant::now();
+    let cap = Duration::from_secs(policy.max_minutes.max(1) * 60);
+    // Opened once for the whole session and reused. The microphone is on
+    // either way while hands-free is on — reopening it between takes would
+    // only make it deaf for a second after every utterance. It closes when
+    // this loop ends, which is what turns the OS indicator off.
+    let mut mic: Option<crate::audio::Mic> = None;
+
+    // The spotter, if this machine has a wakeword. When it does not, the loop
+    // falls back to the old transcribe-everything gate — and says so once,
+    // here, rather than leaving the user to wonder why it is slow.
+    let mut spotter = match (policy.require_wake, wake::Spotter::new(&repo_root, policy.wake_sensitivity)) {
+        (false, _) => None,
+        (true, Ok(s)) => Some(s),
+        (true, Err(why)) => {
+            log::warn!("hands-free: {why}; falling back to transcribing every utterance");
+            None
+        }
+    };
+    log::info!(
+        "hands-free: {}",
+        if spotter.is_some() {
+            "armed - the recogniser runs only after the wake word"
+        } else {
+            "armed - every utterance will be transcribed and gated on its text"
+        }
+    );
+    // Where the spotter has read up to. Kept across iterations, which is the
+    // whole point: audio that arrives while a take is being transcribed and
+    // answered is still here to be read afterwards.
+    let mut cursor: u64 = 0;
+
+    while RUNNING.load(Ordering::SeqCst) {
+        if started.elapsed() >= cap {
+            stop("reached the time limit");
+            break;
+        }
+
+        let speaking = !tts::finished();
+        let awaiting_approval = assistant
+            .lock()
+            .map(|a| a.needs_approval())
+            .unwrap_or(false);
+        if should_pause(&policy, speaking, awaiting_approval) {
+            // Nothing is captured, scored or kept while paused — but the
+            // cursor moves on, so the audio skipped here can never surface
+            // later as a wake word nobody said just now.
+            if let Some(open) = mic.as_ref() {
+                cursor = open.cursor();
+            }
+            if let Some(s) = spotter.as_mut() {
+                s.reset();
+            }
+            std::thread::sleep(PAUSE_POLL);
+            continue;
+        }
+
+        let outcome = if spotter.is_some() {
+            if mic.is_none() {
+                match crate::audio::Mic::open() {
+                    Ok(open) => {
+                        cursor = open.cursor();
+                        mic = Some(open);
+                    }
+                    Err(why) => {
+                        stop(&why);
+                        break;
+                    }
+                }
+            }
+            // Armed: score the stream and do nothing else. No recogniser, no
+            // recording, no take — this is the state hands-free spends
+            // essentially all of its time in, and it costs one small
+            // comparison per frame of audio.
+            let (next, fresh) = mic.as_ref().expect("open above").since(cursor);
+            cursor = next;
+            match spotter.as_mut().expect("checked").push(&fresh) {
+                None => {
+                    std::thread::sleep(SPOT_POLL);
+                    continue;
+                }
+                Some(fired) => {
+                    log::info!(
+                        "wake: fired {:?} (score {:.2}, avg {:.2})",
+                        fired.name, fired.score, fired.avg_score
+                    );
+                    crate::cue::play(crate::cue::Cue::Sent);
+                    // Start the take BEFORE the word was recognised: it has
+                    // already been said by now, and so, often, has the first
+                    // word of the request after it.
+                    let from = mic.as_ref().expect("open above").rewound(policy.preroll);
+                    let sent = listen::take_after_wake(
+                        &mut mic, from, &repo_root, &assistant, &console_url);
+                    // Whatever happened, the utterance just handled must not
+                    // be scored again as a fresh wake word.
+                    if let Some(open) = mic.as_ref() {
+                        cursor = open.cursor();
+                    }
+                    spotter.as_mut().expect("checked").reset();
+                    sent
+                }
+            }
+        } else {
+            let policy_for_gate = policy.clone();
+            listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
+                let addressed = should_send(text, &policy_for_gate);
+                if !addressed {
+                    log::info!("hands-free: {}", why_not(text, &policy_for_gate));
+                }
+                addressed
+            })
+        };
+
+        match outcome {
+            Ok(sent) => log::info!("hands-free: sent {sent:?}"),
+            // `listen` now says when a take was heard and dropped, so the
+            // quiet cases below stay quiet without hands-free looking dead.
+            Err(reason) => {
+                // "nothing heard" is the normal outcome of a quiet room and
+                // must not be logged as a problem or slow the loop down.
+                if reason != "nothing heard"
+                    && reason != "already listening"
+                    && reason != "not addressed"
+                {
+                    log::info!("hands-free: {reason}");
+                }
+                if reason.contains("microphone") || reason.contains("engine") {
+                    // A broken microphone would otherwise spin this loop.
+                    stop(&reason);
+                    break;
+                }
+            }
+        }
+    }
+
+    RUNNING.store(false, Ordering::SeqCst);
+    show_armed(&assistant, false, policy.require_wake);
+    log::info!("hands-free: off ({})", last_stop_reason());
+}
+
+/// Should the loop hold the microphone shut for a moment?
+///
+/// Two reasons, and they are different reasons. Speaking is about echo: on
+/// speakers the assistant hears its own reply and answers it, which is why
+/// `listen_while_speaking` exists and why it is off by default. An open
+/// approval card is about consent: someone reading "allow this?" out loud, or
+/// talking it over with a colleague, must not have that recorded and sent as
+/// their next instruction — so that pause is not configurable.
+pub fn should_pause(policy: &Policy, speaking: bool, awaiting_approval: bool) -> bool {
+    if awaiting_approval {
+        return true;
+    }
+    speaking && !policy.listen_while_speaking
+}
+
+/// The wake-word gate, applied to a transcript before anything is sent.
+///
+/// Separate from the loop so `listen` can call it on the take it just made,
+/// and so it can be tested without a microphone.
+pub fn should_send(transcript: &str, policy: &Policy) -> bool {
+    !policy.require_wake || is_addressed(transcript, &policy.wake_word)
+}
+
+/// Why the gate said no — in the one bit that is worth knowing and safe to
+/// write down.
+///
+/// The transcript of unaddressed speech never goes in the log, and that rule
+/// is not negotiable. But "it heard you and dropped you" leaves the user with
+/// two very different problems that look identical: they forgot the wake
+/// word, or they said it and the recogniser heard something else. The first
+/// is fixed by repeating yourself, the second only by changing the wake word
+/// — and nothing in the log distinguished them.
+///
+/// So this reports whether the wake word occurred ANYWHERE in what was heard.
+/// One bit about the utterance, and the one that tells you which problem you
+/// have. Found the hard way: `console` came back from a live over-the-air
+/// take as a word that was not `console`, twice, and the log could only say
+/// "5 words".
+fn why_not(text: &str, policy: &Policy) -> String {
+    let wake = policy.wake_word.trim().to_lowercase();
+    let present = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == wake);
+    if present {
+        format!("not addressed: {wake:?} was in there, but not at the start")
+    } else {
+        format!(
+            "not addressed: no {wake:?} in what was heard - if you did say it, \
+             the recogniser wrote down a different word"
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_addressed_utterance_is_recognised() {
+        for said in [
+            "console what's open",
+            "Console, what's open?",
+            "hey console take a screenshot",
+            "OK console, status ticket two",
+            "  console  status  ",
+            // Verbatim from the recogniser, punctuation and all — this is
+            // the exact string a live take produced, so the shape of real
+            // whisper output is pinned rather than imagined.
+            "Hey console, take a screenshot.",
+            "Console, what is open?",
+        ] {
+            assert!(is_addressed(said, "console"), "{said:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_conversation_is_not_addressed() {
+        // This is the property that makes an always-on microphone tolerable:
+        // the room is heard locally and forgotten.
+        for said in [
+            "the console is slow today",
+            "I was talking to Sam about the console",
+            "shall we get lunch",
+            "consolidate the tickets",   // not a prefix match
+            "",
+        ] {
+            assert!(!is_addressed(said, "console"), "{said:?}");
+        }
+    }
+
+    #[test]
+    fn the_wake_word_must_be_a_whole_word() {
+        assert!(!is_addressed("consoles are great", "console"));
+        assert!(is_addressed("console: status", "console"));
+    }
+
+    #[test]
+    fn the_reason_says_which_of_the_two_problems_it_was() {
+        let p = Policy::default();
+        // Said it, in the wrong place.
+        assert!(why_not("I was telling Sam about the console", &p)
+                .contains("not at the start"));
+        // Did not say it — or said it and was misheard, which from here is
+        // the same observation and the same advice.
+        let missed = why_not("hey council, take a screenshot", &p);
+        assert!(missed.contains("different word"), "{missed}");
+        // And under no circumstances does the reason quote the speech.
+        assert!(!missed.contains("screenshot"), "{missed}");
+        assert!(!missed.contains("council"), "{missed}");
+    }
+
+    #[test]
+    fn a_configured_wake_word_is_honoured() {
+        assert!(is_addressed("jarvis what's open", "jarvis"));
+        assert!(!is_addressed("console what's open", "jarvis"));
+    }
+
+    #[test]
+    fn an_empty_wake_word_addresses_everything() {
+        // Belt and braces: the console refuses to store one this short, but
+        // if it ever arrived, failing open on the GATE would be wrong — so
+        // this is the documented behaviour rather than an accident.
+        assert!(is_addressed("anything at all", ""));
+    }
+
+    #[test]
+    fn requiring_a_wake_word_is_what_decides_sending() {
+        let strict = Policy::default();
+        assert!(!strict.wake_word.is_empty());
+        assert!(should_send("console status", &strict));
+        assert!(!should_send("shall we get lunch", &strict));
+
+        let open = Policy { require_wake: false, ..Policy::default() };
+        assert!(should_send("shall we get lunch", &open));
+    }
+
+    #[test]
+    fn the_cautious_defaults_are_the_defaults() {
+        // If these drift, an always-on microphone starts behaving in a way
+        // nobody chose.
+        let p = Policy::default();
+        assert!(p.require_wake, "unaddressed speech must not be sent by default");
+        assert!(!p.listen_while_speaking, "the assistant must not hear itself");
+        assert!(p.max_minutes >= 1, "it must stop on its own");
+    }
+
+    #[test]
+    fn real_whisper_transcripts_are_gated_correctly() {
+        // Not hand-written strings: these are exactly what whisper.cpp
+        // (ggml-base.en) produced from spoken audio on 2026-09-07 — leading
+        // spaces, capitalisation and punctuation included. A recogniser's
+        // output is not the words you meant to type, and the gate has to hold
+        // against the former.
+        for said in ["  Console, what is open?", "  Hey console, take a screenshot"] {
+            assert!(is_addressed(said, "console"), "{said:?}");
+        }
+        for said in ["  The console is slow today.", "  Shall we get lunch after this?"] {
+            assert!(!is_addressed(said, "console"), "{said:?}");
+        }
+    }
+
+    #[test]
+    fn the_loop_pauses_while_a_reply_is_being_spoken() {
+        let d = Policy::default();
+        assert!(should_pause(&d, true, false), "it would answer its own voice");
+        assert!(!should_pause(&d, false, false));
+
+        // Headphones: no echo, so the microphone stays open and barge-in
+        // works by voice.
+        let phones = Policy { listen_while_speaking: true, ..Policy::default() };
+        assert!(!should_pause(&phones, true, false));
+    }
+
+    #[test]
+    fn an_open_approval_card_pauses_even_on_headphones() {
+        // Not an echo question. Someone reading an approval out loud, or
+        // talking it over, must not have that become their next instruction.
+        let phones = Policy { listen_while_speaking: true, ..Policy::default() };
+        assert!(should_pause(&phones, false, true));
+        assert!(should_pause(&Policy::default(), false, true));
+    }
+
+    #[test]
+    fn stopping_when_not_running_is_harmless() {
+        stop("test");
+        assert!(!running());
+    }
+}

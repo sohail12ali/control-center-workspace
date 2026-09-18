@@ -4,9 +4,36 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 
 ## Active
 
+- [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
+- [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Verify — Sohail Ali — 2026-09-11
+- [[T-019-summary]] — Make hands-free listening actually work — Open — Sohail Ali — 2026-09-16
+
 ## Blocked
 
 ## Completed
+
+- [[T-018-summary]] — Ticket-git-Run: worktree isolation per Run, ticket id in branch/PR, lane hints from PR open/merge, Run inspector diff — Complete — Sohail Ali — 2026-09-16
+- [[T-017-summary]] — Delivery Console core: one API, MCP resources/HTTP, tracker SPI, workspace.toml, ready/claim/comment verbs — Complete — Sohail Ali — 2026-09-16
+- [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Complete — Sohail Ali — 2026-09-10
+- [[T-014-summary]] — Model roles: a local model to talk, a capable one to work — Complete — Sohail Ali — 2026-09-08
+- [[T-013-summary]] — Voice quality: neural TTS, speech-shaped text, and a less robotic house style — Complete — Sohail Ali — 2026-09-07
+- [[T-012-summary]] — Provider switching: Ollama, LM Studio, custom OpenAI-compatible URLs — Complete — Sohail Ali — 2026-09-07
+- [[T-011-summary]] — Session resume: pick a chat back up after a restart — Complete — Sohail Ali — 2026-09-07
+- [[T-010-summary]] — Voice responsiveness: HUD, cues, adaptive VAD, faster STT — Complete — Sohail Ali — 2026-09-07
+- [[T-009-summary]] — Tray click-to-talk, armed icon, Assistant settings panel — Complete — Sohail Ali — 2026-09-07
+- [[T-008-summary]] — Hands-free listening: wake word, echo handling, barge-in — Complete — Sohail Ali — 2026-09-07
+- [[T-007-summary]] — Multimodal send: screenshot pixels to vision models, destination chip — Complete — Sohail Ali — 2026-09-07
+- [[T-006-summary]] — Voice: mic capture, STT, hotkey, spoken replies — Complete — Sohail Ali — 2026-09-07
+- [[T-005-summary]] — Native bridge: tray icon states, screenshot, OCR, clipboard — Complete — Sohail Ali — 2026-09-07
+- [[T-004-summary]] — Assistant brain: persona, /api/assistant, fast commands, Settings backend picker, memory — Complete — Sohail Ali — 2026-09-06
+- [[T-003-summary]] — Shell hygiene: no stray console, per-OS launch path, close T-001/T-002 — Complete — Sohail Ali — 2026-09-06
+- [[T-001-summary]] — Native desktop shell spike wrapping the Delivery Console — Complete — Sohail Ali — 2026-09-06
+- [[CC-T006-summary]] — Phase 3b - remote: Tailscale bind, audit log, Telegram approval notifications — Complete — Sohail Ali — 2026-08-29
+- [[CC-T005-summary]] — Phase 4 - UI and chat: diff cards, command palette, pickers, cost badges — Complete — Sohail Ali — 2026-08-29
+- [[CC-T004-summary]] — Phase 3a - scheduler: cron-driven verbs on the job queue — Complete — Sohail Ali — 2026-08-29
+- [[CC-T003-summary]] — Phase 2 - OpenRouter backend: API transport, tool loop, skill injection, model routing — Complete — Sohail Ali — 2026-08-29
+- [[CC-T002-summary]] — Phase 1 - agent body: verbs, one-call context, worktrees, job queue, MCP — Complete — Sohail Ali — 2026-08-29
+- [[CC-T001-summary]] — Phase 0 - harness foundation: defects, tests, CI, telemetry — Complete — Sohail Ali — 2026-08-29
 
 ## Archived
 

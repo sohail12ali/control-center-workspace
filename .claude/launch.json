@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "_comment": "Launch entries for the Delivery Console. Paths are relative to the workspace root. Read by editor/agent launchers per desktop/README.md and T-003-decision-log.md; no code path in this repo consumes it. T-015 moved `console-serve` to the documented runtimeExecutable/runtimeArgs/port schema so a preview pane can start it — carrying both key sets made the launcher concatenate them into one broken argv. `desktop-shell` keeps program/args: it is a path to an exe, not a server with a port.",
+  "configurations": [
+    {
+      "name": "desktop-shell",
+      "description": "Launch the release build of the Tauri desktop shell (Windows). Build first: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml",
+      "program": "desktop/src-tauri/target/release/delivery-console-desktop.exe",
+      "args": [],
+      "cwd": "."
+    },
+    {
+      "name": "console-serve",
+      "description": "Launch the console's own HTTP server directly (browser-only, no Tauri shell).",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["console/kanban.py", "serve", "--port", "8790"],
+      "port": 8790,
+      "cwd": "."
+    }
+  ]
+}

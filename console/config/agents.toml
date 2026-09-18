@@ -14,14 +14,20 @@
 #                output, but stdin is not a channel, so a message can only be
 #                QUEUED for the next turn.
 #   oneshot      one process, one prompt, no continuation.
+#   openai_api   NO process at all. The console talks to an OpenAI-compatible
+#                HTTP endpoint and runs the agent loop itself, which is what
+#                lets that loop hold the console's own verbs as tools and use
+#                the same approval gate. Needs `base_url` + `api_key_env`
+#                instead of `command`, and `installed` means "the key is set",
+#                not "a binary is on PATH".
 #
 # The UI reads `steerable` from the transport and hides the steer control
 # where the CLI cannot do it, rather than offering a button that lies.
 #
 # Placeholders in the *_args templates: {prompt} {mode} {model} {persona}
-# {settings} {resume_id} {dir}. An arg whose placeholder resolves to empty is
-# dropped along with the flag in front of it, so optional flags simply vanish
-# instead of being passed as "".
+# {settings} {resume_id} {dir} {system_append}. An arg whose placeholder
+# resolves to empty is dropped along with the flag in front of it, so optional
+# flags simply vanish instead of being passed as "".
 #
 # prompt_prefix_style — how a chosen skill/persona is referenced:
 #   slash   "@persona /skill text"  (CLI has slash commands)
@@ -54,8 +60,45 @@ session_args = [
   "--model", "{model}",
   "--agent", "{persona}",
   "--settings", "{settings}",
+  "--append-system-prompt", "{system_append}",
 ]
 add_dir_args = ["--add-dir", "{dir}"]
+
+# How to pick a PAST chat back up (T-011). Identical to session_args plus
+# `--resume {resume_id}`, where the id is the one Claude Code reported on its
+# own events and the console kept in the transcript. Written out rather than
+# derived from session_args, because "the same flags plus one" is a claim
+# about a CLI, and this file's job is to state such claims where they can be
+# read and corrected.
+#
+# A backend with no resume template is reported as not resumable and its past
+# chats stay replay-only, which is the honest outcome — see `Backend.can_resume`.
+resume_session_args = [
+  "-p",
+  "--resume", "{resume_id}",
+  "--input-format", "stream-json",
+  "--output-format", "stream-json",
+  "--include-partial-messages",
+  "--replay-user-messages",
+  "--verbose",
+  "--permission-mode", "{mode}",
+  "--model", "{model}",
+  "--agent", "{persona}",
+  "--settings", "{settings}",
+  "--append-system-prompt", "{system_append}",
+]
+
+# The one-shot form, used by `kanban agents launch` (and nothing else — the tab
+# always opens a session). Kept separate from session_args because the two are
+# genuinely different invocations, not the same one with a flag removed: no
+# stream-json stdin channel, no partial messages, no approval hook. A backend
+# with no oneshot_args and no turn_args simply cannot be launched that way, and
+# `agents.launch()` says so instead of guessing at flags.
+oneshot_args = [
+  "-p", "{prompt}",
+  "--permission-mode", "{mode}",
+  "--model", "{model}",
+]
 
 modes = ["plan", "default", "acceptEdits"]
 default_mode = "plan"
@@ -67,6 +110,11 @@ default_mode = "plan"
 gated_tools = [
   "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
   "WebFetch", "Task", "ExitPlanMode", "KillShell",
+  # T-005 desktop tools, under their MCP names. A screenshot sends the pixels
+  # of whatever is on screen to Anthropic; a clipboard read can send a
+  # password. Both are answered at the desk only (agent_approvals.LOCAL_ONLY).
+  "mcp__console__desktop-screenshot",
+  "mcp__console__desktop-clipboard-read",
 ]
 approval_timeout = 300
 
@@ -158,6 +206,176 @@ default_mode = "plan"
 ask = "read-only Q&A — explains, never edits"
 plan = "analyse and propose; no edits"
 default = "prompts before anything unsafe"
+
+# ------------------------------------------------------------ openrouter ----
+# No process, no CLI. The console runs the loop, so the tools this agent holds
+# are the console's own verbs plus the workspace tools in
+# `console/server/agent_tools.py`, and gated calls raise the same "Permission
+# needed" card a human already answers for Claude Code.
+#
+# Set OPENROUTER_API_KEY in the workspace's `.env` (gitignored, loaded
+# automatically) or export it in your shell — an exported value always wins.
+# The key is read per request, never stored on the session, and never written
+# to a transcript, an event, or a telemetry record. Agents cannot read `.env`
+# either: it is in the tools' refused-paths list.
+#
+# `enabled = false` by default: this template ships no key and cannot verify
+# one, so the backend stays out of the composer until someone turns it on
+# deliberately. Flip it to true once the key is set.
+
+[[backend]]
+id = "openrouter"
+label = "OpenRouter"
+transport = "openai_api"
+enabled = true
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+timeout = 180
+
+# A skill has to be INJECTED for a model with no slash-command system, which
+# prompt_build.py does — so the prompt itself carries the text, and nothing is
+# prefixed onto the user's message.
+prompt_prefix_style = "none"
+
+# The loop is the console's, so this list is enforced by the console rather
+# than by a CLI's own hook. Read-only `console_*` verbs are deliberately NOT
+# gated: asking a human to approve "look up this ticket's lane" trains them to
+# click allow without reading, which is how a gate stops working for the calls
+# that matter.
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
+approval_timeout = 300
+
+# Budgets for the loop the console runs. Omit either and it takes the default
+# from agent_backends (25 rounds, 120 messages). Both are per-backend because
+# one pair of numbers cannot suit a 4k local model and a 200k hosted one.
+max_tool_rounds = 25
+max_history_messages = 120
+
+# A SHORTLIST, NOT A CATALOGUE — OpenRouter serves hundreds of models and the
+# composer keeps a custom-id box beside the picker. Ids are passed verbatim.
+# Deliberately left empty in the template: model availability and pricing move,
+# and a stale hardcoded list is worse than an empty one plus a paste box.
+models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# KEEP SUB-TABLES LAST. Everything below a `[backend.*]` header belongs to that
+# sub-table, so a plain key written after it is silently swallowed — `models`
+# used to sit down here and parsed as `mode_blurbs.models`, which is why the
+# shortlist above never reached the picker.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+# ---------------------------------------------------------------- ollama ----
+# A model running on this machine. Free, private, works offline.
+#
+# `auth = "none"` is the point of this row: Ollama takes no API key, and under
+# the previous availability model — which asked every API backend whether a key
+# was set — it could never be available. Availability here is a probe of
+# base_url: is the server actually answering.
+#
+# Ollama serves an OpenAI-compatible surface at /v1 alongside its native API,
+# so `openai_client` talks to it unchanged.
+#
+# ONE REAL CAVEAT, and it decides whether this is useful to you: the console
+# runs the agent loop, and that loop needs TOOL CALLING. Local model support
+# for tools is uneven — a model without it will hold a conversation but never
+# read a file or run a verb. Pick a tool-capable model (qwen3, llama3.1+,
+# mistral-nemo and similar); the session says so on the first turn if the model
+# ignores the tools it was offered.
+#
+# `enabled = false` because the template cannot know whether you run Ollama.
+# You do not edit this line to switch it on: Settings > Model providers, or
+# `kanban agents provider enable ollama`, records that choice per machine in
+# console/.cache/agents/providers.json and leaves this file (and its comments)
+# exactly as they are.
+[[backend]]
+id = "ollama"
+label = "Ollama"
+transport = "openai_api"
+enabled = false
+auth = "none"
+base_url = "http://127.0.0.1:11434/v1"
+timeout = 300
+start_hint = "Start it with `ollama serve`."
+notes = "local — free, private, offline. Needs a tool-capable model."
+prompt_prefix_style = "none"
+
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
+approval_timeout = 300
+
+# A local model's context is usually far smaller than a hosted one's, so the
+# history cap is lower here — 120 messages would overflow a 4k window long
+# before the count was reached, and the model would simply start failing.
+max_tool_rounds = 15
+max_history_messages = 40
+
+# Left empty deliberately: your pulled models are a fact about this machine,
+# not about the template. `kanban agents models ollama --refresh` reads them
+# from the running server and caches them for the picker.
+models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# Sub-tables last — a plain key below this header lands inside it.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+# ------------------------------------------------------------- lm-studio ----
+# Same shape as ollama — a local OpenAI-compatible server, no key. LM Studio
+# serves on :1234 by default and must have a model LOADED, not merely
+# downloaded: the endpoint answers either way, so a probe that says "available"
+# still leaves "no model loaded" as the next thing you might hit.
+[[backend]]
+id = "lm-studio"
+label = "LM Studio"
+transport = "openai_api"
+enabled = false
+auth = "none"
+base_url = "http://127.0.0.1:1234/v1"
+timeout = 300
+start_hint = "Start the local server from LM Studio's Developer tab, and load a model."
+notes = "local — the server must be running AND a model loaded."
+prompt_prefix_style = "none"
+
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read",
+               # T-014: handing work to the work model starts a SECOND agent,
+               # often a paid one. Any API-backed chat that tries it raises the
+               # card first — a model should not be able to spend money, or
+               # start something with file access, without you seeing it.
+               "console_delegate"]
+approval_timeout = 300
+
+# Same reasoning as ollama: a locally served model's window is the constraint.
+max_tool_rounds = 15
+max_history_messages = 40
+
+models = []
+
+modes = ["default"]
+default_mode = "default"
+
+# Sub-tables last — a plain key below this header lands inside it.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
 
 # ------------------------------------------------------------- examples -----
 # A third CLI, or a local script, needs nothing but a row. Enable and edit:

@@ -35,28 +35,203 @@ on a web page. A fork that wants one adds it to its own config and owns that.
 
 import os
 import shutil
+import socket
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import boards as boards_mod
+from . import provider_overrides
+from . import prompt_tokens
 from . import tomlio
+from .paths import resolve_rel
 
 CONFIG_REL = os.path.join("console", "config", "agents.toml")
 
+#: The transports a backend row may declare.
+#:
+#: `openai_api` is the odd one out and deliberately so: the other three spawn
+#: somebody else's agent and inherit its tools and permission model, while this
+#: one has no process at all — the console runs the loop, holding its own verbs
+#: as tools and its own approval gate. See `agent_api_session`.
+TRANSPORTS = ("stream_json", "resume", "oneshot", "openai_api")
+
+#: Transports with no executable. Asking PATH about these reports every one as
+#: missing, so availability is answered by `auth` below instead.
+API_TRANSPORTS = ("openai_api",)
+
+#: How an API backend proves it is usable. This exists because "is it usable"
+#: has three genuinely different answers and one of them was previously
+#: unreachable:
+#:
+#:   key     a credential must be present in the environment (OpenRouter,
+#:           OpenAI, Groq). Availability is "the variable is set" — cheap,
+#:           local, and no network call.
+#:   none    no credential at all (Ollama, LM Studio, llama.cpp). The only
+#:           honest question is whether the server is RUNNING, which needs a
+#:           probe. Under the old model these were permanently unavailable:
+#:           `installed` asked whether a key was set, and there is no key.
+#:   probe   a credential is optional but the endpoint must answer (a shared
+#:           vLLM box behind a gateway).
+AUTH_MODES = ("key", "none", "probe")
+
+#: How long a reachability probe is trusted. `/api/agents/backends` is polled
+#: by the open tab, and a blocking socket call per provider per poll would
+#: stall it. Short enough that starting `ollama serve` shows up while you are
+#: still looking at the screen.
+PROBE_TTL = 10.0
+PROBE_TIMEOUT = 1.5
+
+#: Budgets for the loop the console owns (`openai_api` only). They live here,
+#: with the rest of a backend's configuration, rather than as constants in
+#: `agent_api_session` — because they are not one policy for every provider.
+#:
+#: A flat pair of numbers was wrong in both directions at once: 120 messages
+#: overflows a 4k local model long before the count is reached, and 25 rounds
+#: is timid for a 200k hosted one. A row that says nothing still gets these,
+#: so nothing changes for a backend nobody has tuned.
+DEFAULT_TOOL_ROUNDS = 25
+DEFAULT_HISTORY_MESSAGES = 120
+
 _cache = {}
+_probe_cache = {}
+_probe_lock = threading.Lock()
+
+
+def _probe(url, timeout=PROBE_TIMEOUT, opener=None):
+    """Is something answering at `url`? Returns (ok, reason).
+
+    Never raises. A provider that is down must make its own card say so, not
+    take the page down with it — the same contract `notify` works to.
+
+    The reason is the entire value here. "Not available" sends someone reading
+    source; "connection refused — the server is not running" does not.
+    """
+    now = time.time()
+    with _probe_lock:
+        hit = _probe_cache.get(url)
+        if hit and now - hit[0] < PROBE_TTL:
+            return hit[1], hit[2]
+
+    ok, reason = False, ""
+    try:
+        request = urllib.request.Request(url, method="GET")
+        with (opener or urllib.request.urlopen)(request, timeout=timeout):
+            ok = True
+    except urllib.error.HTTPError:
+        # Any HTTP status at all means a server answered, which is the whole
+        # question. 401/404 is a live endpoint with an opinion, not a dead one.
+        ok = True
+    except urllib.error.URLError as exc:
+        ok = False
+        reason = _url_error_reason(exc, url)
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        reason = "%s while reaching %s" % (type(exc).__name__, url)
+
+    with _probe_lock:
+        _probe_cache[url] = (now, ok, reason)
+    return ok, reason
+
+
+def _url_error_reason(exc, url):
+    """Separate "nothing is listening there" from "that host does not exist".
+
+    They need different fixes — start the server, versus correct the base_url —
+    and one message for both sends half the readers the wrong way.
+
+    Classified by EXCEPTION TYPE, not by errno or by matching English in the
+    message. Both alternatives were tried and both are wrong here: errno for
+    "connection refused" is 61/111/10061 depending on platform, and on Windows
+    a closed loopback port does not raise ConnectionRefusedError at all — it
+    raises TimeoutError with errno None. Verified against 127.0.0.1:11434 with
+    Ollama installed but not serving.
+
+    Which is why a timeout to a LOOPBACK address is reported as "not running"
+    rather than "slow": a local port that is genuinely listening answers in
+    microseconds, so a 1.5s silence from localhost is a dead server every time.
+    A remote host is a different matter and keeps the honest "did not answer".
+    """
+    inner = getattr(exc, "reason", exc)
+    parts = urllib.parse.urlsplit(url)
+    host = parts.netloc or url
+    is_loopback = (parts.hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+    if isinstance(inner, socket.gaierror):
+        return "the host %s does not resolve — check base_url" % host
+    if isinstance(inner, ConnectionRefusedError):
+        return "nothing is listening on %s — is the server running?" % host
+    if isinstance(inner, (socket.timeout, TimeoutError)):
+        if is_loopback:
+            return "nothing is listening on %s — is the server running?" % host
+        return "%s did not answer within %gs" % (host, PROBE_TIMEOUT)
+    return "could not reach %s (%s)" % (host, inner)
+
+
+def probe(url, timeout=PROBE_TIMEOUT, opener=None):
+    """Is something answering at `url`? -> (ok, reason).
+
+    The public face of the cached reachability check, so a caller testing a URL
+    that is not yet a configured backend uses the same code — and gets the same
+    sentence — as one that is.
+    """
+    return _probe(url, timeout=timeout, opener=opener)
+
+
+def forget_probes():
+    """Drop every cached probe. For tests, and for a config reload."""
+    with _probe_lock:
+        _probe_cache.clear()
 
 
 def load_config(repo_root, force=False):
     """Backend definitions. Falls back to console.toml's `[agents.backends]`
-    so an older config keeps working, but agents.toml is the real home."""
+    so an older config keeps working, but agents.toml is the real home.
+
+    This machine's provider choices are merged in last (T-012): which rows are
+    switched on, and any OpenAI-compatible endpoint added locally. They live in
+    a gitignored file rather than in agents.toml, which is a document with two
+    hundred lines of comments that a TOML round-trip would silently delete.
+    """
     if not force and repo_root in _cache:
         return _cache[repo_root]
-    path = os.path.join(repo_root, CONFIG_REL)
+    path = resolve_rel(repo_root, CONFIG_REL)
     if os.path.isfile(path):
         data = tomlio.load(path)
     else:
         legacy = boards_mod.load_console_config(repo_root).get("agents", {})
         data = {"backend": _from_legacy(legacy.get("backends", {}))}
+    data = dict(data)
+    data["backend"] = provider_overrides.rows_for(repo_root,
+                                                  data.get("backend", []))
     _cache[repo_root] = data
     return data
+
+
+def committed_rows(repo_root):
+    """The rows as agents.toml states them, before any local override.
+
+    Used where the question is "what does this workspace ship" rather than
+    "what is switched on here" — the provider list, and refusing a custom id
+    that would shadow a committed one.
+    """
+    path = resolve_rel(repo_root, CONFIG_REL)
+    if not os.path.isfile(path):
+        return []
+    try:
+        return tomlio.load(path).get("backend", []) or []
+    except (OSError, ValueError):
+        return []
+
+
+def forget_config():
+    """Drop the parsed config. Called after a provider change, so a newly
+    enabled backend is usable on the next request rather than the next
+    restart."""
+    _cache.clear()
+    forget_probes()
 
 
 def _from_legacy(mapping):
@@ -114,7 +289,7 @@ class Backend:
 
     __slots__ = ("id", "label", "command", "transport", "modes", "default_mode",
                  "mode_flag", "mode_blurbs", "models", "gated_tools",
-                 "approval_timeout", "supports", "raw")
+                 "approval_timeout", "supports", "auth", "raw")
 
     def __init__(self, row):
         self.id = row.get("id") or ""
@@ -123,11 +298,31 @@ class Backend:
         self.label = row.get("label", self.id)
         self.command = row.get("command", self.id)
         self.transport = row.get("transport", "oneshot")
-        if self.transport not in ("stream_json", "resume", "oneshot"):
+        if self.transport not in TRANSPORTS:
             raise ValueError(
-                "backend %r: unknown transport %r (stream_json|resume|oneshot)"
-                % (self.id, self.transport)
+                "backend %r: unknown transport %r (%s)"
+                % (self.id, self.transport, "|".join(TRANSPORTS))
             )
+        # How this backend proves it is usable. Only meaningful for a transport
+        # with no executable; a CLI's answer is always "is it on PATH".
+        self.auth = row.get("auth") or ("key" if self.transport in API_TRANSPORTS else "")
+        if self.transport in API_TRANSPORTS:
+            if self.auth not in AUTH_MODES:
+                raise ValueError(
+                    "backend %r: unknown auth %r (%s)"
+                    % (self.id, self.auth, "|".join(AUTH_MODES)))
+            # Caught at load, next to the ticket that names the row, rather
+            # than as a mystery 401 on the first turn. The old code defaulted a
+            # missing api_key_env to OPENROUTER_API_KEY, so a misconfigured
+            # OpenAI row silently authenticated with the wrong provider's key.
+            if self.auth == "key" and not row.get("api_key_env"):
+                raise ValueError(
+                    "backend %r: auth = \"key\" needs api_key_env (or set "
+                    "auth = \"none\" for a local server that takes no key)"
+                    % self.id)
+            if not row.get("base_url"):
+                raise ValueError("backend %r: transport %r needs a base_url"
+                                 % (self.id, self.transport))
         self.modes = list(row.get("modes", []))
         self.default_mode = row.get("default_mode", self.modes[0] if self.modes else "")
         self.mode_flag = row.get("mode_flag", "")
@@ -150,24 +345,141 @@ class Backend:
         self.gated_tools = [str(t).strip() for t in row.get("gated_tools", [])
                             if str(t).strip()]
         self.approval_timeout = int(row.get("approval_timeout", 300) or 300)
+        # Refused at load, beside the row that is wrong, rather than as a loop
+        # that ends instantly or never — both of which look like a hang.
+        for field in ("max_tool_rounds", "max_history_messages"):
+            if row.get(field) is not None and int(row[field]) < 1:
+                raise ValueError("backend %r: %s must be at least 1"
+                                 % (self.id, field))
         self.raw = row
 
     # -- capability flags the UI reads instead of hardcoding CLI names -------
     @property
+    def is_api(self):
+        return self.transport in API_TRANSPORTS
+
+    @property
     def steerable(self):
+        # An API turn is a sequence of HTTP requests with no open channel to
+        # write down, so a message can only be queued for the next turn.
         return self.transport == "stream_json"
 
     @property
     def resumable(self):
-        return self.transport in ("stream_json", "resume")
+        return self.transport in ("stream_json", "resume", "openai_api")
 
     @property
     def streaming(self):
-        return self.transport in ("stream_json", "resume")
+        return self.transport in ("stream_json", "resume", "openai_api")
+
+    @property
+    def api_key_env(self):
+        """The env var holding this provider's key, or "" for a keyless one.
+
+        No default. A fallback of "OPENROUTER_API_KEY" meant every row that
+        forgot the field quietly authenticated against OpenRouter's key —
+        wrong provider, confusing 401, and a key sent somewhere it was not
+        meant to go. `__init__` now refuses such a row instead.
+        """
+        return self.raw.get("api_key_env") or ""
+
+    @property
+    def base_url(self):
+        return (self.raw.get("base_url") or "").rstrip("/")
+
+    @property
+    def models_url(self):
+        """Where to ask for this provider's model list.
+
+        Defaults to the OpenAI-compatible `/models`, which every provider in
+        this file serves. Overridable because a provider that speaks the chat
+        shape does not always serve the catalogue at the same place.
+        """
+        explicit = (self.raw.get("models_url") or "").strip()
+        return explicit or (self.base_url + "/models" if self.base_url else "")
+
+    @property
+    def is_local(self):
+        """A provider running on this machine. Not cosmetic: local means free,
+        private, and offline-capable — the three things a person actually
+        wants to know before picking one."""
+        if not self.is_api:
+            return False
+        host = urllib.parse.urlsplit(self.base_url).hostname or ""
+        return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+    @property
+    def has_key(self):
+        return bool(self.api_key_env and os.environ.get(self.api_key_env, "").strip())
+
+    @property
+    def max_tool_rounds(self):
+        """Tool-call rounds allowed in one turn before the loop stops itself.
+
+        A loop that can call tools can call them forever, and every round costs
+        money. This is the cap; hitting it ends the turn with a notice saying so,
+        because "stopped early" and "finished" look identical in a transcript.
+        """
+        return int(self.raw.get("max_tool_rounds") or DEFAULT_TOOL_ROUNDS)
+
+    @property
+    def max_history_messages(self):
+        """Conversation messages kept before the oldest are dropped.
+
+        A blunt guard against outgrowing the model's context. Real compaction is
+        a later problem; dropping the oldest is at least predictable, and the
+        system message is never among them.
+        """
+        return int(self.raw.get("max_history_messages") or DEFAULT_HISTORY_MESSAGES)
 
     @property
     def installed(self):
-        return self.resolved_command is not None
+        """Whether this backend can actually be used right now.
+
+        Three different questions behind one name, because the answer depends
+        on what the backend IS:
+
+          a CLI          is the command on PATH
+          auth = "key"   is the credential in the environment
+          auth = "none"  is the server answering  (the probe)
+          auth = "probe" is the server answering, key optional
+
+        Asking any one of those about the wrong kind of backend greys out
+        something that would have worked. That is exactly what happened to
+        keyless local providers before: they were asked for a key they do not
+        have, so they were never available.
+        """
+        if not self.is_api:
+            return self.resolved_command is not None
+        if self.auth == "key":
+            return self.has_key
+        ok, _reason = _probe(self.models_url or self.base_url)
+        return ok
+
+    @property
+    def unavailable_reason(self):
+        if self.installed:
+            return ""
+        if not self.is_api:
+            return "%s is not on PATH (command: %s)" % (self.label, self.command)
+        if self.auth == "key":
+            # A name present with no value is the case worth naming
+            # separately. `.env` shipped with `OPENROUTER_API_KEY=` in it, so
+            # "not set in this environment" sent people to look at a line that
+            # was already there, and this backend sat unavailable — with the
+            # Assistant falling back to a CLI that takes seconds per turn —
+            # for as long as it took someone to notice (T-019).
+            if self.api_key_env in os.environ:
+                return ("%s is present but empty. Give it a value in the "
+                        "workspace's .env — the name being there is not the "
+                        "same as the key being there." % self.api_key_env)
+            return ("%s is not set in this environment. Put it in the "
+                    "workspace's .env or export it in the shell that starts "
+                    "the console." % self.api_key_env)
+        _ok, reason = _probe(self.models_url or self.base_url)
+        hint = self.raw.get("start_hint") or ""
+        return (reason + (" " + hint if hint else "")) or (
+            "%s is not answering." % (self.base_url or self.label))
 
     @property
     def resolved_command(self):
@@ -202,21 +514,58 @@ class Backend:
             "modes": [{"id": m, "blurb": self.mode_blurbs.get(m, "")} for m in self.modes],
             "default_mode": self.default_mode,
             "models": self.models,
-            "approval_gate": bool(self.gated_tools) and self.transport == "stream_json",
+            # An API session gates in-process, so the hook-only restriction
+            # that applies to a CLI backend does not apply to it.
+            "approval_gate": bool(self.gated_tools) and (
+                self.transport == "stream_json" or self.is_api),
+            # The names themselves, so the composer can say WHICH tools will
+            # stop and ask. Tool names are not secrets; the arguments they are
+            # called with never travel with them.
+            "gated_tools": list(self.gated_tools),
             "prompt_prefix_style": self.raw.get("prompt_prefix_style", "slash"),
+            "can_resume": self.can_resume,
+            "is_api": self.is_api,
+            "unavailable_reason": self.unavailable_reason,
+            # Setup facts, for the composer's grouping and the Settings panel.
+            # `key_env` is a variable NAME; the value is never sent anywhere.
+            "auth": self.auth,
+            "is_local": self.is_local,
+            "base_url": self.base_url,
+            "key_env": self.api_key_env,
+            "has_key": self.has_key,
+            "notes": self.raw.get("notes", "") or "",
+            # The EFFECTIVE budgets, never the raw config: the UI shows what
+            # the loop will actually enforce, so a row that sets nothing reads
+            # the same as one that sets the default explicitly. Meaningless for
+            # a CLI backend, whose loop belongs to someone else.
+            "budgets": {"tool_rounds": self.max_tool_rounds,
+                        "history_messages": self.max_history_messages}
+                       if self.is_api else None,
         }
 
     # -- argv builders -------------------------------------------------------
-    def session_argv(self, *, mode="", model="", persona="", settings_path="", add_dirs=()):
-        """The argv for a long-lived streaming session (`stream_json`)."""
-        tmpl = self.raw.get("session_args")
+    def session_argv(self, *, mode="", model="", persona="", settings_path="",
+                      add_dirs=(), system_append="", resume_id=""):
+        """The argv for a long-lived streaming session (`stream_json`).
+
+        With a `resume_id` and a `resume_session_args` template, this is the
+        argv that CONTINUES a conversation the CLI still remembers — the same
+        shape `turn_argv` has always used for per-turn backends, applied to
+        the long-lived ones.
+        """
+        key = "session_args"
+        if resume_id and self.raw.get("resume_session_args"):
+            key = "resume_session_args"
+        tmpl = self.raw.get(key)
         if not tmpl:
-            raise ValueError("backend %r has no session_args" % self.id)
+            raise ValueError("backend %r has no %s" % (self.id, key))
         argv = [self._exe()] + _expand(tmpl, {
             "mode": mode or self.default_mode,
             "model": model,
             "persona": persona,
             "settings": settings_path,
+            "system_append": system_append,
+            "resume_id": resume_id,
         })
         for d in add_dirs or ():
             for part in _expand(self.raw.get("add_dir_args", []), {"dir": d}):
@@ -238,35 +587,60 @@ class Backend:
             "resume_id": resume_id,
         })
 
-    def compose_prompt(self, text, skill="", persona=""):
-        """How this backend wants a skill/persona referenced.
+    @property
+    def can_resume(self):
+        """Can a DEAD chat on this backend be picked up again?
+
+        Read off the templates rather than hardcoded per id: a backend row
+        that declares how to resume can, and one that does not is honestly
+        reported as not resumable rather than failing at spawn time with a
+        flag its CLI has never heard of.
+        """
+        for key in ("resume_session_args", "resume_args"):
+            tmpl = self.raw.get(key)
+            if tmpl and any("{resume_id}" in str(item) for item in tmpl):
+                return True
+        return False
+
+    @property
+    def supports_system_append_flag(self):
+        """Does this backend's argv template have its own flag for injected
+        system text (claude's `--append-system-prompt`)?
+
+        Read off the templates themselves rather than hardcoded per backend
+        id, so a config row is the only thing that changes this: a row that
+        adds `{system_append}` to its own args gains the capability for free,
+        and one that doesn't is honestly reported as not having it — the
+        caller (`agent_manager.create`) falls back to prepending the text to
+        the first message instead of silently dropping it.
+        """
+        for key in ("session_args", "turn_args", "resume_args", "oneshot_args"):
+            tmpl = self.raw.get(key)
+            if tmpl and any("{system_append}" in str(item) for item in tmpl):
+                return True
+        return False
+
+    @property
+    def prompt_prefix_style(self):
+        return self.raw.get("prompt_prefix_style", "slash")
+
+    def compose_prompt(self, text, skill="", persona="", repo_root=None):
+        """How this backend wants a skill/persona/file referenced.
 
         `slash`  -> "@persona /skill text"   (a CLI with slash commands)
         `inline` -> a sentence naming the skill file, for a CLI that has no
                     slash-command system — worst case it just reads the file,
                     which is literally what a skill is.
-        `none`   -> the text, untouched.
+        `none`   -> the text, plus any references named.
+
+        Passing `repo_root` additionally resolves inline `/skill`, `@agent` and
+        `#file` tokens typed in the message itself — see `prompt_tokens`. It is
+        optional only so a caller with no workspace in hand still works; every
+        real call site has one.
         """
-        style = self.raw.get("prompt_prefix_style", "slash")
-        text = (text or "").strip()
-        if style == "none" or (not skill and not persona):
-            return text
-        if style == "inline":
-            bits = []
-            if skill:
-                bits.append(
-                    "Follow the instructions in .claude/skills/%s/SKILL.md." % skill)
-            if persona:
-                bits.append("Act as the %s role in .claude/agents/%s.md." % (persona, persona))
-            bits.append(text)
-            return "\n\n".join(b for b in bits if b)
-        parts = []
-        if persona:
-            parts.append("@" + persona)
-        if skill:
-            parts.append("/" + skill)
-        prefix = " ".join(parts)
-        return (prefix + " " + text).strip() if prefix else text
+        return prompt_tokens.compose(
+            repo_root, text, self.prompt_prefix_style,
+            skill=skill, persona=persona)[0]
 
 
 def registry(repo_root, force=False):
@@ -281,9 +655,76 @@ def registry(repo_root, force=False):
     return out
 
 
+def provider_list(repo_root):
+    """Every API-capable provider, switched on or not.
+
+    `registry()` yields only what is enabled, which is the right answer for
+    "what can I run" and the wrong one for the panel where you turn a provider
+    ON. This is that second question, and it is the only place that answers it.
+
+    `has_key` is a boolean. The key itself is never read into a response.
+    """
+    rows = load_config(repo_root).get("backend", [])
+    # What the COMMITTED file says, so the panel can show that a provider has
+    # been re-pointed on this machine and offer to put it back. Without this a
+    # moved provider looks identical to one that ships at that address.
+    shipped = {r.get("id"): r for r in committed_rows(repo_root)}
+    out = []
+    for row in rows:
+        if row.get("transport") not in API_TRANSPORTS:
+            continue
+        try:
+            backend = Backend(row)
+        except ValueError as exc:
+            # A row that cannot even be constructed still has to appear, or the
+            # panel silently hides the provider you are trying to fix.
+            out.append({"id": row.get("id", "?"), "label": row.get("id", "?"),
+                        "enabled": bool(row.get("enabled", True)),
+                        "custom": bool(row.get("custom")),
+                        "available": False, "reason": str(exc),
+                        "base_url": row.get("base_url", ""), "is_local": False,
+                        "key_env": row.get("api_key_env", ""), "has_key": False})
+            continue
+        enabled = bool(row.get("enabled", True))
+        out.append({
+            "id": backend.id,
+            "label": backend.label,
+            "enabled": enabled,
+            "custom": bool(row.get("custom")),
+            "base_url": backend.base_url,
+            "is_local": backend.is_local,
+            "key_env": backend.api_key_env,
+            "has_key": backend.has_key,
+            # Only meaningful for a provider that is on: probing a switched-off
+            # endpoint every time the panel paints would be a scan of every
+            # port in the config for no one's benefit.
+            "available": backend.installed if enabled else False,
+            "reason": backend.unavailable_reason if enabled else "",
+            "notes": backend.raw.get("notes", "") or "",
+            "start_hint": backend.raw.get("start_hint", "") or "",
+            # Editing means two different things depending on where the row
+            # came from: a custom provider is yours to rewrite, a shipped one
+            # can only be re-pointed (address and key name), because the rest
+            # of it is a reviewed decision.
+            "default_base_url": (shipped.get(backend.id) or {}).get("base_url", ""),
+            "default_key_env": (shipped.get(backend.id) or {}).get("api_key_env", ""),
+        })
+    out.sort(key=lambda p: (not p["enabled"], not p["is_local"], p["label"].lower()))
+    return out
+
+
 def get(repo_root, backend_id):
     reg = registry(repo_root)
-    if backend_id not in reg:
-        raise ValueError("unknown backend %r; configured: %s"
-                         % (backend_id, ", ".join(sorted(reg)) or "(none)"))
-    return reg[backend_id]
+    if backend_id in reg:
+        return reg[backend_id]
+    # "Unknown" and "switched off" need different fixes — add a row, versus
+    # flip one field — and one message for both sent people looking for a
+    # typo in a row that was sitting right there with `enabled = false`.
+    known = {row.get("id") for row in load_config(repo_root).get("backend", [])}
+    if backend_id in known:
+        raise ValueError(
+            "backend %r is configured but disabled. Turn it on in "
+            "Settings > Model providers, or run: kanban agents provider "
+            "enable %s" % (backend_id, backend_id))
+    raise ValueError("unknown backend %r; enabled: %s"
+                     % (backend_id, ", ".join(sorted(reg)) or "(none)"))
