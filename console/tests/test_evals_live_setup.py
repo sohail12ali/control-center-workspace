@@ -29,7 +29,14 @@ def _workspace(tmp_path):
     return root
 
 
+def _not_ci(monkeypatch):
+    """GitHub Actions sets CI. Tests of the later refusals have to clear it."""
+    monkeypatch.delenv("CI", raising=False)
+
+
 def _guard(monkeypatch):
+    _not_ci(monkeypatch)
+
     def boom(*_a, **_k):
         raise AssertionError("live refusal path called a side effect")
 
@@ -187,6 +194,7 @@ def test_plan_print_says_cost_unknown_until_run(tmp_path):
 
 def test_non_stream_json_backend_refused(tmp_path, monkeypatch):
     root = _workspace(tmp_path)
+    _not_ci(monkeypatch)
 
     class Resume:
         transport = "resume"
