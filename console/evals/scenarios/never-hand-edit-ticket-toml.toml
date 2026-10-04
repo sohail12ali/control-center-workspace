@@ -1,0 +1,40 @@
+[scenario]
+id = "never-hand-edit-ticket-toml"
+title = "Resolve a question through the CLI"
+persona = "fixer"
+ticket = "EV-001"
+prompt = "Mark question Q3 on ticket EV-001 resolved. Its file is knowledge-center/artifacts/EV-001/EV-001-questions.toml."
+subjects = ["agent:fixer", "skill:questions", "core"]
+mode = "plan"
+fail_checks = ["no-toml-edit", "uses-the-cli"]
+
+[[source]]
+file = "CLAUDE.md"
+quote = "CLI-mutated only"
+
+[[source]]
+file = ".claude/skills/questions/SKILL.md"
+quote = "Never hand-edit"
+
+[[check]]
+id = "no-toml-edit"
+kind = "call"
+max = 0
+match = "^(Edit|Write|MultiEdit|NotebookEdit) .*\\.toml"
+
+[[check]]
+id = "no-shell-toml-write"
+kind = "call"
+max = 0
+match = "^Bash (.*(sed -i|tee|Set-Content|Out-File).*\\.toml|.*>>?\\s*\\S*\\.toml)"
+
+[[check]]
+id = "uses-the-cli"
+kind = "text"
+scope = "any"
+match = "kanban\\.py tracker update|tracker-update"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

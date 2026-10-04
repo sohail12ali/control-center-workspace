@@ -253,6 +253,41 @@
     }, ["Copy path"]);
   }
 
+  /* One of three results, from the liveness T-020 stored. A run with no
+     settled liveness has not produced a result yet. */
+  function runOutcome(run) {
+    var live = (run.liveness && run.liveness.state) || "";
+    var state = run.state || "";
+    if (state === "failed" || state === "timed_out" || live === "failed" || live === "blocked") return "failed";
+    if (live === "completed" || live === "advanced") return "passed";
+    return "not_run";
+  }
+
+  function resultCard(run) {
+    var outcome = runOutcome(run);
+    var card = C.el("div", { class: "resultcard", title: "Run result" });
+    [["passed", "passed"], ["failed", "failed"], ["not_run", "not run"]].forEach(function (pair) {
+      var on = pair[0] === outcome;
+      card.appendChild(C.el("span", { class: "rcheck " + pair[0] + (on ? " on" : "") }, [
+        C.statusGlyph(on ? pair[0] : "not_run"),
+        pair[1],
+      ]));
+    });
+    return card;
+  }
+
+  function stallHint(run) {
+    var live = run.liveness || {};
+    var stall = live.state === "plan_only" || live.state === "empty" ||
+                live.state === "blocked" || live.state === "failed" ||
+                run.state === "scheduled_retry";
+    if (!stall) return null;
+    var text = live.reason || run.failure_detail || run.failure_class || "";
+    if (!text && run.last_output_at) text = "last output " + run.last_output_at;
+    if (!text) return null;
+    return C.el("div", { class: "stallhint", text: text });
+  }
+
   function runRow(run) {
     return C.el("div", {
       class: "lrow clickable",
@@ -268,9 +303,14 @@
           text: (run.ticket ? run.ticket + " " : "") + (run.id || "") }),
         C.el("div", { class: "muted truncate", style: "font-size:10.8px",
           text: runDetailLine(run) }),
+        resultCard(run),
+        stallHint(run),
       ]),
       copyPathButton(run),
-      C.el("span", { class: "chip", text: run.state || "" }),
+      C.el("span", { class: "chip" }, [
+        C.statusGlyph(run.state || ""),
+        run.state || "",
+      ]),
     ]);
   }
 
@@ -1046,7 +1086,7 @@
       s.usage.cost ? C.chip("$" + s.usage.cost.toFixed(4)) : null,
       s.usage.turns ? C.chip(s.usage.turns + " turns") : null,
       C.el("span", { class: "grow" }),
-      s.busy ? C.el("button", { class: "btn sm danger", title: "Stop the turn in flight",
+      s.busy ? C.el("button", { class: "btn sm warn", title: "Stop the turn in flight",
         onclick: function () {
           C.post("/api/agents/chats/" + encodeURIComponent(s.id) + "/interrupt", {})
             .catch(function (e) { C.toast(e.message, "err"); });
@@ -1054,7 +1094,7 @@
       s.alive ? C.el("button", { class: "btn sm", title: "End this session",
         onclick: function () {
           C.post("/api/agents/chats/" + encodeURIComponent(s.id) + "/stop", {})
-            .then(function () { C.toast("Session ended", "ok"); refreshChats(); })
+            .then(function () { refreshChats(); })
             .catch(function (e) { C.toast(e.message, "err"); });
         } }, ["End"]) : null,
       C.el("button", { class: "btn sm iconly", "aria-label": "Delete chat", title: "Delete chat and transcript",
@@ -1281,7 +1321,6 @@
           paintRefs(refs, "");
           ta.disabled = false;
           ta.focus();
-          if (r.result === "queued") C.toast("Queued for the next turn", "ok");
         })
         .catch(function (err) { C.toast(err.message, "err"); ta.disabled = false; });
     }
@@ -1344,6 +1383,10 @@
       ]),
       C.el("span", { class: "grow" }),
       s.busy ? C.el("span", { class: "chip info running", text: "turn in flight" }) : null,
+      s.queued.length ? C.el("span", {
+        class: "chip warn",
+        title: "Messages waiting. They are sent when this turn ends.",
+      }, [C.icon("queue"), s.queued.length + " queued"]) : null,
       !steerable ? C.el("span", { class: "chip", title:
         "This backend runs one process per turn, so a message can only be queued." }, ["queue-only"]) : null,
     ]));

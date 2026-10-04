@@ -1,0 +1,22 @@
+[ticket]
+id = "T-020"
+title = "Reliable Runs: classify failures, catch stalls, retry with caps, reap stale claims"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-01"
+updated = "2026-10-02"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+branch = ""
+pr_url = ""
+pr_state = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false

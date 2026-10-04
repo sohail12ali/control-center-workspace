@@ -18,7 +18,7 @@ knows its own claim identity (e.g. `claim`'s own `agent=` value).
 ## "No update since claim"
 
 `claimed_at` (set by `tickets.set_claim`, see `backends/vault_backend.py`) is
-a plain `date.today().isoformat()` string. `ticket.toml`'s own `updated`
+a UTC `...Z` timestamp (a legacy ticket may hold a bare date). `ticket.toml`'s own `updated`
 field and a `comments` tracker item's `posted_on` are both later-or-equal by
 construction — claiming itself stamps `updated` to the same day — so "has
 this been touched since the claim" is: `updated` moved to a *later* string
@@ -57,11 +57,28 @@ def resolve_agent(repo_root=None, override=""):
     return ""
 
 
+#: Zone `ticket.toml`'s date-only `updated` was written in; None is the machine's
+#: local zone. A seam so the midnight cases are tested without moving the clock.
+_LOCAL_TZ = None
+
+
+def _updated_floor(claimed_at):
+    """What a ticket's date-only `updated` must exceed to count as an update.
+    `updated` is a LOCAL date and a new `claimed_at` a UTC timestamp, so the
+    claim is converted to the local date first; comparing the raw strings put a
+    claim made near a UTC midnight on the wrong side (T-020 CR-34). A legacy
+    date-only claim is compared as written."""
+    if len(claimed_at) == 10:
+        return claimed_at
+    when = tickets_mod.parse_claimed_at(claimed_at)
+    return when.astimezone(_LOCAL_TZ).date().isoformat() if when else claimed_at
+
+
 def _has_update_since_claim(repo_root, ticket):
     claimed_at = ticket.get("claimed_at") or ""
     if not claimed_at:
         return True
-    if (ticket.get("updated") or "") > claimed_at:
+    if (ticket.get("updated") or "") > _updated_floor(claimed_at):
         return True
     for item in trackers_mod.list_items(repo_root, ticket["id"], "comments"):
         if (item.get("posted_on") or "") > claimed_at:

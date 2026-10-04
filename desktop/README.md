@@ -6,8 +6,8 @@ Native window around the existing Delivery Console. The HTTP server is still
 The host is **Tauri 2** (`src-tauri/`). Caption buttons live in the Console
 header (hidden in a normal browser). macOS uses overlay traffic lights;
 Windows and Linux draw min / max / close in HTML. The **system tray** is a
-remote control of the live Agents chat: Show window, Talk, New chat, Mute
-replies, Hands-free listening, Interrupt, Quit. A **left-click on the icon** is
+remote control of the Assistant (menu rows come from `features.toml`): Show
+window, Talk, New chat, Mute replies, Hands-free listening, Interrupt, Quit. A **left-click on the icon** is
 state-aware — talk, send, or stop the voice — and is configurable through
 Settings → Assistant. Closing the window hides to the tray; **Quit** in the tray
 menu exits. Quit still does not kill a `kanban.py serve` the shell did not

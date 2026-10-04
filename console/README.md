@@ -240,9 +240,22 @@ Three rules worth knowing:
   refused-paths list and are skipped by the search tool — an agent
   authenticating with a key cannot read that key back.
 
-To use OpenRouter after setting the key, flip `enabled = true` on the
-`openrouter` row in `config/agents.toml`. The model shortlist ships empty on
+To use OpenRouter, set the key: the `openrouter` row in `config/agents.toml`
+ships `enabled = true`, and `installed` stays false until the key is set. The model shortlist ships empty on
 purpose — see **Model catalogues** below, which is how the picker gets filled.
+
+Codex is a CLI agent, a peer of Claude Code and Cursor. The `codex` row runs
+`codex exec --json` with the prompt on stdin and a `workspace-write` sandbox.
+It does not offer a bypass from this page. Set `OPENAI_API_KEY` (that key is
+written into a per-chat `CODEX_HOME`, not into `~/.codex`) or sign in with
+`codex`. `agents doctor` reports a missing binary and missing credentials
+separately.
+
+OpenAI's own API is the same shape. The `openai` row ships `enabled = true`,
+`base_url = "https://api.openai.com/v1"`, and `api_key_env = "OPENAI_API_KEY"`.
+`installed` stays false until that key is set. It appears in the Console agent
+lane and is not the Assistant default. Refresh its models with
+`python console/kanban.py agents models openai --refresh`.
 
 If a key does get committed, rotate it. Removing the commit does not un-publish
 it.
@@ -476,9 +489,9 @@ budget, the prompt says so — a silently truncated skill is the worst failure
 available, because the agent follows the half it received and the transcript
 gives no sign.
 
-To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console and
-flip `enabled = true` on the `openrouter` row in `config/agents.toml`. It ships
-disabled because this template has no key and cannot verify one. `installed` for
+To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console;
+the `openrouter` row in `config/agents.toml` ships `enabled = true`, and
+`installed` stays false until the key is set. `installed` for
 an API backend means "the key is set", not "a binary is on PATH" — asking PATH
 would report it missing and grey out something that would have worked.
 
@@ -511,6 +524,10 @@ what exists, orphan skills, and the roster counts CLAUDE.md states. Exits
 non-zero on errors; warnings need `--strict` to fail. Run in CI by
 `.github/workflows/verify.yml` and, for harness-touching commits only, by
 `.githooks/pre-commit`.
+
+Prompt evals live in `console/evals/`. `python console/kanban.py evals replay`
+grades the committed fixtures and does not start a model. How to add a
+scenario, and what replay does not prove, is `console/evals/README.md`.
 
 `questions`/`bugs`/`todos` skill docs (`.claude/skills/{questions,bugs,todos}/SKILL.md`)
 describe their own verbs (`answer`, `fix`, `verify`, `close`, `doing`, `done`,
@@ -735,9 +752,10 @@ Deliberately smaller than a full agent-orchestration UI:
 - **No live steering (one-shot launcher only).** `agents launch` starts a
   process and lets you watch/stop it, not talk to it mid-turn — steering
   needs the open stdin channel a live chat holds.
-- **No worktree isolation.** Every run executes directly in the workspace
-  root (or a `cwd` you pass, still inside the workspace). Don't launch two
-  runs against the same ticket/repo concurrently.
+- **No worktree isolation on the one-shot launcher.** `agents launch` runs
+  directly in the workspace root (or a `cwd` you pass, still inside the
+  workspace); don't launch two against the same ticket/repo concurrently.
+  Ticketed live chats and Runs isolate in a worktree (T-018).
 - **Approval gate on live chats only.** In a live chat, tools listed under
   `gated_tools` in `console/config/agents.toml` are held by a PreToolUse hook:
   a "Permission needed" card appears in the transcript (Allow once / Allow for
@@ -1077,7 +1095,7 @@ actuation, and watch mode.
 
 ### Choosing where the model runs
 
-Every OpenAI-compatible endpoint is a provider: OpenRouter, **Ollama**, **LM
+Every OpenAI-compatible endpoint is a provider: **OpenAI**, OpenRouter, **Ollama**, **LM
 Studio**, or anything else that speaks that API — a vLLM box, llama.cpp, a
 hosted gateway. Settings → **Model providers** switches them on and off and
 adds your own; `kanban agents provider list|enable|disable|add|remove` does the

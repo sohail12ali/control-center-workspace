@@ -1,0 +1,3 @@
+{"type": "system", "subtype": "init", "session_id": "s", "model": "claude-test", "tools": [], "cwd": ""}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "knowledge-center/artifacts/EV-001/EV-001-plan.md"}}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "read it", "duration_ms": 1, "num_turns": 1, "usage": {"input_tokens": 3, "output_tokens": 2}, "total_cost_usd": 0.01}

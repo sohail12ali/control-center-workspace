@@ -27,7 +27,7 @@ Gates + voice: `.claude/skills/harness-standards/core.md` (canonical). Full norm
 | Implementation critique before verify | verifier | `challenge-implementation` |
 | Failure / unmet criterion | fixer | `fix` → `progress-tracker` |
 | `.claude/` hygiene, learnings ingest | fixer | `evolve` |
-| Verification clean | self | `close-work` |
+| Verification clean | self | `close-check`, then `close-work` only on `ok` |
 | Verified + closed, ship requested (ASK-gated) | deployer | `invoke-project-skill` → sub-project publish → `log-work` |
 
 # Dispatch mode (`/do`)

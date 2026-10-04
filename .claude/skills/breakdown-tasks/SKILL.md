@@ -11,7 +11,7 @@ description: Multi-layer decomposition — break slices into atomic tasks with a
 
 ## Steps — breakdown
 
-1. For each slice in `plan.md` (or the named slice), break into 2-5 atomic tasks, ideally one component per task. Task ID `{phase}-{slice}-{task}` (e.g. `2-3-2`). Each task: description, component(s) built (link to `{T}-components.md`), requirement/AC satisfied, testable acceptance criteria, effort (0.5/1/1.5/2/3h — no micro- or mega-tasks), status, explicit blocking notes ("depends on 1b-1").
+1. For each slice in `plan.md` (or the named slice), break into 2-5 atomic tasks by the task boundary rule in `.claude/skills/plan/SKILL.md` (one component per task only when it is a qualifying boundary). Task ID `{phase}-{slice}-{task}` (e.g. `2-3-2`). Each task: description, component(s) built (link to `{T}-components.md`), requirement/AC satisfied, testable acceptance criteria, effort (0.5/1/1.5/2/3h — no micro- or mega-tasks), status, explicit blocking notes ("depends on 1b-1").
 2. Write `{T}-task-breakdown.md` from `template.md` (this folder): per-phase sections, per-slice subsections, per-task rows, plus an effort summary table (by phase, total).
 3. Cross-check totals against `{T}-effort-estimate.md` if it exists; task totals >10% over its upper bound → don't silently accept, flag via `replan`.
 

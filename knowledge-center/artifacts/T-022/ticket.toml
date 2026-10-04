@@ -1,0 +1,22 @@
+[ticket]
+id = "T-022"
+title = "Agent evals: golden-prompt checks for roles and skills"
+kind = "tickets"
+stage = "in-progress"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-01"
+updated = "2026-10-04"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+branch = ""
+pr_url = ""
+pr_state = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false

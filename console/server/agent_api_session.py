@@ -138,6 +138,7 @@ class ApiSession(BaseSession):
         return self._alive
 
     def stop(self):
+        self._stopping = True
         self._interrupt.set()
         self._alive = False
         self.exit_code = 0

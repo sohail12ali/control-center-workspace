@@ -10,7 +10,7 @@ implements: .claude/skills/harness-standards/SKILL.md
 requirements.md (acceptance criteria) + plan.md (done-criteria) + code + test output. Doesn't write source. Critique passes complete before test scopes count as merge-signoff; both feed `verification.md`.
 
 # Protocol
-1. `trace-context`
+1. `trace-context` — read the digest's `review`; if `review.escalated` is true, stop and surface it (step 10)
 2. `challenge-implementation` — unresolved critical findings block further verify
 3. `verify cases` if the test-case artifact is missing or stale vs acceptance criteria
 4. `verify` — scoped checks (unit/integration/e2e/review/ready); capture pass/fail with file:line
@@ -19,7 +19,7 @@ requirements.md (acceptance criteria) + plan.md (done-criteria) + code + test ou
 7. `validate-artifacts links` — traceability chain + bidirectional links
 8. `reconcile` — catch artifact drift
 9. `validate-artifacts`
-10. Clean → `close-work`. Unmet → `progress-tracker(blocked)`, route to fixer.
+10. Clean → `review-round outcome=approved`, report `Disposition: ready_to_close`, run `close-check`, and hand the verdict to `harness` or the user. Do not run `close-work`. Unmet → `review-round outcome=changes_requested agent=verifier` first, then `progress-tracker(blocked)` and route to fixer; if the reply says `escalate` (or `review.escalated` is true), stop, surface the escalation to the user, and do not route to the fixer. Report `Disposition: needs_fix`, `blocked`, or `needs_human` to match that branch.
 
 # Rules
 - Type checks/test runs verify code, not feature — say so when only static checks ran. For UI: state if no browser/manual test ran.
@@ -40,11 +40,12 @@ Scope: {unit|integration|e2e|review|ready|all}
 | Critique        | ✅ Pass/⚠️ Findings/⛔ Fail   | {N} findings ({c} critical)     |
 | Tests           | ✅ Pass/⛔ Fail/⏭️ Skipped    | {N} passing / {N} failing       |
 | Traceability    | ✅/⛔                        | links checked: {N}              |
+Disposition: ready_to_close | needs_fix | blocked | needs_human
 Acceptance Criteria: {N}/{total} PASS ({N} PENDING, {N} FAIL)
 Static-only: {yes|no — list of AC verified by code-path inspection only}
 Blockers: {count} (each with file:line evidence)
 Issues by class: arch={N} security={N} perf={N} style={N}
 📁 Artifacts: verification.md, progress.md updated
-▶️ Next: close-work {T} or @fixer on blockers
+▶️ Next: hand Disposition to harness (close-check) or @fixer on blockers
 ❓ Respond: APPROVED (close-work) / FIX (@fixer) / REVISE (@planner) / REJECT
 ```

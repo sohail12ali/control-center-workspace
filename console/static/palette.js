@@ -88,8 +88,9 @@ window.Console = window.Console || {};
     C.toast("Running " + (verb.label || verb.id) + "…");
     C.post("/api/verbs/" + encodeURIComponent(verb.id) + "/run", {})
       .then(function (out) {
-        C.toast((verb.label || verb.id) + " finished", "ok");
-        showResult(verb, out && out.result);
+        if (!showResult(verb, out && out.result)) {
+          C.toast((verb.label || verb.id) + " finished", "ok");
+        }
       })
       .catch(function (err) { C.toast(err.message, "err"); });
   }
@@ -98,11 +99,12 @@ window.Console = window.Console || {};
      so the result goes to the drawer the app already has for exactly this. */
   function showResult(verb, result) {
     var app = window.ConsoleApp;
-    if (!app || !app.drawer) return;
+    if (!app || !app.drawer) return false;
     app.drawer(verb.label || verb.id, [
       C.el("pre", { class: "code",
                     text: JSON.stringify(result, null, 2).slice(0, 20000) }),
     ]);
+    return true;
   }
 
   /* ---------------- matching ---------------- */

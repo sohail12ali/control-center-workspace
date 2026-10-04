@@ -1,6 +1,6 @@
 # Delivery Console feature comparison — CCW vs ShopLC (lc-wms-cursor-config)
 
-**Date:** 2026-08-24 · **Scope:** `control-center-workspace/console/` (~12.7k lines) vs `lc-wms-cursor-config/.kanban/` (~39.4k lines).
+**Date:** 2026-08-24 · **Scope:** `control-center-workspace/console/` (~21k lines of Python excluding tests, measured 2026-10-03; the rest of this doc is dated 2026-08-24) vs `lc-wms-cursor-config/.kanban/` (~39.4k lines).
 The ShopLC console is the company-specific fork this template was genericized from; by design it carries integrations and volume features the template deliberately leaves out. Rows marked **NEW** landed in CCW on 2026-08-24 (ported from ShopLC per T-request: question interface, voice, models, themes).
 
 ## Feature matrix
@@ -21,11 +21,11 @@ The ShopLC console is the company-specific fork this template was genericized fr
 | Read-aloud + dictation | ✅ (already had) | ✅ | Parity; ShopLC adds auto-send-after-dictation and a voice test button |
 | **Model picker** | ✅ **NEW** — 11-entry Claude shortlist (aliases + pinned incl. `claude-fable-5`, `claude-opus-5`) with labels/hints + custom-id box | ✅ `models.toml` per backend (8 claude + 12 cursor entries) + custom-id box | Ported; CCW keeps it in `agents.toml` (labels/hints sub-tables) since tomlio has no inline tables |
 | **Themes** | ✅ **NEW** — 5 (System/Light/Dark/VS Dark/VS Light), 4-colour sampled swatches (2×2) | ✅ 6 — same five plus a **custom-theme builder** (7 seed colours → ~47 derived tokens, WCAG audit, corner/typeface axes) | Swatches + VS themes ported. The custom builder (~300 lines of colour math) not ported — say the word and it can be |
-| Worktree isolation (`kanban/<ticket>` branch per run) | ❌ (explicitly warned against concurrent runs) | ✅ per-repo worktrees + preview + CLI management | Big, git-topology-aware feature; template records it as a known gap |
+| Worktree isolation (`kanban/<ticket>` branch per run) | ✅ ticketed Runs and live chats isolate in a worktree (T-018); the one-shot launcher does not | ✅ per-repo worktrees + preview + CLI management | Shipped in CCW in T-018; ShopLC's preview and CLI management are not ported |
 | Terminal launches (hand a run to a real console) | ❌ | ✅ | Depends on ShopLC's runner stack |
 | Recipes (20 named skill+persona+mode bundles, lane `▸ advance` buttons) | ❌ | ✅ | Encodes ShopLC's specific delivery playbook; CCW's equivalent is `/do` + skills |
-| Mechanical verbs (11 no-LLM jobs from a card) | ❌ | ✅ | Company workflow automation |
-| Schedules (serve-is-the-clock cron) | ❌ | ✅ | Template defers recurring work to `/loop` in the harness |
+| Mechanical verbs (no-LLM jobs from a card) | ✅ `console/config/verbs.toml` registry, also MCP tools | ✅ | Generic verbs only; ShopLC's company workflow verbs are not ported |
+| Schedules (serve-is-the-clock cron) | ✅ `console/config/schedules.toml`, both shipped rows parked (`enabled = false`) | ✅ | Runs only while `kanban serve` is up; missed firings are skipped |
 | Git reconciliation (`shipped`, `sync-stages`, branch chips) | ❌ | ✅ | Assumes a production-branch model; template keeps git conventions in `project-layout` |
 | Projexa (ticket system) integration | ❌ by design | ✅ (OAuth, sync, time entries, dupes) | The definition of company-specific; the template's zero-dependency rule excludes it |
 | Trackers | 3 (questions/bugs/todos; gaps/critique reserved) | 5 (+ gaps, critique as TOML) | CCW keeps challenge outputs as markdown until wired |
@@ -39,7 +39,7 @@ The ShopLC console is the company-specific fork this template was genericized fr
 
 - **ShopLC is a company product**: Projexa, release packages, recipes, schedules, git reconciliation, and a people roster encode how that team ships. Porting those wholesale would violate this template's genericization rules (zero-dependency, config-driven, off-by-default).
 - **CCW is the clean core**: same board/tracker/chat spine, rebuilt with the plugin seam and CLI-only TOML discipline, now at feature parity on the human-in-the-loop layer (approval gate, voice, models, themes).
-- **Best next ports if wanted**: custom-theme builder (self-contained), chat sharing to the vault, worktree isolation (largest payoff — removes the "one run per repo" restriction), and above all a test suite in ShopLC's style.
+- **Best next ports if wanted**: custom-theme builder (self-contained), chat sharing to the vault, worktree preview/CLI management (isolation itself shipped in T-018), and above all a test suite in ShopLC's style.
 
 ## Links
 

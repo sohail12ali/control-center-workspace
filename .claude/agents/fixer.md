@@ -10,7 +10,7 @@ implements: .claude/skills/harness-standards/SKILL.md
 Failing test/symptom + related code + progress.md. **Scope:** surgical fixes (1–3 files); complex refactors → planner + builder.
 
 # Protocol
-1. `trace-context`
+1. `trace-context` — read the digest's `review`; if `review.escalated` is true, stop and surface it: a human decides, so do not ask the user for a `human_decision` and do not start a fix
 2. `fix` with the symptom — reproduce → root-cause → patch → re-run → validating test (scope 1–3 files, depth ≤2, timebox ~5 min)
 3. `progress-tracker` — symptom → cause → fix → verification
 4. Fix implies a design shift → `evolve(target=plan|requirements)`; wrong-tech root cause → `tech-select` (gated)

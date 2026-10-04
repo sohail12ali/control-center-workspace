@@ -15,6 +15,13 @@ description: CANONICAL stage — all planning in one skill. Decides approach and
 2. Decide approach: 3-5 line rationale citing ≥1 decision-log entry or analysis finding. Multiple viable approaches → `clarify`, don't guess. Unmade tech choices the slices imply → `tech-select` per topic before tasking.
 3. Decide structure — **default single-layer**; escalate only when a rule fires:
 
+**Task boundary rule** (defined here once; `breakdown-tasks` points to it). Size caps stay: flat 1-4h per task, breakdown 0.5/1/1.5/2/3h.
+- **Fewest tasks**: use the fewest tasks that complete and verify the job; prefer one end-to-end task with one owner over per-step, per-file, per-component or per-phase tasks, within the size caps.
+- **Qualifying boundaries**: split only for a different owner (role, human or external actor), a self-contained deliverable that can run in parallel, a hard dependency or handoff, an independently reviewed piece (verify, QA, approval), or follow-up that needs its own tracking.
+- **Reason per task**: every task row names its qualifying reason ("Split because: ...").
+- **Merge-back pass**: before writing, merge any task with no qualifying reason into its neighbour; keep it as a checklist item or acceptance criterion.
+- **Re-read before done**: after writing the plan files, re-read them (or run the `plan-status`/`context` verbs) and confirm task count, dependencies and reasons before reporting done.
+
 **Single-layer / flat (default: one component/layer, ≤6 tasks, no real cross-ticket dependency chain):**
 4. Write `plan.md` in full: Approach (3-5 lines) · Tasks (numbered checkboxes, each 1-4h, each with done-criteria) · Dependencies (blocks / blocked-by [[wikilinks]]) · Effort (total = sum of per-task hours) · Risks (op risk below). `estimate(mode=upfront)` only if total could exceed ~1 day or a stakeholder wants an envelope first. If nested, seed `SLICE/PHASE/` subdirs from `_template`; update `summary.md` links. If decomposition outgrows the flat thresholds mid-way, stop and switch to the multi-layer chain — never duplicate it here.
 

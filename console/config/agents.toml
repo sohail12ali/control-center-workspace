@@ -14,6 +14,7 @@
 #                output, but stdin is not a channel, so a message can only be
 #                QUEUED for the next turn.
 #   oneshot      one process, one prompt, no continuation.
+#   prompt_via   argv (default) or stdin. Codex reads the prompt on stdin.
 #   openai_api   NO process at all. The console talks to an OpenAI-compatible
 #                HTTP endpoint and runs the agent loop itself, which is what
 #                lets that loop hold the console's own verbs as tools and use
@@ -207,6 +208,45 @@ ask = "read-only Q&A — explains, never edits"
 plan = "analyse and propose; no edits"
 default = "prompts before anything unsafe"
 
+# ------------------------------------------------------------------ codex ----
+# OpenAI Codex CLI. One process per turn, like cursor-agent, but the prompt
+# goes to stdin (`codex exec --json -`) and a later turn resumes with
+# `resume {thread_id}`. Sandbox is workspace-write. There is no bypass flag
+# here. Credentials: OPENAI_API_KEY gets a per-chat CODEX_HOME, otherwise the
+# existing `codex` login. `agents doctor` reports a missing binary and missing
+# credentials as two different sentences.
+[[backend]]
+id = "codex"
+label = "Codex"
+command = "codex"
+transport = "resume"
+prompt_prefix_style = "inline"
+prompt_via = "stdin"
+auth = "codex"
+turn_args = [
+  "exec", "--json",
+  "-c", "sandbox_mode=\"workspace-write\"",
+  "--model", "{model}",
+  "-",
+]
+resume_args = [
+  "exec", "--json",
+  "-c", "sandbox_mode=\"workspace-write\"",
+  "--model", "{model}",
+  "resume", "{resume_id}",
+  "-",
+]
+modes = ["default"]
+default_mode = "default"
+models = ["gpt-5.4", "gpt-5.4-mini"]
+
+[backend.model_labels]
+gpt-5.4 = "GPT-5.4"
+gpt-5.4-mini = "GPT-5.4 mini"
+
+[backend.mode_blurbs]
+default = "workspace-write sandbox; shell and edits stay inside Codex's own approval"
+
 # ------------------------------------------------------------ openrouter ----
 # No process, no CLI. The console runs the loop, so the tools this agent holds
 # are the console's own verbs plus the workspace tools in
@@ -374,6 +414,35 @@ modes = ["default"]
 default_mode = "default"
 
 # Sub-tables last — a plain key below this header lands inside it.
+[backend.mode_blurbs]
+default = "writes and shell ask you in the chat; reads and console lookups do not"
+
+# --------------------------------------------------------------- openai ----
+# OpenAI's own API. Same loop as OpenRouter: the console holds the verbs, the
+# approval card, and the budgets. The key is OPENAI_API_KEY in the workspace
+# `.env`. `installed` stays false until that name has a value. The shortlist
+# ships empty; `agents models openai --refresh` fills the picker from /v1/models.
+# This row is a Console agent. It is not the Assistant's default.
+[[backend]]
+id = "openai"
+label = "OpenAI"
+transport = "openai_api"
+enabled = true
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+timeout = 180
+prompt_prefix_style = "none"
+gated_tools = ["write_file", "edit_file", "run_command",
+               "console_desktop_screenshot",
+               "console_desktop_clipboard_read",
+               "console_delegate"]
+approval_timeout = 300
+max_tool_rounds = 25
+max_history_messages = 120
+models = []
+modes = ["default"]
+default_mode = "default"
+
 [backend.mode_blurbs]
 default = "writes and shell ask you in the chat; reads and console lookups do not"
 

@@ -186,6 +186,16 @@
         });
       });
     });
+    if (hasTab("overview")) {
+      jobs.push(function () {
+        return C.get("/api/overview").then(function (d) {
+          var c = (d.attention && d.attention.counts) || {};
+          var n = (c.blocked || 0) + (c.stale || 0) + (c.unowned || 0)
+            + (c.questions || 0) + (c.approvals || 0) + (c.runs || 0);
+          set("overview", n || "", n > 0);
+        });
+      });
+    }
     if (hasTab("todos")) {
       jobs.push(function () {
         // Filtered client-side as well as in the query: a static export maps

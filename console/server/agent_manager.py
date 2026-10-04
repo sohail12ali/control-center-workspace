@@ -20,7 +20,7 @@ import uuid
 
 import time
 
-from . import agent_approvals, agent_backends, agent_session
+from . import agent_approvals, agent_backends, agent_session, runs
 from . import worktrees as worktrees_mod
 from .agent_events import replay_file
 from .paths import resolve_rel
@@ -81,6 +81,20 @@ def _resolve_worktree(repo_root, ticket):
         return repo_root, "", "", str(exc)
 
 
+def _make_on_limit(repo_root):
+    """The `on_limit` seam for a session: a cap kill writes the chat's ACTIVE
+    Run terminal first. A chat with no Run (a human started it) has nothing to
+    write, and a Run already terminal is left alone (BR-9, CR-21)."""
+    def _on_limit(sess, failure_class, detail):
+        run = runs.find_active_chat_run(repo_root, sess.id)
+        if run is None:
+            return
+        from . import run_watchdog  # lazy: run_watchdog reads sessions back through here
+        run_watchdog.end_for_limit(repo_root, run, failure_class, detail,
+                                   agent_session._utc_now())
+    return _on_limit
+
+
 def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
            persona="", title="", server_port=0, ticket="",
            system_append="", extra="", open=True):
@@ -108,6 +122,11 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         # that is not running.
         raise ValueError("%s Pick another backend, or fix that."
                          % backend.unavailable_reason)
+    # Fakes in tests are SimpleNamespace rows and have no credential check.
+    # A real Backend always defines the property.
+    cred = getattr(backend, "credential_reason", "") or ""
+    if cred:
+        raise ValueError("%s Pick another backend, or fix that." % cred)
     text = (prompt or "").strip()
     if not text and open:
         raise ValueError("an opening message is required")
@@ -146,7 +165,8 @@ def create(repo_root, backend_id, prompt, *, mode="", model="", skill="",
         title=title or text[:80] or "(new chat)", model=model, mode=mode,
         skill=skill, persona=persona, on_exit=_on_exit,
         settings_path=settings_path, ticket=ticket,
-        system_append=system_append, extra=extra)
+        system_append=system_append, extra=extra, repo_root=repo_root,
+        on_limit=_make_on_limit(repo_root))
 
     with _lock:
         _sessions[sid] = sess
@@ -320,7 +340,8 @@ def resume(repo_root, sid, *, server_port=0):
         # Numbering continues where the dead session stopped, so the client's
         # catch-up still works against one file.
         start_seq=meta.get("seq", 0),
-        resume_id=meta["native_session_id"])
+        resume_id=meta["native_session_id"], repo_root=repo_root,
+        on_limit=_make_on_limit(repo_root))
     with _lock:
         _sessions[sid] = sess
     sess.start()
@@ -426,9 +447,50 @@ def rename(sid, title):
     return {"id": sid, "title": sess.title}
 
 
+_watchdog = None
+#: True once this process has started the server's agent plugin: it, and only
+#: it, holds the live session registry that `run-watch` judges Runs against.
+_owns_registry = False
+
+
+def owns_registry():
+    return _owns_registry
+
+
+def start_watchdog(repo_root):
+    """Start the Run watchdog thread (T-020 FR-14), once. None when
+    `[runs] watchdog_enabled = false`. `run_watchdog` is imported here, not at
+    the top, because it reads sessions back through this module."""
+    global _watchdog, _owns_registry
+    from . import run_config, run_watchdog
+    _owns_registry = True
+    if _watchdog is not None and _watchdog.is_alive() and _watchdog.repo_root != repo_root:
+        stop_watchdog()  # one thread per process, for the repo it was last started on
+    with _lock:
+        if _watchdog is not None and _watchdog.is_alive():
+            return _watchdog
+        cfg = run_config.runs_cfg(repo_root)
+        if not cfg["watchdog_enabled"]:
+            return None
+        _watchdog = run_watchdog.Watchdog(repo_root, cfg["watch_interval_secs"])
+        _watchdog.start()
+        return _watchdog
+
+
+def stop_watchdog():
+    global _watchdog
+    with _lock:
+        dog, _watchdog = _watchdog, None
+    if dog is not None:
+        dog.stop()
+
+
 def shutdown_all():
     """Stop every session. Called when the server exits so child processes
     don't outlive it."""
+    global _owns_registry
+    _owns_registry = False
+    stop_watchdog()  # first, so it cannot act on sessions as they go down
     with _lock:
         sessions = list(_sessions.values())
     for sess in sessions:

@@ -33,7 +33,7 @@ Stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY*
 | `analyst` | GROUND, CLARIFY | `analyze` → `requirements draft` → `challenge-requirements` → `requirements enrich` → `clarify`/`questions` → `requirements iterate`× → `requirements freeze` |
 | `planner` | CANONICAL | `requirements stories` → `plan` (flat) or `analyze-components` → `breakdown-tasks` (+`estimate`) → `challenge-plan` |
 | `builder` | TEMPLATE, SIMPLIFY | task-by-task from plan; `tech-select(confirm-existing)` before new deps; `progress-tracker` per task; `simplify` |
-| `verifier` | VERIFY | `challenge-implementation` → `verify cases` → `verify {scope}` → `validate-artifacts` (+links) → `reconcile` → `close-work` |
+| `verifier` | VERIFY | `challenge-implementation` → `verify cases` → `verify {scope}` → `validate-artifacts` (+links) → `reconcile` → `close-check` (`harness` runs `close-work`) |
 | `fixer` | any | `fix` → `progress-tracker`; `evolve` on design shifts |
 | `deployer` | after close-work | ASK-gated: `invoke-project-skill` → sub-project publish → `log-work` |
 

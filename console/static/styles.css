@@ -41,6 +41,17 @@
   --info:   #2563eb;  --info-soft:   #eaf2fe;  --info-line:   #c5dcfa;
   --run:    #2563eb;  --run-soft:    #eaf2fe;  --run-line:    #c5dcfa;
 
+  /* One hue per status. A glyph sets --status-hue to one of these and paints
+     with currentColor, so the shape carries the status and the hue only tints it. */
+  --status-open: var(--ink-3);
+  --status-progress: var(--info);
+  --status-review: var(--accent-2);
+  --status-blocked: var(--danger);
+  --status-done: var(--ok);
+  --status-failed: var(--danger);
+  --status-queued: var(--warn);
+  --status-muted: var(--ink-3);
+
   /* Categorical chart series — IDENTITY, not status. Assigned in fixed order
      and never cycled: a 7th series folds into --cat-other. Do NOT chart with
      --accent/--info/--run — they are the same blue, so a three-series chart
@@ -409,6 +420,17 @@ main#view.flush { padding: 0; }
 .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
 .btn.danger { color: var(--danger); border-color: var(--danger-line); }
 .btn.danger:hover { background: var(--danger-soft); }
+.btn.warn { color: var(--warn); border-color: var(--warn-line); }
+.btn.warn:hover { background: var(--warn-soft); }
+.sglyph { color: var(--status-hue, currentColor); flex: none; }
+.sglyph-open { --status-hue: var(--status-open); }
+.sglyph-progress { --status-hue: var(--status-progress); }
+.sglyph-review { --status-hue: var(--status-review); }
+.sglyph-blocked { --status-hue: var(--status-blocked); }
+.sglyph-done { --status-hue: var(--status-done); }
+.sglyph-failed { --status-hue: var(--status-failed); }
+.sglyph-queued { --status-hue: var(--status-queued); }
+.sglyph-muted { --status-hue: var(--status-muted); }
 .btn.sm { padding: 4px 8px; font-size: 11.5px; }
 .btn.iconly { padding: 6px; }
 
@@ -674,6 +696,22 @@ button.stat:hover { border-color: var(--accent-line); background: var(--accent-s
 .lane > header h3 { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
 .lane .lanebody { overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
 .lane.over { border-color: var(--accent); background: var(--accent-soft); }
+.lane.cold {
+  flex-basis: 52px; max-width: 52px; cursor: pointer;
+  align-items: center; padding: 8px 4px;
+}
+.lane.cold > header { flex-direction: column; align-items: center; flex: 1; padding: 0; gap: 8px; }
+.lane.cold > header h3 {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  flex: 1; text-align: center; margin: 4px 0;
+}
+.lane .more {
+  width: 100%; border: 1px dashed var(--line); background: transparent;
+  color: var(--ink-2); border-radius: var(--r-sm); padding: 8px;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.lane .more:hover { border-color: var(--ink-3); color: var(--ink); }
+.lane .showing { font-size: 10.5px; color: var(--ink-3); text-align: center; }
 
 .card {
   background: var(--surface); border: 1px solid var(--line);
@@ -772,7 +810,17 @@ table.dt tbody tr:hover { background: var(--surface-2); }
 .lrow:last-child { border-bottom: 0; }
 .lrow .ltext { flex: 1; min-width: 0; }
 .lrow.clickable { cursor: pointer; border-radius: var(--r-sm); padding-inline: 6px; }
-.lrow.clickable:hover { background: var(--surface-2); }
+.lrow.clickable:hover, .lrow.kbd { background: var(--surface-2); }
+.resultcard { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
+.resultcard .rcheck {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; color: var(--ink-3);
+}
+.resultcard .rcheck.on { color: var(--status-hue, var(--ink)); font-weight: 650; }
+.resultcard .rcheck.passed { --status-hue: var(--status-done); }
+.resultcard .rcheck.failed { --status-hue: var(--status-failed); }
+.resultcard .rcheck.not_run { --status-hue: var(--status-muted); }
+.stallhint { font-size: 10.5px; color: var(--warn); margin-top: 2px; line-height: 1.35; }
 
 /* -- split view (list + detail), stacks on narrow -- */
 .split { display: grid; grid-template-columns: minmax(230px, 300px) 1fr; gap: var(--gap); align-items: start; }
@@ -895,6 +943,20 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   overflow-y: auto; min-height: 0; padding: 14px 16px 18px;
   scroll-behavior: smooth;
 }
+.ct-viewbar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; justify-content: flex-end;
+  padding: 0 0 6px; background: var(--bg);
+}
+.ct-trim {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--ink-2);
+  background: var(--surface-2); border: 1px dashed var(--line);
+  border-radius: var(--r-sm); padding: 6px 8px; margin-bottom: 6px;
+}
+.ct-toolgroup { margin: 2px 0; }
+.ct-toolstack { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 2px 8px; }
+.ct-raw { white-space: pre-wrap; word-break: break-word; font-size: 11px; }
 .ct-rail {
   border-left: 1px solid var(--line-soft); background: var(--surface-2);
   overflow-y: auto; min-height: 0; padding: 12px 11px;

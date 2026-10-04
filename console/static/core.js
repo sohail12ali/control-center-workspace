@@ -457,16 +457,69 @@ window.Console = (function () {
     },
   };
 
-  /* ---------------- toasts ---------------- */
-  function toast(msg, kind) {
+  /* One glyph per status. Colour comes from a single --status-hue, chosen by
+     the status class in the stylesheet, so a new status is a map entry plus
+     a hue — not a new icon style. Unknown statuses get the muted circle. */
+  var STATUS_GLYPHS = {
+    open: ["circle", "open"], backlog: ["circle", "open"], todo: ["circle", "open"],
+    "in-progress": ["play", "progress"], running: ["play", "progress"],
+    working: ["play", "progress"], live: ["play", "progress"],
+    verify: ["scope", "review"], "in-review": ["scope", "review"],
+    blocked: ["alert", "blocked"],
+    done: ["check", "done"], completed: ["check", "done"], passed: ["check", "done"],
+    resolved: ["check", "done"], closed: ["check", "done"], ok: ["check", "done"],
+    advanced: ["check", "done"],
+    failed: ["x", "failed"], "timed-out": ["clock", "failed"], error: ["x", "failed"],
+    cancelled: ["x", "muted"], ended: ["circle", "muted"],
+    "scheduled-retry": ["refresh", "queued"], queued: ["queue", "queued"],
+    "plan-only": ["clock", "queued"], empty: ["circle", "muted"],
+    "not-run": ["circle", "muted"],
+  };
+
+  function statusGlyph(status, title) {
+    var key = String(status || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    var spec = STATUS_GLYPHS[key] || ["circle", "muted"];
+    var node = icon(spec[0], "sglyph sglyph-" + spec[1]);
+    node.setAttribute("data-status", key || "unknown");
+    if (title) {
+      node.setAttribute("role", "img");
+      node.setAttribute("aria-label", title);
+      node.removeAttribute("aria-hidden");
+    }
+    return node;
+  }
+
+  /* ---------------- toasts ----------------
+     Same text already on screen is not announced again. Five is the cap;
+     a sixth drops the oldest. `opts.quiet` is for a change the current view
+     already shows, so the toast would only repeat it. */
+  var TOAST_CAP = 5;
+
+  function armToast(t, kind) {
+    if (t._fade) clearTimeout(t._fade);
+    if (t._gone) clearTimeout(t._gone);
+    t.style.opacity = "";
+    t._fade = setTimeout(function () {
+      t.style.opacity = "0";
+      t._gone = setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
+    }, kind === "err" ? 5200 : 2600);
+  }
+
+  function toast(msg, kind, opts) {
+    opts = opts || {};
+    if (opts.quiet) return;
     var host = document.querySelector(".toasts");
     if (!host) { host = el("div", { class: "toasts" }); document.body.appendChild(host); }
+    var key = (kind || "") + "\n" + String(msg);
+    var existing = host.querySelectorAll(".toast");
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i].getAttribute("data-key") === key) { armToast(existing[i], kind); return; }
+    }
+    while (host.children.length >= TOAST_CAP) host.removeChild(host.firstChild);
     var t = el("div", { class: "toast" + (kind ? " " + kind : ""), text: msg });
+    t.setAttribute("data-key", key);
     host.appendChild(t);
-    setTimeout(function () {
-      t.style.opacity = "0";
-      setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
-    }, kind === "err" ? 5200 : 2600);
+    armToast(t, kind);
   }
 
   /* ---------------- async render helper ----------------
@@ -706,7 +759,7 @@ window.Console = (function () {
     stat: stat, stats: stats,
     bars: bars, stack: stack, catClass: catClass, catVar: catVar,
     fmtNum: fmtNum, fmtAgo: fmtAgo, todayISO: todayISO,
-    prefs: prefs, toast: toast, load: load,
+    prefs: prefs, toast: toast, statusGlyph: statusGlyph, load: load,
     inflightCount: inflightCount,
     onConnection: onConnection, isOnline: isOnline,
   };

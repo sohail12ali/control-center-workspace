@@ -5,14 +5,18 @@
    the whole reason this file exists: repainting a long transcript on every
    delta drops frames and destroys text selection mid-read.
 
-   Thinking blocks and tool calls are collapsed by default. They matter when
-   something goes wrong and are noise when it doesn't, so they are present but
-   folded, with the summary carrying enough (tool name, target file) to decide
-   whether to open one. */
+   Thinking blocks and successful tool calls are collapsed by default. A tool
+   that errored stays open. Consecutive tool calls fold into one group.
+   Nice is that view; Raw is the item JSON. A live session only mounts the
+   latest LIVE_CAP items, with a marker for what was trimmed. */
 window.ConsoleChatRender = (function (C, MD) {
   "use strict";
 
   var MAX_RESULT = 4000;
+  /* Live tail only. Ended sessions render the whole transcript. Matches the
+     bound used for a long-running stream: the store still holds every item. */
+  var LIVE_CAP = 1500;
+  var transcriptMode = "nice";
 
   function shortArgs(item) {
     var a = item.args || {};
@@ -145,6 +149,7 @@ window.ConsoleChatRender = (function (C, MD) {
     node._head = head;
     node._body = body;
     paintToolBody(node, item);
+    if (item.result && !item.result.ok) node.open = true;
     return node;
   }
 
@@ -173,6 +178,7 @@ window.ConsoleChatRender = (function (C, MD) {
       if (nm) nm.textContent = item.name || "tool";
       node._head.classList.toggle("bad", !!(item.result && !item.result.ok));
     }
+    if (item.result && !item.result.ok) node.open = true;
   }
 
   /* The one interactive transcript item: a gated tool call parked on a human.
@@ -308,12 +314,13 @@ window.ConsoleChatRender = (function (C, MD) {
       if (item.ms) bits.push(Math.round(item.ms / 100) / 10 + "s");
 
       var label = item.is_error ? "turn failed" : "turn complete";
+      var tone = item.is_error ? " bad" : "";
       /* A turn stopped by the round cap looks identical to a finished one
-         unless the reason is shown. */
+         unless the reason is shown. An interrupt is a warning, not a failure. */
       if (item.subtype === "tool_limit") label = "turn stopped at the tool limit";
-      else if (item.subtype === "interrupted") label = "turn interrupted";
+      else if (item.subtype === "interrupted") { label = "turn interrupted"; tone = " warn"; }
 
-      return C.el("div", { class: "ct-rule" + (item.is_error ? " bad" : "") }, [
+      return C.el("div", { class: "ct-rule" + tone }, [
         C.el("span", { text: label }),
         bits.length ? C.el("span", { class: "muted", text: bits.join(" · ") }) : null,
       ]);
@@ -351,11 +358,42 @@ window.ConsoleChatRender = (function (C, MD) {
     return textItem(item, ctx);
   }
 
+  function toolGroupNode(unit) {
+    var head = C.el("summary", { class: "ct-toolhead" });
+    var body = C.el("div", { class: "ct-toolstack" });
+    var node = C.el("details", { class: "ct-item ct-tool ct-toolgroup" }, [head, body]);
+    node._head = head;
+    node._body = body;
+    paintToolGroup(node, unit);
+    return node;
+  }
+
+  function paintToolGroup(node, unit) {
+    var tools = unit.items;
+    var bad = tools.some(function (t) { return t.result && !t.result.ok; });
+    var names = tools.map(function (t) { return t.name || "tool"; });
+    C.clear(node._head);
+    node._head.appendChild(C.icon(bad ? "alert" : "wrench"));
+    node._head.appendChild(C.el("span", { class: "ct-toolname", text: tools.length + " tools" }));
+    node._head.appendChild(C.el("span", { class: "ct-toolarg truncate", text: names.slice(0, 4).join(", ") }));
+    node._head.classList.toggle("bad", bad);
+    if (bad) node.open = true;
+    C.clear(node._body);
+    tools.forEach(function (t) { node._body.appendChild(toolItem(t)); });
+  }
+
   /** Attach a renderer to a scroll host for one store. */
   function mount(host, store, opts) {
     opts = opts || {};
-    var nodes = {};
+    var units = [];
     var stick = true;
+    var extra = 0;
+    var bar = null;
+    var marker = null;
+    var rawPre = null;
+    var wasBusy = false;
+    var wasAlive = true;
+    var sawReplay = false;
 
     function atBottom() {
       return host.scrollHeight - host.scrollTop - host.clientHeight < 40;
@@ -377,19 +415,140 @@ window.ConsoleChatRender = (function (C, MD) {
       };
     }
 
+    function cap() {
+      if (!store.state.alive) return null;
+      return LIVE_CAP + extra;
+    }
+
+    function windowOf(items) {
+      var limit = cap();
+      if (limit === null || items.length <= limit) return { items: items, trimmed: 0 };
+      return { items: items.slice(items.length - limit), trimmed: items.length - limit };
+    }
+
+    function visibleItems() {
+      var n = 0;
+      units.forEach(function (u) { n += u.kind === "tools" ? u.items.length : 1; });
+      return n;
+    }
+
+    function ensureChrome() {
+      if (!bar) {
+        var nice = C.el("button", { type: "button", text: "Nice" });
+        var raw = C.el("button", { type: "button", text: "Raw" });
+        nice.addEventListener("click", function () { transcriptMode = "nice"; renderAll(); });
+        raw.addEventListener("click", function () { transcriptMode = "raw"; renderAll(); });
+        bar = C.el("div", { class: "ct-viewbar" }, [
+          C.el("div", { class: "seg", role: "group", "aria-label": "Transcript view" }, [nice, raw]),
+        ]);
+        bar._nice = nice;
+        bar._raw = raw;
+      }
+      bar._nice.setAttribute("aria-pressed", String(transcriptMode === "nice"));
+      bar._raw.setAttribute("aria-pressed", String(transcriptMode === "raw"));
+      if (bar.parentNode !== host) host.insertBefore(bar, host.firstChild);
+      if (!marker) {
+        marker = C.el("div", { class: "ct-trim" });
+        marker._note = C.el("span");
+        marker._more = C.el("button", { class: "btn sm", type: "button", text: "Show earlier" });
+        marker._more.addEventListener("click", function () {
+          extra += LIVE_CAP;
+          renderAll();
+        });
+        marker.appendChild(marker._note);
+        marker.appendChild(marker._more);
+      }
+    }
+
+    function paintMarker(trimmed) {
+      ensureChrome();
+      if (!trimmed) {
+        if (marker.parentNode) marker.parentNode.removeChild(marker);
+        return;
+      }
+      marker._note.textContent = "Earlier output trimmed (" + trimmed +
+        "). This live view keeps the latest " + (LIVE_CAP + extra) + ".";
+      if (marker.parentNode !== host) host.insertBefore(marker, bar.nextSibling);
+    }
+
+    function paintRaw(slice) {
+      if (!rawPre) rawPre = C.el("pre", { class: "code ct-raw" });
+      var lines = slice.map(function (it) {
+        try { return JSON.stringify(it); } catch (e) { return String(it && it.kind || ""); }
+      });
+      rawPre.textContent = lines.join("\n");
+      if (rawPre.parentNode !== host) host.appendChild(rawPre);
+    }
+
+    function lastUnit() { return units.length ? units[units.length - 1] : null; }
+
+    function pushUnit(unit) {
+      units.push(unit);
+      host.appendChild(unit.node);
+    }
+
     function addNode(item) {
-      var node = build(item, ctx());
-      nodes[item.key] = node;
-      host.appendChild(node);
-      scroll(false);
+      if (item.kind === "tool") {
+        var prev = lastUnit();
+        if (prev && prev.kind === "tools") {
+          prev.items.push(item);
+          paintToolGroup(prev.node, prev);
+          return;
+        }
+        if (prev && prev.kind === "item" && prev.item.kind === "tool") {
+          if (prev.node.parentNode) prev.node.parentNode.removeChild(prev.node);
+          units.pop();
+          var grouped = { kind: "tools", items: [prev.item, item] };
+          grouped.node = toolGroupNode(grouped);
+          pushUnit(grouped);
+          return;
+        }
+      }
+      var unit = { kind: "item", item: item, node: build(item, ctx()) };
+      pushUnit(unit);
+    }
+
+    function trimTail() {
+      var limit = cap();
+      if (limit === null) return 0;
+      while (units.length && visibleItems() > limit) {
+        var old = units.shift();
+        if (old.node && old.node.parentNode) old.node.parentNode.removeChild(old.node);
+      }
+      var total = (store.state.items || []).length;
+      return Math.max(0, total - visibleItems());
+    }
+
+    function findUnit(item) {
+      for (var i = 0; i < units.length; i++) {
+        var u = units[i];
+        if (u.kind === "item" && (u.item === item || u.item.key === item.key)) return u;
+        if (u.kind === "tools") {
+          for (var j = 0; j < u.items.length; j++) {
+            if (u.items[j] === item || u.items[j].key === item.key) return u;
+          }
+        }
+      }
+      return null;
     }
 
     function patchNode(item) {
-      var node = nodes[item.key];
-      if (!node) return;
+      if (transcriptMode === "raw") {
+        var rawWin = windowOf(store.state.items || []);
+        paintRaw(rawWin.items);
+        paintMarker(rawWin.trimmed);
+        scroll(false);
+        return;
+      }
+      var unit = findUnit(item);
+      if (!unit) return;
+      if (unit.kind === "tools") {
+        paintToolGroup(unit.node, unit);
+        scroll(false);
+        return;
+      }
+      var node = unit.node;
       if (item.kind === "text") {
-        // Re-render just this block's markdown. Cheap: one block, not the
-        // transcript, and markdown needs the whole block to parse fences.
         var fresh = MD.render(item.text);
         C.clear(node._body).appendChild(fresh);
       } else if (item.kind === "thinking") {
@@ -402,20 +561,56 @@ window.ConsoleChatRender = (function (C, MD) {
       scroll(false);
     }
 
-    var offItem = store.on("item", addNode);
-    var offPatch = store.on("patch", patchNode);
-
     function renderAll() {
       C.clear(host);
-      nodes = {};
-      store.state.items.forEach(addNode);
+      units = [];
+      rawPre = null;
+      ensureChrome();
+      var win = windowOf(store.state.items || []);
+      if (transcriptMode === "raw") paintRaw(win.items);
+      else win.items.forEach(addNode);
+      paintMarker(win.trimmed);
       scroll(true);
     }
+
+    function onItem(item) {
+      if (store.state.replaying) { sawReplay = true; return; }
+      if (transcriptMode === "raw") {
+        var rawWin = windowOf(store.state.items || []);
+        paintRaw(rawWin.items);
+        paintMarker(rawWin.trimmed);
+        scroll(false);
+        return;
+      }
+      ensureChrome();
+      addNode(item);
+      paintMarker(trimTail());
+      scroll(false);
+    }
+
+    function onMeta() {
+      if (store.state.replaying) { sawReplay = true; return; }
+      var busy = !!store.state.busy;
+      var alive = !!store.state.alive;
+      if (sawReplay || (wasBusy && !busy) || (wasAlive && !alive)) {
+        sawReplay = false;
+        renderAll();
+      }
+      wasBusy = busy;
+      wasAlive = alive;
+    }
+
+    var offItem = store.on("item", onItem);
+    var offPatch = store.on("patch", function (item) {
+      if (store.state.replaying) { sawReplay = true; return; }
+      patchNode(item);
+    });
+    var offMeta = store.on("meta", onMeta);
 
     return {
       renderAll: renderAll,
       scroll: scroll,
-      destroy: function () { offItem(); offPatch(); },
+      destroy: function () { offItem(); offPatch(); offMeta(); },
       lastAssistantText: function () {
         var items = store.state.items;
         for (var i = items.length - 1; i >= 0; i--) {

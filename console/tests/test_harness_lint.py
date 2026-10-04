@@ -223,3 +223,78 @@ class TestRealAgentRoster:
             "found %d agent files (%s) — T-004 (and CLAUDE.md's 'Exactly 7 "
             "agents' rule) requires the assistant to stay one chat plus a "
             "dispatch table, never a new agent file." % (len(names), sorted(names)))
+
+
+def _desc_findings(findings):
+    return [f for f in findings if f.code == "description-too-long"]
+
+
+class TestDescriptionLength:
+    """T-021 FR-1: a skill description over 300 chars is a WARN (a convention
+    to keep the matching text short), never an ERROR."""
+
+    def test_300_chars_no_finding(self, harness):
+        _skill(harness, "alpha", description="x" * 300)
+        assert _desc_findings(harness_lint.lint(harness)[0]) == []
+
+    def test_301_chars_one_warn_finding_errors_zero(self, harness):
+        _skill(harness, "alpha", description="x" * 301)
+        findings, summary = harness_lint.lint(harness)
+        hits = _desc_findings(findings)
+        assert len(hits) == 1
+        assert hits[0].level == harness_lint.WARN
+        assert hits[0].path.endswith("alpha/SKILL.md")
+        assert "301" in hits[0].message
+        assert summary["errors"] == 0
+
+    def test_400_char_agent_description_no_finding(self, harness):
+        path = os.path.join(harness, ".claude", "agents", "worker.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("---\nname: worker\ndescription: %s\ntools: Read\n---\n"
+                     "Runs `alpha` then `beta`.\n" % ("y" * 400))
+        assert _desc_findings(harness_lint.lint(harness)[0]) == []
+
+    def test_empty_skill_description_is_missing_description_only(self, harness):
+        _skill(harness, "alpha", description="")
+        findings, _ = harness_lint.lint(harness)
+        assert "missing-description" in _codes(findings)
+        assert _desc_findings(findings) == []
+
+    def test_real_tree_findings_all_warn_and_equal_files_over_300(self):
+        findings, summary = harness_lint.lint(REAL_WORKSPACE)
+        hits = _desc_findings(findings)
+        assert all(f.level == harness_lint.WARN for f in hits)
+        assert summary["errors"] == 0
+        over = set()
+        for skill_id in harness_lint._skill_dirs(REAL_WORKSPACE):
+            rel = ".claude/skills/%s/SKILL.md" % skill_id
+            text = harness_lint._read(os.path.join(REAL_WORKSPACE, *rel.split("/")))
+            if len(harness_lint._frontmatter(text).get("description", "")) > 300:
+                over.add(rel)
+        assert {f.path for f in hits} == over
+
+
+class TestReadmeCounts:
+    """T-021 FR-4: README.md states roster sizes too and joins the check."""
+
+    def _readme(self, repo, text):
+        with open(os.path.join(repo, "README.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def test_readme_9_skills_with_2_on_disk_warns_stale_count_path_readme(self, harness):
+        self._readme(harness, "This workspace has 9 skills.\n")
+        stale = [f for f in harness_lint.lint(harness)[0] if f.code == "stale-count"]
+        assert len(stale) == 1
+        assert stale[0].level == harness_lint.WARN
+        assert stale[0].path == "README.md"
+
+    def test_readme_accurate_is_quiet(self, harness):
+        self._readme(harness, "This workspace has 2 skills and 1 agents.\n")
+        assert "stale-count" not in _codes(harness_lint.lint(harness)[0])
+
+    def test_readme_absent_is_quiet(self, harness):
+        assert not os.path.exists(os.path.join(harness, "README.md"))
+        assert "stale-count" not in _codes(harness_lint.lint(harness)[0])
+
+    def test_real_tree_has_no_stale_count(self):
+        assert "stale-count" not in _codes(harness_lint.lint(REAL_WORKSPACE)[0])

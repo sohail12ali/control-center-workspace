@@ -1,0 +1,5 @@
+{"type": "system", "subtype": "init", "session_id": "s", "model": "claude-test", "tools": [], "cwd": ""}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "d1", "name": "Edit", "input": {"file_path": "knowledge-center/artifacts/EV-001/EV-001-decision-log.md"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": "knowledge-center/artifacts/EV-001/EV-001-requirements.md"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The decision-log entry is written first."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "logged", "duration_ms": 1, "num_turns": 1, "usage": {"input_tokens": 3, "output_tokens": 2}, "total_cost_usd": 0.01}

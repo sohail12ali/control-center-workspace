@@ -1,0 +1,18 @@
+[meta]
+ticket = "T-022"
+tracker = "todos"
+updated = "2026-10-01T11:50:28Z"
+seq = 1
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "Confirm against ONE real tool-using claude stream-json whether Normalizer duplicates tool.start and drops tool_result for the claude backend (synthetic probe only so far: agent_normalize.py:106-111, 223-230, 280-289); T-022 does not depend on the outcome"
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-01"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""

@@ -5,9 +5,12 @@ since the claim) at session end; never crashes. Backed by `stop_hook.py` and
 exercised via `kanban.py stop-hook check` for one-api (`--json`) coverage.
 """
 
+import datetime as real_datetime
 import json
 import os
 from types import SimpleNamespace
+
+import pytest
 
 from server import stop_hook, tickets, trackers
 import kanban
@@ -26,6 +29,21 @@ def _write_author_local(repo, name="Sam Agent", slug="sam-agent"):
 
 def _ns(**kw):
     return SimpleNamespace(**kw)
+
+
+def _freeze_tickets_date(monkeypatch, y, m, d):
+    """Pin both clocks a claim's staleness reads: `tickets.date.today()` stamps
+    `updated`, `trackers._now_iso()` stamps a comment's `posted_on`. The
+    fixtures hard-code a `claimed_at` date, so without this they rot as the
+    calendar moves past it (T-020 D-1)."""
+
+    class _FrozenDate(real_datetime.date):
+        @classmethod
+        def today(cls):
+            return real_datetime.date(y, m, d)
+
+    monkeypatch.setattr(tickets, "date", _FrozenDate)
+    monkeypatch.setattr(trackers, "_now_iso", lambda: "%04d-%02d-%02dT12:00:00Z" % (y, m, d))
 
 
 class TestResolveAgent:
@@ -47,13 +65,15 @@ class TestStaleClaims:
         tickets.set_claim(repo, "CC-T001", "agent-1")
         assert stop_hook.stale_claims(repo, "") == []
 
-    def test_claim_with_no_update_is_stale(self, repo):
+    def test_claim_with_no_update_is_stale(self, repo, monkeypatch):
+        _freeze_tickets_date(monkeypatch, 2026, 9, 16)
         _create(repo)
         tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16")
         stale = stop_hook.stale_claims(repo, "agent-1")
         assert [s["id"] for s in stale] == ["CC-T001"]
 
-    def test_claim_then_comment_is_not_stale(self, repo):
+    def test_claim_then_comment_is_not_stale(self, repo, monkeypatch):
+        _freeze_tickets_date(monkeypatch, 2026, 9, 16)
         _create(repo)
         tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16")
         trackers.add(repo, "CC-T001", "comments", "picking this up", author="agent-1")
@@ -87,6 +107,20 @@ class TestStaleClaims:
         assert stop_hook.stale_claims(str(tmp_path / "does-not-exist"), "agent-1") == []
 
 
+class TestDateIndependence:
+    """T-020 D-1 / FR-19 AC3: the staleness semantics must not depend on the
+    calendar date the suite happens to run on."""
+
+    @pytest.mark.parametrize("y,m,d", [(2026, 9, 16), (2027, 3, 1), (2031, 12, 31)])
+    def test_stale_claim_semantics_hold_on_any_calendar_date(self, repo, monkeypatch, y, m, d):
+        _freeze_tickets_date(monkeypatch, y, m, d)
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="%04d-%02d-%02d" % (y, m, d))
+        assert [s["id"] for s in stop_hook.stale_claims(repo, "agent-1")] == ["CC-T001"]
+        trackers.add(repo, "CC-T001", "comments", "picking this up", author="agent-1")
+        assert stop_hook.stale_claims(repo, "agent-1") == []
+
+
 class TestFormatReminder:
     def test_empty_is_empty_string(self):
         assert stop_hook.format_reminder([]) == ""
@@ -97,7 +131,8 @@ class TestFormatReminder:
 
 
 class TestCliOneApi:
-    def test_json_reports_stale_claims(self, repo, capsys):
+    def test_json_reports_stale_claims(self, repo, capsys, monkeypatch):
+        _freeze_tickets_date(monkeypatch, 2026, 9, 16)
         _create(repo)
         tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16")
         kanban.cmd_stop_hook_check(_ns(agent="agent-1", json=True), repo)
@@ -105,7 +140,8 @@ class TestCliOneApi:
         assert payload["agent"] == "agent-1"
         assert [s["id"] for s in payload["stale"]] == ["CC-T001"]
 
-    def test_plain_mode_prints_a_reminder_line(self, repo, capsys):
+    def test_plain_mode_prints_a_reminder_line(self, repo, capsys, monkeypatch):
+        _freeze_tickets_date(monkeypatch, 2026, 9, 16)
         _create(repo)
         tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16")
         kanban.cmd_stop_hook_check(_ns(agent="agent-1", json=False), repo)
@@ -130,3 +166,51 @@ class TestCliOneApi:
         args = parser.parse_args(["stop-hook", "check", "--agent", "x", "--json"])
         assert args.func is kanban.cmd_stop_hook_check
         assert args.agent == "x" and args.json is True
+
+
+class TestStopHookWithUtcClaim:
+    """T-020 FR-19 / CR-34: `claimed_at` is a UTC timestamp, `updated` a LOCAL
+    date. The comparison converts the claim to the local date first, so a claim
+    made near a UTC midnight is not read as already updated."""
+
+    def test_same_day_comment_after_full_timestamp_claim_clears_reminder(self, repo, monkeypatch):
+        _freeze_tickets_date(monkeypatch, 2026, 9, 16)
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16T08:00:00Z")
+        assert [s["id"] for s in stop_hook.stale_claims(repo, "agent-1")] == ["CC-T001"]
+        trackers.add(repo, "CC-T001", "comments", "picking this up", author="agent-1")
+        assert stop_hook.stale_claims(repo, "agent-1") == []
+
+    @pytest.mark.parametrize("hours,claimed_utc,local_today", [
+        (5, "2026-09-16T22:30:00Z", (2026, 9, 17)),    # local already next day
+        (-8, "2026-09-17T03:00:00Z", (2026, 9, 16)),   # local still previous day
+        (0, "2026-09-16T23:59:59Z", (2026, 9, 16)),
+    ])
+    def test_claim_near_utc_midnight_is_stale_until_something_happens(
+            self, repo, monkeypatch, hours, claimed_utc, local_today):
+        monkeypatch.setattr(stop_hook, "_LOCAL_TZ",
+                            real_datetime.timezone(real_datetime.timedelta(hours=hours)))
+        _freeze_tickets_date(monkeypatch, *local_today)
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at=claimed_utc)
+        assert [s["id"] for s in stop_hook.stale_claims(repo, "agent-1")] == ["CC-T001"]
+
+    def test_next_local_day_update_counts_after_a_midnight_claim(self, repo, monkeypatch):
+        monkeypatch.setattr(stop_hook, "_LOCAL_TZ",
+                            real_datetime.timezone(real_datetime.timedelta(hours=5)))
+        _freeze_tickets_date(monkeypatch, 2026, 9, 17)
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16T22:30:00Z")
+        _freeze_tickets_date(monkeypatch, 2026, 9, 18)
+        tickets.move(repo, "CC-T001", "in-progress")
+        assert stop_hook.stale_claims(repo, "agent-1") == []
+
+    def test_comment_stamped_in_utc_after_a_midnight_claim_clears(self, repo, monkeypatch):
+        monkeypatch.setattr(stop_hook, "_LOCAL_TZ",
+                            real_datetime.timezone(real_datetime.timedelta(hours=5)))
+        _freeze_tickets_date(monkeypatch, 2026, 9, 17)
+        _create(repo)
+        tickets.set_claim(repo, "CC-T001", "agent-1", claimed_at="2026-09-16T22:30:00Z")
+        monkeypatch.setattr(trackers, "_now_iso", lambda: "2026-09-16T23:10:00Z")
+        trackers.add(repo, "CC-T001", "comments", "on it", author="agent-1")
+        assert stop_hook.stale_claims(repo, "agent-1") == []

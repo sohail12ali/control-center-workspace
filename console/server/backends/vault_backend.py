@@ -28,9 +28,11 @@ source of ticket artifacts and this SPI's `create`/`move`/`set` — not replace
 this lane. (plan.md line 176.)
 """
 
-from datetime import date
+from datetime import datetime, timezone
 
 from . import base
+from .. import run_config
+from .. import runs as runs_mod
 from .. import tickets as tickets_mod
 from .. import trackers as trackers_mod
 
@@ -61,20 +63,37 @@ class VaultBackend(base.Backend):
         `claimed_by` field 1d-1 added. An empty result is a plain empty list,
         never an error (Edge Case §8)."""
         out = []
-        for ticket in tickets_mod.list_tickets(repo_root, kind=kind, stage=stage, owner=owner):
+        listed = tickets_mod.list_tickets(repo_root, kind=kind, stage=stage, owner=owner)
+        claimed = any(t.get("claimed_by") for t in listed)
+        all_runs = runs_mod.list_runs(repo_root) if claimed else []  # once (T-020 FR-21)
+        cfg = run_config.claims_cfg(repo_root) if claimed else None
+        now = datetime.now(timezone.utc)
+        for ticket in listed:
+            verdict = None
             if ticket.get("claimed_by"):
-                continue
+                mine = [r for r in all_runs if r.get("ticket") == ticket["id"]
+                        or r.get("id") == ticket.get("claimed_run")]
+                try:
+                    verdict = tickets_mod.evaluate_claim(ticket, mine, now, cfg)
+                except Exception:  # noqa: BLE001 - unknown stays held
+                    continue
+                if verdict["state"] != "stale":
+                    continue
             if trackers_mod.blockers(repo_root, ticket["id"]):
                 continue
-            out.append(ticket)
+            out.append(dict(ticket, claim=verdict) if verdict else ticket)
         return out
 
-    def claim(self, repo_root, ticket_id, claimed_by):
+    def claim(self, repo_root, ticket_id, claimed_by, claimed_run="", now=None, info=None):
         """Thin delegation to `tickets.set_claim` (2b scope). Race-safety
         against two concurrent claims lives in `set_claim` itself (3a-5);
-        a conflicting claim propagates as `tickets.ClaimConflictError`."""
+        a conflicting claim propagates as `tickets.ClaimConflictError`. A stale
+        claim is adopted (T-020 FR-21) and described in `info`."""
+        stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         return tickets_mod.set_claim(repo_root, ticket_id, claimed_by,
-                                     claimed_at=date.today().isoformat())
+                                     claimed_at=stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                     claimed_run=claimed_run or None,
+                                     adopt_stale=True, now=stamp, info=info)
 
 
 #: The one adapter this ticket registers (2b-3, BR-4). A module-level

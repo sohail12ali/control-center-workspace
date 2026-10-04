@@ -25,6 +25,8 @@ from . import kickoff as kickoff_mod
 from . import model_catalog
 from . import native_bridge
 from . import pr_state as pr_state_mod
+from . import run_config as run_config_mod
+from . import run_watchdog as run_watchdog_mod
 from . import runs as runs_mod
 from . import telemetry as telemetry_mod
 from . import tickets as tickets_mod
@@ -72,6 +74,28 @@ def plan_status(repo_root, ticket=None):
 def harness_lint_verb(repo_root, ticket=None):
     findings, summary = harness_lint.lint(repo_root)
     return {"summary": summary, "findings": [f.as_dict() for f in findings]}
+
+
+def evals_replay(repo_root, ticket=None, scenario="", agent="", skill="", changed=""):
+    """Read-only replay. `changed` arrives as a string from MCP and `verb run`."""
+    import sys
+
+    from evals import runner
+
+    flag = str(changed).lower() in ("1", "true", "yes", "on")
+    ids = [scenario] if str(scenario or "").strip() else None
+    record = runner.replay(
+        repo_root, persist=False, ids=ids, agent=str(agent or ""),
+        skill=str(skill or ""), changed=flag)
+    if record.get("exit") == 2:
+        sys.exit(2)
+    return {
+        "exit": record.get("exit", 1),
+        "verdicts": {row["scenario"]: row["verdict"]
+                     for row in record.get("scenarios") or []},
+        "text": record.get("text") or "",
+        "message": record.get("message") or "",
+    }
 
 
 def telemetry_summary(repo_root, ticket=None, by="ticket"):
@@ -408,6 +432,29 @@ def run_show(repo_root, ticket=None, run_id=""):
     return _enrich_run(repo_root, rec)
 
 
+def run_watch(repo_root, ticket=None):
+    """One watchdog pass (T-020 FR-18): the very `run_watchdog.tick` the thread
+    runs, so a schedule or a person can drive it too. `{busy: true}` when the
+    thread's tick is in flight. A process that holds no live session registry
+    (the CLI, stdio MCP) judges nothing: every Run would look session-less, so
+    it skips instead of marking live chats `interrupted`."""
+    if not agent_manager.owns_registry():
+        return {"ok": True, "skipped": "no live session registry in this process",
+                "synced": 0, "suspicious": 0, "killed": 0, "retried": 0, "errors": 0,
+                "last_tick": run_watchdog_mod.last_tick()["last_tick"]}
+    out = run_watchdog_mod.tick(repo_root)
+    if out.get("busy"):
+        return {"ok": True, "busy": True, "synced": 0, "suspicious": 0, "killed": 0,
+                "retried": 0, "errors": 0, "last_tick": run_watchdog_mod.last_tick()["last_tick"]}
+    return dict(out, ok=True)
+
+
+def run_retry(repo_root, ticket=None, run_id=""):
+    """Retry an ended Run by hand (T-020 FR-18): a new Run, `retry_of` set,
+    sent into the same chat by the next watchdog tick. Logic: `run_watchdog`."""
+    return run_watchdog_mod.manual_retry(repo_root, run_id)
+
+
 def ticket_move(repo_root, ticket=None, stage=""):
     """Move a ticket to a board lane, through the Backend SPI (T-017 FR-5,
     2b-4) rather than calling `tickets.move` directly — invalid lanes still
@@ -416,9 +463,68 @@ def ticket_move(repo_root, ticket=None, stage=""):
     `ticket://{ticket}` learns of the move — the one existing mutating verb
     this phase wires in; the new `ready`/`claim`/`comment` verbs land in
     Phase 3 and will publish the same way."""
-    result = backends_mod.default_backend().move(repo_root, ticket, stage)
-    bus_mod.default().publish("ticket://%s" % ticket)
+    from . import ticket_gate  # T-021 FR-7: a move into `blocked` needs a next action
+    result = ticket_gate.guarded_move(repo_root, ticket, stage)
+    if result.get("ok") is not False:  # a refusal changed nothing
+        bus_mod.default().publish("ticket://%s" % ticket)
     return result
+
+
+def ticket_liveness(repo_root, ticket=None):
+    """Read-only liveness (T-021 FR-6): one ticket when given, else every
+    `tickets`-kind ticket. Findings are warnings and never block anything."""
+    from . import ticket_liveness as liveness_mod
+    if ticket:
+        return liveness_mod.evaluate(repo_root, ticket)
+    return liveness_mod.scan(repo_root)
+
+
+def close_check(repo_root, ticket=None):
+    """Read-only close verdict (T-021 FR-8): blocks, warnings, evidence counts.
+    Existence, not truth. Logic and the fail-closed rule live in `close_check`."""
+    from . import close_check as close_check_mod
+    return close_check_mod.evaluate(repo_root, ticket)
+
+
+def close_override(repo_root, ticket=None, reason=""):
+    """Close despite blocks (T-021 FR-10). A person supplies `reason` (at least
+    10 characters). Moves to the board's first terminal lane via `tickets.move`,
+    which skips the close gate. Refuses a clean check, an already-terminal
+    ticket, and any kind other than `tickets`."""
+    from . import boards as boards_mod
+    from . import close_check as close_check_mod
+    reason = (reason or "").strip()
+    if len(reason) < 10:
+        return {"ok": False, "error": "reason must be at least 10 characters"}
+    record = tickets_mod.load(repo_root, ticket)
+    if record is None:
+        return {"ok": False, "error": "no ticket.toml for %s" % ticket}
+    kind = record.get("kind") or "tickets"
+    if kind != "tickets":
+        return {"ok": False, "error": "close-override applies to tickets only, not %s" % kind}
+    lanes = boards_mod.lanes_for(kind, repo_root)
+    current = next((lane for lane in lanes if lane["id"] == record.get("stage")), None)
+    if current and current.get("terminal"):
+        return {"ok": False, "error": "%s is already in terminal lane %s" % (ticket, current["id"])}
+    terminal = next((lane for lane in lanes if lane.get("terminal")), None)
+    if terminal is None:
+        return {"ok": False, "error": "board %s has no terminal lane" % kind}
+    verdict = close_check_mod.evaluate(repo_root, ticket)
+    if verdict.get("ok"):
+        return {"ok": False, "error": "no override needed", "ticket": ticket}
+    moved = tickets_mod.move(repo_root, ticket, terminal["id"])
+    codes = [b.get("code") for b in verdict.get("blocks") or []]
+    note = "Closed by override: %s (blocks: %s)" % (reason, ", ".join(codes) or "none")
+    ticket_comment(repo_root, ticket, text=note, author="close-override")
+    audit.record(repo_root, "ticket.close.override", target=ticket, detail={
+        "reason": reason,
+        "blocks": codes,
+        "evidence": verdict.get("evidence") or {},
+        "warnings": [w.get("code") for w in verdict.get("warnings") or []],
+    })
+    bus_mod.default().publish("ticket://%s" % ticket)
+    return {"ok": True, "stage": moved.get("stage"), "ticket": ticket,
+            "blocks": codes, "reason": reason}
 
 
 def ticket_ready(repo_root, ticket=None, kind=None, stage=None, owner=None):
@@ -434,7 +540,7 @@ def ticket_ready(repo_root, ticket=None, kind=None, stage=None, owner=None):
     return {"count": len(items), "tickets": items}
 
 
-def ticket_claim(repo_root, ticket=None, agent=""):
+def ticket_claim(repo_root, ticket=None, agent="", run=""):
     """Claim a ticket for an agent identity (T-017 FR-8). Delegates to the
     Backend SPI's `claim`, which is `tickets.set_claim` underneath —
     race-safe (3a-5) via one lock-guarded read-modify-write, so two
@@ -443,19 +549,101 @@ def ticket_claim(repo_root, ticket=None, agent=""):
     (Edge Case §8); re-claiming with the same identity is a no-op success
     that refreshes `claimed_at` (3a-6). Audited either way (NFR-5) and
     published to the MCP change-notification bus on success, same pattern as
-    `ticket_move`."""
+    `ticket_move`. `run` links the claim to the Run doing the work (T-020
+    FR-19): an unknown id is refused, and with none given the sole ACTIVE chat
+    Run on the ticket is linked (zero or several link nothing)."""
     agent = (agent or "").strip()
     if not agent:
         return {"ok": False, "error": "claim needs an agent identity — pass agent=<id>"}
+    run = str(run or "").strip()
+    if run and runs_mod.get(repo_root, run) is None:
+        return {"ok": False, "error": "no run %s to link the claim to" % run}
+    if not run:
+        live = [r["id"] for r in runs_mod.list_runs(repo_root, ticket=ticket)
+                if r["executor"] == "chat" and r["state"] in runs_mod.ACTIVE]
+        run = live[0] if len(live) == 1 else ""
+    info = {}
     try:
-        result = backends_mod.default_backend().claim(repo_root, ticket, agent)
+        result = backends_mod.default_backend().claim(repo_root, ticket, agent,
+                                                      claimed_run=run, info=info)
     except tickets_mod.ClaimConflictError as exc:
         audit.record(repo_root, "ticket.claim", target=ticket,
                      detail={"agent": agent}, outcome="error: %s" % exc)
         return {"ok": False, "error": str(exc)}
-    audit.record(repo_root, "ticket.claim", target=ticket, detail={"agent": agent})
+    if info:  # a stale claim was adopted (T-020 FR-21)
+        audit.record(repo_root, "ticket.claim.adopt", target=ticket,
+                     detail=dict(info, agent=agent))
+        ticket_comment(repo_root, ticket, author=agent, text=(
+            "Adopted a stale claim from %s (%s, claimed %s)." % (
+                info["previous_holder"], info["basis"],
+                info["previous_claimed_at"] or "at an unknown time")))
+    else:
+        audit.record(repo_root, "ticket.claim", target=ticket, detail={"agent": agent})
     bus_mod.default().publish("ticket://%s" % ticket)
     return {"ok": True, "ticket": result}
+
+
+def _truthy(value):
+    return value is True or str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def ticket_claim_release(repo_root, ticket=None, agent="", force="", reason=""):
+    """Release a claim (T-020 FR-22, BR-13). The holder releases its own,
+    anyone a stale one; another identity's held claim needs `force` plus a
+    `reason` of at least 10 characters. Every outcome is audited with the
+    previous holder, basis, caller and reason; a forced release also comments."""
+    agent = (agent or "").strip()
+    if not agent:
+        return {"ok": False, "error": "claim-release needs an agent identity - pass agent=<id>"}
+    force, reason = _truthy(force), (reason or "").strip()
+    out = tickets_mod.release_claim(repo_root, ticket, agent, force=force, reason=reason)
+    detail = {k: out[k] for k in ("previous_holder", "previous_claimed_at",
+                                  "previous_claimed_run", "basis") if k in out}
+    detail.update(agent=agent, reason=reason)
+    action = ("ticket.claim.force_release" if (out["forced"] if out["ok"] else force)
+              else "ticket.claim.release")
+    audit.record(repo_root, action, target=ticket, detail=detail,
+                 outcome="ok" if out["ok"] else "error: %s" % out["error"])
+    if not out["ok"]:
+        return {"ok": False, "error": out["error"]}
+    if out["released"]:
+        if out["forced"]:
+            ticket_comment(repo_root, ticket, author=agent, text=(
+                "Force-released the claim held by %s: %s" % (out["previous_holder"], reason)))
+        bus_mod.default().publish("ticket://%s" % ticket)
+    return {k: out[k] for k in out if k != "error"}
+
+
+def ticket_review_round(repo_root, ticket=None, outcome="", agent=""):
+    """Record one review outcome (T-020 FR-24). On the single transition into
+    escalation it opens one critical question and a comment through the
+    existing tracker handlers, outside the ticket lock, and moves no lane.
+    Every call is audited with the caller identity, refusals included."""
+    outcome, agent = (outcome or "").strip(), (agent or "").strip()
+    detail = {"outcome": outcome, "agent": agent}
+    try:
+        cfg = run_config_mod.review_cfg(repo_root)
+        out = tickets_mod.record_review(repo_root, ticket, outcome, cfg["max_rounds"])
+    except ValueError as exc:
+        audit.record(repo_root, "ticket.review", target=ticket, detail=detail,
+                     outcome="error: %s" % exc)
+        return {"ok": False, "error": str(exc)}
+    detail.update(rounds=out["rounds"], escalated=out["escalated"])
+    if not out["ok"]:
+        msg = ("review already escalated at %d rounds; a human decision "
+               "(outcome=human_decision) is needed" % out["rounds"])
+        audit.record(repo_root, "ticket.review", target=ticket, detail=detail,
+                     outcome="error: %s" % msg)
+        return {"ok": False, "escalated": True, "rounds": out["rounds"], "error": msg}
+    audit.record(repo_root, "ticket.review", target=ticket, detail=detail)
+    if out["escalate"]:
+        text = ("Review loop escalated after %d rounds of changes requested; "
+                "a human must decide how to proceed." % out["rounds"])
+        tracker_add(repo_root, ticket, kind="questions", text=text, type="review",
+                    priority="critical", raised_by="review-loop")
+        ticket_comment(repo_root, ticket, text=text, author="review-loop")
+    bus_mod.default().publish("ticket://%s" % ticket)
+    return out
 
 
 def ticket_comment(repo_root, ticket=None, text="", author=""):
@@ -527,10 +715,13 @@ def ticket_set(repo_root, ticket=None, field="", value=""):
     return tickets_mod.set_field(repo_root, ticket, field, value)
 
 
-def tracker_add(repo_root, ticket=None, kind="", text="", type="", priority=""):
+def tracker_add(repo_root, ticket=None, kind="", text="", type="", priority="",
+                raised_by=""):
     """Add a questions/bugs/todos item. Extra fields stay optional so the
     schema MCP derives from this signature stays small."""
     extra = {}
+    if raised_by:
+        extra["raised_by"] = raised_by
     if type:
         extra["type"] = type
     if priority:

@@ -1,0 +1,22 @@
+[ticket]
+id = "T-021"
+title = "Honest close: enforce evidence, liveness and skill hygiene instead of asking for them"
+kind = "tickets"
+stage = "in-progress"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-01"
+updated = "2026-10-03"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+branch = ""
+pr_url = ""
+pr_state = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false

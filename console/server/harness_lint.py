@@ -33,6 +33,11 @@ WARN = "warn"
 SKILLS_REL = os.path.join(".claude", "skills")
 AGENTS_REL = os.path.join(".claude", "agents")
 
+# A skill description is the text a model matches against when choosing to load it;
+# past this length it stops being a trigger and becomes a summary. A convention
+# (WARN), not a rule: use "use when / not when" phrasing and keep it short.
+MAX_DESCRIPTION_CHARS = 300
+
 # `.claude/skills/<id>/<path>` and `.claude/agents/<name>.md`, in any of the
 # quoting styles the docs use (backticks, parentheses, bare). The second group
 # spans slashes on purpose: `template/scripts/New-FromTemplate.ps1` is one
@@ -260,7 +265,13 @@ def lint(repo_root):
                 "directory has neither a SKILL.md nor any .md content — "
                 "nothing can load it and nothing can link to it"))
             continue
-        _check_frontmatter(repo_root, path, skill_id, "directory name", findings)
+        data = _check_frontmatter(repo_root, path, skill_id, "directory name", findings)
+        description = (data or {}).get("description", "")
+        if len(description) > MAX_DESCRIPTION_CHARS:
+            findings.append(Finding(
+                WARN, "description-too-long", _rel(repo_root, path),
+                "description is %d chars (convention: <= %d); keep the trigger short, "
+                "e.g. \"use when ... / not when ...\"" % (len(description), MAX_DESCRIPTION_CHARS)))
         for root, _dirs, files in os.walk(os.path.join(repo_root, SKILLS_REL, skill_id)):
             for filename in files:
                 if filename.endswith(".md"):
@@ -301,19 +312,22 @@ _COUNT_RE = re.compile(r"(\d+)\s+(skills|agents)\b")
 
 
 def _check_declared_counts(repo_root, skills, agents):
-    """CLAUDE.md states its own roster sizes ("7 agents · 39 skills"). Those
-    numbers are read by a model as fact, so drift is worth flagging — as a
-    warning, since prose may legitimately count something else."""
-    path = os.path.join(repo_root, "CLAUDE.md")
-    if not os.path.isfile(path):
-        return []
+    """CLAUDE.md and README.md state roster sizes ("7 agents · 39 skills").
+    Those numbers are read by a model as fact, so drift is worth flagging — as
+    a warning, since prose may legitimately count something else. Only the
+    number is checked: whether the sentence around it is still true (semantic
+    drift) cannot be detected deterministically. A missing file is skipped."""
     actual = {"skills": len(skills), "agents": len(agents)}
     out = []
-    for count, noun in set(_COUNT_RE.findall(_read(path))):
-        if int(count) != actual[noun]:
-            out.append(Finding(
-                WARN, "stale-count", "CLAUDE.md",
-                "says %s %s, but %d exist on disk" % (count, noun, actual[noun])))
+    for name in ("CLAUDE.md", "README.md"):
+        path = os.path.join(repo_root, name)
+        if not os.path.isfile(path):
+            continue
+        for count, noun in sorted(set(_COUNT_RE.findall(_read(path)))):
+            if int(count) != actual[noun]:
+                out.append(Finding(
+                    WARN, "stale-count", name,
+                    "says %s %s, but %d exist on disk" % (count, noun, actual[noun])))
     return out
 
 

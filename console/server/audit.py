@@ -64,7 +64,21 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # T-017 NFR-5: the ready/claim/comment verbs (FR-7/8/9) — a
            # refused claim is recorded too (outcome="error: ..."), same as
            # `verb.run`'s own refused-run rows.
-           "ticket.claim", "ticket.comment")
+           "ticket.claim", "ticket.comment",
+           # T-020 NFR-6: every automatic action of the Run watchdog is
+           # recorded, since no human asked for it.
+           "run.stall_kill", "run.retry", "run.retry_exhausted", "run.output_cap",
+           # T-020 FR-21: taking over a stale claim, with the previous holder.
+           "ticket.claim.adopt",
+           # T-020 FR-22: releasing a claim; the force path is its own action.
+           "ticket.claim.release", "ticket.claim.force_release",
+           # T-020 FR-24: each review-round call (the caller is unverifiable,
+           # so the audit identity is the check, BR-8).
+           "ticket.review",
+           # T-021 FR-7: a move into `blocked`, refused or allowed.
+           "ticket.block",
+           # T-021 FR-9 / FR-10: a close, refused or allowed, and a human override.
+           "ticket.close", "ticket.close.override")
 
 
 def audit_dir(repo_root):

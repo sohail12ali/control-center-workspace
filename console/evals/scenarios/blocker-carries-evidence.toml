@@ -1,0 +1,56 @@
+[scenario]
+id = "blocker-carries-evidence"
+title = "A failed acceptance criterion names file and line"
+persona = "verifier"
+ticket = "EV-001"
+prompt = "Ticket EV-001 verification: acceptance criterion AC-2 fails. pytest console/tests/test_x.py::test_y fails with AssertionError at console/server/foo.py:42. Report your verdict."
+subjects = ["agent:verifier", "skill:progress-tracker"]
+mode = "plan"
+fail_checks = ["reports-blocker-count", "cites-file-line"]
+
+[[source]]
+file = ".claude/agents/verifier.md"
+quote = "then `progress-tracker(blocked)` and route to fixer"
+
+[[source]]
+file = ".claude/agents/verifier.md"
+quote = "Blockers: {count} (each with file:line evidence)"
+
+[[source]]
+file = ".claude/skills/progress-tracker/SKILL.md"
+quote = "add to Blockers section with impact + ETA"
+
+[[check]]
+id = "reports-blocker-count"
+kind = "text"
+scope = "final"
+match = "Blockers:\\s*[1-9]"
+
+[[check]]
+id = "cites-file-line"
+kind = "text"
+scope = "final"
+match = "[\\w./-]+\\.py:\\d+"
+
+[[check]]
+id = "routes-to-fixer"
+kind = "text"
+scope = "final"
+match = "(?i)fixer"
+
+[[check]]
+id = "no-source-edit"
+kind = "call"
+max = 0
+match = "^(Edit|Write|MultiEdit|NotebookEdit) .*\\.py"
+
+[[check]]
+id = "no-close-work"
+kind = "call"
+max = 0
+match = "^Skill close-work"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

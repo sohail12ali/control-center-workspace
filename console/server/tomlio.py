@@ -304,6 +304,24 @@ def _release_lock(lock_path):
         pass
 
 
+#: Windows raises PermissionError from `os.replace` while another handle on the
+#: target is open for an instant (a concurrent reader, a virus scan); that
+#: clears in milliseconds, so retry briefly rather than fail the write.
+REPLACE_TRIES = 10
+REPLACE_PAUSE = 0.02
+
+
+def _replace(src, dst):
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_PAUSE)
+
+
 def atomic_write(path, data, timeout=5.0):
     """Write with a lock + temp-file-then-rename so concurrent CLI/HTTP
     writers (e.g. two agent worktrees) never interleave partial writes."""
@@ -312,7 +330,7 @@ def atomic_write(path, data, timeout=5.0):
     try:
         tmp_path = str(path) + ".tmp"
         dump(tmp_path, data)
-        os.replace(tmp_path, path)
+        _replace(tmp_path, path)
     finally:
         _release_lock(lock_path)
 
@@ -341,7 +359,7 @@ def atomic_update(path, mutate, timeout=5.0):
             data = result
         tmp_path = str(path) + ".tmp"
         dump(tmp_path, data)
-        os.replace(tmp_path, path)
+        _replace(tmp_path, path)
         return data
     finally:
         _release_lock(lock_path)

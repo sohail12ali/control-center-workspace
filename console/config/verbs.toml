@@ -70,6 +70,12 @@ hint = "Frontmatter, dead .claude paths, orphan skills, stale roster counts"
 handler = "verb_handlers.harness_lint_verb"
 
 [[verb]]
+id = "evals-replay"
+label = "Eval replay"
+hint = "Replay committed eval fixtures. Read-only; does not spawn a model."
+handler = "verb_handlers.evals_replay"
+
+[[verb]]
 id = "telemetry"
 label = "Token and cost totals"
 hint = "Per ticket by default; pass by=model|skill|backend|day to regroup"
@@ -113,6 +119,22 @@ label = "Show a run"
 hint = "One Run by run_id"
 handler = "verb_handlers.run_show"
 
+# T-020 FR-18: the Run watchdog tick and a manual retry. `run-watch` runs the
+# same tick as the server thread, so it can be scheduled in schedules.toml.
+[[verb]]
+id = "run-watch"
+label = "Watch runs"
+hint = "One reconcile + stall-watchdog + due-retry pass; reports counts, last_tick, errors"
+handler = "verb_handlers.run_watch"
+needs_confirm = true
+
+[[verb]]
+id = "run-retry"
+label = "Retry a run"
+hint = "New Run retrying a failed, timed_out or interrupted run_id"
+handler = "verb_handlers.run_retry"
+needs_confirm = true
+
 [[verb]]
 id = "ticket-move"
 label = "Move ticket lane"
@@ -136,6 +158,27 @@ id = "claim"
 label = "Claim ticket"
 hint = "Set claimed_by/claimed_at for an agent identity (pass agent=<id>); refuses a conflicting claim by name"
 handler = "verb_handlers.ticket_claim"
+needs_ticket = true
+needs_confirm = true
+
+# T-020 FR-22: the holder releases its own claim, anyone a stale one; another
+# identity's held claim needs force=true and a reason of 10+ characters.
+[[verb]]
+id = "claim-release"
+label = "Release claim"
+hint = "Release a claim (pass agent=<id>); a held claim of another identity needs force=true and reason= (10+ chars), always audited"
+handler = "verb_handlers.ticket_claim_release"
+needs_ticket = true
+needs_confirm = true
+
+# T-020 FR-24: the verifier/fixer review loop counter. The third consecutive
+# changes_requested escalates with one critical question; only approved and
+# human_decision reset it (the verb cannot verify the caller; audit is the check).
+[[verb]]
+id = "review-round"
+label = "Record review round"
+hint = "Record a review outcome (outcome=changes_requested|approved|human_decision, optional agent=); the third changes_requested escalates to a human"
+handler = "verb_handlers.ticket_review_round"
 needs_ticket = true
 needs_confirm = true
 
@@ -272,4 +315,28 @@ id = "desktop-clipboard-write"
 label = "Write clipboard"
 hint = "Put text on the clipboard"
 handler = "verb_handlers.desktop_clipboard_write"
+needs_confirm = true
+
+# T-021 FR-6: read-only liveness of active tickets (outside harness lint; WARN findings).
+[[verb]]
+id = "ticket-liveness"
+label = "Ticket liveness"
+hint = "Does each active ticket have a live Run, held claim or pending question? ticket= evaluates one, else scans all; findings are warnings"
+handler = "verb_handlers.ticket_liveness"
+
+# T-021 FR-8: read-only evidence verdict for closing a ticket. Existence, not truth.
+[[verb]]
+id = "close-check"
+label = "Close check"
+hint = "Read-only verdict on whether a ticket can close: blocks on empty, phantom or non-pass evidence, open critical items, a stale claim, an escalated review, open plan tasks. Evidence is checked for existence, not truth"
+handler = "verb_handlers.close_check"
+needs_ticket = true
+
+# T-021 FR-10: a person closes despite blocks. Agents do not call this.
+[[verb]]
+id = "close-override"
+label = "Close override"
+hint = "Move a tickets ticket to the first terminal lane despite close-check blocks. reason= is required (at least 10 characters) and is recorded. Refuses when the check is already clean."
+handler = "verb_handlers.close_override"
+needs_ticket = true
 needs_confirm = true

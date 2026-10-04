@@ -194,6 +194,24 @@ class Approvals:
         p.event.set()
         return p
 
+    def pending_all(self):
+        """Every still-unanswered approval, across chats. Read-only."""
+        with self._lock:
+            return [{"key": p.key, "tool": p.tool, "chat": p.chat,
+                     "tool_use_id": p.tool_use_id}
+                    for p in self._pending.values() if not p.event.is_set()]
+
+    def pending_for(self, chat):
+        """Questions `chat` has parked right now, as plain dicts (read-only).
+
+        An answered question is excluded even before its parked thread has
+        woken to remove it, so "empty after decide or forget" holds at once.
+        """
+        with self._lock:
+            return [{"key": p.key, "tool": p.tool, "tool_use_id": p.tool_use_id}
+                    for p in self._pending.values()
+                    if p.chat == chat and not p.event.is_set()]
+
     def forget(self, chat):
         """Deny everything a chat still has in flight, so its hook processes
         are not left blocked when the session ends."""

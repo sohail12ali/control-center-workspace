@@ -17,8 +17,11 @@
     rows.forEach(function (r) {
       box.appendChild(C.el("div", {
         class: "lrow clickable",
-        onclick: function () { api.go("board:" + r.kind); },
-        title: "Open the " + r.kind + " board",
+        onclick: function () {
+          if (r.href === "agents") api.go("agents");
+          else api.go("board:" + r.kind);
+        },
+        title: r.href === "agents" ? "Open Agents" : "Open the " + r.kind + " board",
       }, [
         badgeFn(r),
         C.el("span", { class: "ltext" }, [
@@ -270,17 +273,43 @@
         attnGroup(a.unowned, "Nobody owns these", function () {
           return C.el("span", { class: "chip" }, [C.icon("user"), "—"]);
         }, api),
+        attnGroup(a.questions || [], "Questions waiting", function () {
+          return C.el("span", { class: "chip warn" }, [C.icon("info"), "?"]);
+        }, api),
+        attnGroup(a.approvals || [], "Approvals", function () {
+          return C.el("span", { class: "chip danger" }, [C.icon("alert"), "!"]);
+        }, api),
+        attnGroup(a.runs || [], "Runs that need a look", function (r) {
+          return C.el("span", { class: "chip danger", text: r.stage });
+        }, api),
       ].filter(Boolean);
-      var attnTotal = a.counts.blocked + a.counts.stale + a.counts.unowned;
-      grid.appendChild(C.el("div", { class: "span2" }, [
-        C.panel(
+      var counts = a.counts;
+      var attnTotal = counts.blocked + counts.stale + counts.unowned
+        + (counts.questions || 0) + (counts.approvals || 0) + (counts.runs || 0);
+      var attnPanel = C.panel(
           "Needs attention",
           attnKids.length ? attnKids
-                          : C.empty("Nothing needs attention", "No blocked, stale or unowned work.", "check"),
+                          : C.empty("Nothing needs attention",
+                                    "No blocked work, questions, approvals, or failed runs.", "check"),
           C.el("span", { class: "chip" + (attnTotal ? " warn" : " zero"), text: String(attnTotal) }),
           { icon: "alert", tone: attnTotal ? "warn" : null }
-        ),
-      ]));
+        );
+      attnPanel.tabIndex = 0;
+      attnPanel.addEventListener("keydown", function (e) {
+        if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+        var rows = attnPanel.querySelectorAll(".lrow");
+        if (!rows.length) return;
+        var idx = 0;
+        rows.forEach(function (r, i) { if (r.classList.contains("kbd")) idx = i; });
+        if (e.key === "j" || e.key === "ArrowDown") idx = Math.min(rows.length - 1, idx + 1);
+        else if (e.key === "k" || e.key === "ArrowUp") idx = Math.max(0, idx - 1);
+        else if (e.key === "Enter") { rows[idx].click(); e.preventDefault(); return; }
+        else return;
+        rows.forEach(function (r, i) { r.classList.toggle("kbd", i === idx); });
+        if (rows[idx].scrollIntoView) rows[idx].scrollIntoView({ block: "nearest" });
+        e.preventDefault();
+      });
+      grid.appendChild(C.el("div", { class: "span2" }, [attnPanel]));
 
       /* -- flow, one row per board -- */
       var flowKids = [];

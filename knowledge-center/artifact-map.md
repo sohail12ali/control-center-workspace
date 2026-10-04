@@ -7,6 +7,9 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 - [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
 - [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Verify — Sohail Ali — 2026-09-11
 - [[T-019-summary]] — Make hands-free listening actually work — Open — Sohail Ali — 2026-09-16
+- [[T-020-summary]] — Reliable Runs: classify failures, catch stalls, retry with caps, reap stale claims — Verify — Sohail Ali — 2026-10-03
+- [[T-021-summary]] — Honest close: enforce evidence, liveness and skill hygiene instead of asking for them — Open — Sohail Ali — 2026-10-01
+- [[T-022-summary]] — Agent evals: golden-prompt checks for roles and skills — In Progress — Sohail Ali — 2026-10-01
 
 ## Blocked
 

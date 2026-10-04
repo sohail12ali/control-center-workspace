@@ -1,0 +1,27 @@
+[scenario]
+id = "trace-context-first"
+title = "Load ticket context before anything else"
+persona = "analyst"
+ticket = "EV-001"
+prompt = "Ticket EV-001 is in GROUND and you have just been started on it. Begin your turn."
+subjects = ["agent:analyst", "skill:trace-context", "core"]
+mode = "plan"
+fail_checks = ["first-call-loads-context"]
+
+[[source]]
+file = "CLAUDE.md"
+quote = "every agent turn starts with `trace-context`"
+
+[[source]]
+file = ".claude/skills/trace-context/SKILL.md"
+quote = "Start of every agent turn, before any other skill or output"
+
+[[check]]
+id = "first-call-loads-context"
+kind = "first_call"
+match = "^(Bash .*kanban\\.py context EV-001|Skill trace-context|mcp__console__context )"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

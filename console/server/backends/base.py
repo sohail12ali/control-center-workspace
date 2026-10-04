@@ -77,6 +77,6 @@ class Backend(ABC):
         """Tickets that are unblocked and unclaimed (T-017 FR-7, decision-log a6)."""
 
     @abstractmethod
-    def claim(self, repo_root, ticket_id, claimed_by):
+    def claim(self, repo_root, ticket_id, claimed_by, claimed_run="", now=None, info=None):
         """Claim a ticket for `claimed_by`, race-safe (T-017 FR-8). Mirrors
-        `tickets.set_claim`."""
+        `tickets.set_claim`; stamps `claimed_at` in UTC from `now` (T-020 FR-19)."""
