@@ -5,14 +5,18 @@
    the whole reason this file exists: repainting a long transcript on every
    delta drops frames and destroys text selection mid-read.
 
-   Thinking blocks and tool calls are collapsed by default. They matter when
-   something goes wrong and are noise when it doesn't, so they are present but
-   folded, with the summary carrying enough (tool name, target file) to decide
-   whether to open one. */
+   Thinking blocks and successful tool calls are collapsed by default. A tool
+   that errored stays open. Consecutive tool calls fold into one group.
+   Nice is that view; Raw is the item JSON. A live session only mounts the
+   latest LIVE_CAP items, with a marker for what was trimmed. */
 window.ConsoleChatRender = (function (C, MD) {
   "use strict";
 
   var MAX_RESULT = 4000;
+  /* Live tail only. Ended sessions render the whole transcript. Matches the
+     bound used for a long-running stream: the store still holds every item. */
+  var LIVE_CAP = 1500;
+  var transcriptMode = "nice";
 
   function shortArgs(item) {
     var a = item.args || {};
@@ -33,14 +37,61 @@ window.ConsoleChatRender = (function (C, MD) {
     return "wrench";
   }
 
+  /* A message with its `/skill`, `@agent` and `#file` references marked.
+
+     `/do` typed as prose and `/do` naming a real skill are the same six
+     characters and mean entirely different things — one is text, the other
+     loads a file into the agent's instructions. The wire format already draws
+     that line (`prompt_tokens` rewrites a token ONLY when it resolves), so the
+     transcript should draw it too, using the same rule: highlight what
+     resolved, leave everything else exactly as typed.
+
+     Resolution is checked against the same catalog the picker offers, so a
+     highlighted token is one the server will also have recognised. A `#path`
+     is marked only when the picker confirmed it — a bare string cannot be
+     stat'd from here, and guessing would highlight references that then do
+     nothing. */
+  var TOKEN_RE = /(?:^|\s)([/@#])([A-Za-z0-9][A-Za-z0-9._\-/\\]*)/g;
+  var KINDS = { "/": "skill", "@": "persona", "#": "path" };
+
+  function markRefs(text, catalog) {
+    var frag = document.createDocumentFragment();
+    if (!catalog) { frag.appendChild(document.createTextNode(text)); return frag; }
+    var known = {
+      skill: catalog.skills || [],
+      persona: catalog.personas || [],
+      path: catalog.paths || [],
+    };
+    var last = 0, m;
+    TOKEN_RE.lastIndex = 0;
+    while ((m = TOKEN_RE.exec(text)) !== null) {
+      var kind = KINDS[m[1]];
+      if (known[kind].indexOf(m[2]) === -1) continue;   // prose, left alone
+      // m.index may point at the leading space; the token starts after it.
+      var start = m.index + m[0].length - (m[1] + m[2]).length;
+      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+      frag.appendChild(C.el("span", {
+        class: "ct-ref ref-" + kind,
+        title: kind === "skill" ? "Skill — its instructions are loaded for this message"
+             : kind === "persona" ? "Agent — the role the reply is written from"
+             : "File — named for the agent to read",
+      }, [m[1] + m[2]]));
+      last = start + (m[1] + m[2]).length;
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    return frag;
+  }
+
   /* ---------------- per-item builders ---------------- */
-  function userItem(item) {
+  function userItem(item, opts) {
+    var bubble = C.el("div", { class: "ct-bubble" });
+    bubble.appendChild(markRefs(item.text || "", (opts || {}).catalog));
     var node = C.el("div", { class: "ct-item ct-user" + (item.steered ? " ct-steered" : "") }, [
       C.el("div", { class: "ct-who" }, [
         item.steered ? C.icon("steer") : C.icon("user"),
         C.el("span", { text: item.steered ? "you · steered mid-turn" : "you" }),
       ]),
-      C.el("div", { class: "ct-bubble", text: item.text }),
+      bubble,
     ]);
     if (item.wire) {
       // The composed text differs from what was typed (a backend without
@@ -54,10 +105,25 @@ window.ConsoleChatRender = (function (C, MD) {
     return node;
   }
 
-  function textItem(item) {
+  /* The reply. It carried the class `ct-assistant` and no rule anywhere styled
+     it, so a reply rendered as bare unlabelled text beside a user message that
+     had both an icon and a filled bubble — the two halves of a conversation
+     looking like two different kinds of thing.
+
+     It gets a speaker line like the user's, but NOT a matching bubble: a reply
+     is long-form prose with headings, lists and code, and boxing that hurts
+     the reading. A quiet rule down the side marks the turn instead. */
+  function textItem(item, opts) {
     var body = C.el("div", { class: "ct-md" });
     body.appendChild(MD.render(item.text));
-    var node = C.el("div", { class: "ct-item ct-assistant" }, [body]);
+    var who = (opts || {}).speaker || "";
+    var node = C.el("div", { class: "ct-item ct-assistant" }, [
+      C.el("div", { class: "ct-who" }, [
+        C.icon("brain"),
+        C.el("span", { class: "truncate", text: who || "agent" }),
+      ]),
+      body,
+    ]);
     node._body = body;
     return node;
   }
@@ -83,6 +149,7 @@ window.ConsoleChatRender = (function (C, MD) {
     node._head = head;
     node._body = body;
     paintToolBody(node, item);
+    if (item.result && !item.result.ok) node.open = true;
     return node;
   }
 
@@ -111,6 +178,7 @@ window.ConsoleChatRender = (function (C, MD) {
       if (nm) nm.textContent = item.name || "tool";
       node._head.classList.toggle("bad", !!(item.result && !item.result.ok));
     }
+    if (item.result && !item.result.ok) node.open = true;
   }
 
   /* The one interactive transcript item: a gated tool call parked on a human.
@@ -154,25 +222,106 @@ window.ConsoleChatRender = (function (C, MD) {
       C.el("span", { class: "grow" }),
       btn("Deny", "deny", "btn danger sm"),
     ]);
+    var head = C.el("div", { class: "ct-apphead" }, [
+      C.icon("alert"),
+      C.el("b", { text: "Permission needed" }),
+      C.el("span", { class: "chip warn", text: a.tool || "tool" }),
+    ]);
+    var p = a.preview;
+    if (p && p.kind === "diff") {
+      head.appendChild(C.el("span", { class: "muted ct-diffstat", text:
+        (p.creating ? "new file · " : "") + "+" + p.added + " −" + p.removed }));
+    }
     node.appendChild(C.el("div", { class: "ct-approval pending" }, [
-      C.el("div", { class: "ct-apphead" }, [
-        C.icon("alert"),
-        C.el("b", { text: "Permission needed" }),
-        C.el("span", { class: "chip warn", text: a.tool || "tool" }),
-      ]),
-      C.el("pre", { class: "code ct-args", text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) }),
+      head,
+      previewBody(a),
       row,
     ]));
+  }
+
+  /* What the call would actually do. The old card rendered the tool's
+     arguments as JSON, which for a file write is a wall of escaped text with
+     \n between every line — so it got approved unread, which is a speed bump
+     with a log rather than a gate. The server computes the diff (see
+     server/tool_preview.py); this only paints it. */
+  function previewBody(a) {
+    var p = a.preview;
+    if (!p) {
+      return C.el("pre", { class: "code ct-args",
+        text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) });
+    }
+
+    if (p.kind === "command") {
+      return C.el("div", { class: "ct-preview" }, [
+        C.el("div", { class: "ct-prevhead" }, [
+          C.el("span", { class: "muted", text: "run in " + (p.cwd || ".") }),
+        ]),
+        C.el("pre", { class: "code ct-command", text: p.command }),
+      ]);
+    }
+
+    if (p.kind === "note") {
+      return C.el("div", { class: "ct-preview" }, [
+        C.el("div", { class: "ct-prevhead" }, [
+          C.el("code", { text: p.path || "" }),
+        ]),
+        C.el("div", { class: "errbox", text: p.text }),
+      ]);
+    }
+
+    if (p.kind !== "diff") {
+      return C.el("pre", { class: "code ct-args",
+        text: JSON.stringify(a.input || {}, null, 2).slice(0, 3000) });
+    }
+
+    var body = C.el("div", { class: "ct-diff" });
+    (p.lines || []).forEach(function (line) {
+      var cls = "ct-dl ct-d-" + line.kind;
+      var mark = line.kind === "add" ? "+" : line.kind === "remove" ? "−" :
+                 line.kind === "hunk" ? "" : " ";
+      body.appendChild(C.el("div", { class: cls }, [
+        C.el("span", { class: "ct-dmark", text: mark }),
+        C.el("span", { class: "ct-dtext", text: line.text }),
+      ]));
+    });
+
+    var parts = [
+      C.el("div", { class: "ct-prevhead" }, [
+        C.el("code", { text: p.path || "" }),
+        p.creating ? C.el("span", { class: "chip", text: "new file" }) : null,
+      ]),
+    ];
+    if (p.warning) parts.push(C.el("div", { class: "errbox", text: p.warning }));
+    parts.push(body);
+    if (p.truncated) {
+      parts.push(C.el("div", { class: "muted ct-dnote",
+        text: p.omitted + " more diff line(s) not shown — open the file to see the rest." }));
+    }
+    return C.el("div", { class: "ct-preview" }, parts);
   }
 
   function systemItem(item) {
     if (item.kind === "approval") return approvalItem(item);
     if (item.kind === "turnend") {
+      /* What this turn cost, on the turn itself. A session total in the header
+         cannot answer "which step was expensive", which is the question
+         anybody tuning a workflow is actually asking. */
       var bits = [];
+      if (item.model) bits.push(item.model);
+      var tin = item.tokens_in || 0, tout = item.tokens_out || 0;
+      if (tin || tout) bits.push(C.fmtNum(tin) + " in · " + C.fmtNum(tout) + " out");
       if (item.cost) bits.push("$" + item.cost.toFixed(4));
       if (item.ms) bits.push(Math.round(item.ms / 100) / 10 + "s");
-      return C.el("div", { class: "ct-rule" + (item.is_error ? " bad" : "") }, [
-        C.el("span", { text: item.is_error ? "turn failed" : "turn complete" }),
+
+      var label = item.is_error ? "turn failed" : "turn complete";
+      var tone = item.is_error ? " bad" : "";
+      /* A turn stopped by the round cap looks identical to a finished one
+         unless the reason is shown. An interrupt is a warning, not a failure. */
+      if (item.subtype === "tool_limit") label = "turn stopped at the tool limit";
+      else if (item.subtype === "interrupted") { label = "turn interrupted"; tone = " warn"; }
+
+      return C.el("div", { class: "ct-rule" + tone }, [
+        C.el("span", { text: label }),
         bits.length ? C.el("span", { class: "muted", text: bits.join(" · ") }) : null,
       ]);
     }
@@ -201,19 +350,50 @@ window.ConsoleChatRender = (function (C, MD) {
     ]);
   }
 
-  function build(item) {
-    if (item.role === "user") return userItem(item);
+  function build(item, ctx) {
+    if (item.role === "user") return userItem(item, ctx);
     if (item.role === "system") return systemItem(item);
     if (item.kind === "thinking") return thinkingItem(item);
     if (item.kind === "tool") return toolItem(item);
-    return textItem(item);
+    return textItem(item, ctx);
+  }
+
+  function toolGroupNode(unit) {
+    var head = C.el("summary", { class: "ct-toolhead" });
+    var body = C.el("div", { class: "ct-toolstack" });
+    var node = C.el("details", { class: "ct-item ct-tool ct-toolgroup" }, [head, body]);
+    node._head = head;
+    node._body = body;
+    paintToolGroup(node, unit);
+    return node;
+  }
+
+  function paintToolGroup(node, unit) {
+    var tools = unit.items;
+    var bad = tools.some(function (t) { return t.result && !t.result.ok; });
+    var names = tools.map(function (t) { return t.name || "tool"; });
+    C.clear(node._head);
+    node._head.appendChild(C.icon(bad ? "alert" : "wrench"));
+    node._head.appendChild(C.el("span", { class: "ct-toolname", text: tools.length + " tools" }));
+    node._head.appendChild(C.el("span", { class: "ct-toolarg truncate", text: names.slice(0, 4).join(", ") }));
+    node._head.classList.toggle("bad", bad);
+    if (bad) node.open = true;
+    C.clear(node._body);
+    tools.forEach(function (t) { node._body.appendChild(toolItem(t)); });
   }
 
   /** Attach a renderer to a scroll host for one store. */
   function mount(host, store, opts) {
     opts = opts || {};
-    var nodes = {};
+    var units = [];
     var stick = true;
+    var extra = 0;
+    var bar = null;
+    var marker = null;
+    var rawPre = null;
+    var wasBusy = false;
+    var wasAlive = true;
+    var sawReplay = false;
 
     function atBottom() {
       return host.scrollHeight - host.scrollTop - host.clientHeight < 40;
@@ -224,19 +404,151 @@ window.ConsoleChatRender = (function (C, MD) {
       if (force || stick) host.scrollTop = host.scrollHeight;
     }
 
+    /* Read fresh per item rather than captured once: the model is not known
+       until `session.init` arrives, which is after the first items exist. */
+    function ctx() {
+      var s = store.state;
+      return {
+        catalog: opts.catalog,
+        speaker: s.model || (s.snapshot || {}).model ||
+                 (s.meta || {}).agent || "",
+      };
+    }
+
+    function cap() {
+      if (!store.state.alive) return null;
+      return LIVE_CAP + extra;
+    }
+
+    function windowOf(items) {
+      var limit = cap();
+      if (limit === null || items.length <= limit) return { items: items, trimmed: 0 };
+      return { items: items.slice(items.length - limit), trimmed: items.length - limit };
+    }
+
+    function visibleItems() {
+      var n = 0;
+      units.forEach(function (u) { n += u.kind === "tools" ? u.items.length : 1; });
+      return n;
+    }
+
+    function ensureChrome() {
+      if (!bar) {
+        var nice = C.el("button", { type: "button", text: "Nice" });
+        var raw = C.el("button", { type: "button", text: "Raw" });
+        nice.addEventListener("click", function () { transcriptMode = "nice"; renderAll(); });
+        raw.addEventListener("click", function () { transcriptMode = "raw"; renderAll(); });
+        bar = C.el("div", { class: "ct-viewbar" }, [
+          C.el("div", { class: "seg", role: "group", "aria-label": "Transcript view" }, [nice, raw]),
+        ]);
+        bar._nice = nice;
+        bar._raw = raw;
+      }
+      bar._nice.setAttribute("aria-pressed", String(transcriptMode === "nice"));
+      bar._raw.setAttribute("aria-pressed", String(transcriptMode === "raw"));
+      if (bar.parentNode !== host) host.insertBefore(bar, host.firstChild);
+      if (!marker) {
+        marker = C.el("div", { class: "ct-trim" });
+        marker._note = C.el("span");
+        marker._more = C.el("button", { class: "btn sm", type: "button", text: "Show earlier" });
+        marker._more.addEventListener("click", function () {
+          extra += LIVE_CAP;
+          renderAll();
+        });
+        marker.appendChild(marker._note);
+        marker.appendChild(marker._more);
+      }
+    }
+
+    function paintMarker(trimmed) {
+      ensureChrome();
+      if (!trimmed) {
+        if (marker.parentNode) marker.parentNode.removeChild(marker);
+        return;
+      }
+      marker._note.textContent = "Earlier output trimmed (" + trimmed +
+        "). This live view keeps the latest " + (LIVE_CAP + extra) + ".";
+      if (marker.parentNode !== host) host.insertBefore(marker, bar.nextSibling);
+    }
+
+    function paintRaw(slice) {
+      if (!rawPre) rawPre = C.el("pre", { class: "code ct-raw" });
+      var lines = slice.map(function (it) {
+        try { return JSON.stringify(it); } catch (e) { return String(it && it.kind || ""); }
+      });
+      rawPre.textContent = lines.join("\n");
+      if (rawPre.parentNode !== host) host.appendChild(rawPre);
+    }
+
+    function lastUnit() { return units.length ? units[units.length - 1] : null; }
+
+    function pushUnit(unit) {
+      units.push(unit);
+      host.appendChild(unit.node);
+    }
+
     function addNode(item) {
-      var node = build(item);
-      nodes[item.key] = node;
-      host.appendChild(node);
-      scroll(false);
+      if (item.kind === "tool") {
+        var prev = lastUnit();
+        if (prev && prev.kind === "tools") {
+          prev.items.push(item);
+          paintToolGroup(prev.node, prev);
+          return;
+        }
+        if (prev && prev.kind === "item" && prev.item.kind === "tool") {
+          if (prev.node.parentNode) prev.node.parentNode.removeChild(prev.node);
+          units.pop();
+          var grouped = { kind: "tools", items: [prev.item, item] };
+          grouped.node = toolGroupNode(grouped);
+          pushUnit(grouped);
+          return;
+        }
+      }
+      var unit = { kind: "item", item: item, node: build(item, ctx()) };
+      pushUnit(unit);
+    }
+
+    function trimTail() {
+      var limit = cap();
+      if (limit === null) return 0;
+      while (units.length && visibleItems() > limit) {
+        var old = units.shift();
+        if (old.node && old.node.parentNode) old.node.parentNode.removeChild(old.node);
+      }
+      var total = (store.state.items || []).length;
+      return Math.max(0, total - visibleItems());
+    }
+
+    function findUnit(item) {
+      for (var i = 0; i < units.length; i++) {
+        var u = units[i];
+        if (u.kind === "item" && (u.item === item || u.item.key === item.key)) return u;
+        if (u.kind === "tools") {
+          for (var j = 0; j < u.items.length; j++) {
+            if (u.items[j] === item || u.items[j].key === item.key) return u;
+          }
+        }
+      }
+      return null;
     }
 
     function patchNode(item) {
-      var node = nodes[item.key];
-      if (!node) return;
+      if (transcriptMode === "raw") {
+        var rawWin = windowOf(store.state.items || []);
+        paintRaw(rawWin.items);
+        paintMarker(rawWin.trimmed);
+        scroll(false);
+        return;
+      }
+      var unit = findUnit(item);
+      if (!unit) return;
+      if (unit.kind === "tools") {
+        paintToolGroup(unit.node, unit);
+        scroll(false);
+        return;
+      }
+      var node = unit.node;
       if (item.kind === "text") {
-        // Re-render just this block's markdown. Cheap: one block, not the
-        // transcript, and markdown needs the whole block to parse fences.
         var fresh = MD.render(item.text);
         C.clear(node._body).appendChild(fresh);
       } else if (item.kind === "thinking") {
@@ -249,20 +561,56 @@ window.ConsoleChatRender = (function (C, MD) {
       scroll(false);
     }
 
-    var offItem = store.on("item", addNode);
-    var offPatch = store.on("patch", patchNode);
-
     function renderAll() {
       C.clear(host);
-      nodes = {};
-      store.state.items.forEach(addNode);
+      units = [];
+      rawPre = null;
+      ensureChrome();
+      var win = windowOf(store.state.items || []);
+      if (transcriptMode === "raw") paintRaw(win.items);
+      else win.items.forEach(addNode);
+      paintMarker(win.trimmed);
       scroll(true);
     }
+
+    function onItem(item) {
+      if (store.state.replaying) { sawReplay = true; return; }
+      if (transcriptMode === "raw") {
+        var rawWin = windowOf(store.state.items || []);
+        paintRaw(rawWin.items);
+        paintMarker(rawWin.trimmed);
+        scroll(false);
+        return;
+      }
+      ensureChrome();
+      addNode(item);
+      paintMarker(trimTail());
+      scroll(false);
+    }
+
+    function onMeta() {
+      if (store.state.replaying) { sawReplay = true; return; }
+      var busy = !!store.state.busy;
+      var alive = !!store.state.alive;
+      if (sawReplay || (wasBusy && !busy) || (wasAlive && !alive)) {
+        sawReplay = false;
+        renderAll();
+      }
+      wasBusy = busy;
+      wasAlive = alive;
+    }
+
+    var offItem = store.on("item", onItem);
+    var offPatch = store.on("patch", function (item) {
+      if (store.state.replaying) { sawReplay = true; return; }
+      patchNode(item);
+    });
+    var offMeta = store.on("meta", onMeta);
 
     return {
       renderAll: renderAll,
       scroll: scroll,
-      destroy: function () { offItem(); offPatch(); },
+      destroy: function () { offItem(); offPatch(); offMeta(); },
       lastAssistantText: function () {
         var items = store.state.items;
         for (var i = items.length - 1; i >= 0; i--) {

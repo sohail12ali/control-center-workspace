@@ -1,0 +1,14 @@
+[ticket]
+id = "T-004"
+title = "Assistant brain: persona, /api/assistant, fast commands, Settings backend picker, memory"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-06"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

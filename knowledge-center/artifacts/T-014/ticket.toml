@@ -1,0 +1,14 @@
+[ticket]
+id = "T-014"
+title = "Model roles: a local model to talk, a capable one to work"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-08"
+updated = "2026-09-08"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

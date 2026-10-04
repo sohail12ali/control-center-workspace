@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T004"
+title = "Phase 3a - scheduler: cron-driven verbs on the job queue"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

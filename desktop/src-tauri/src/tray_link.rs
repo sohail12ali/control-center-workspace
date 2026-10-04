@@ -1,0 +1,389 @@
+//! Drives the tray icon from the console's live event stream.
+//!
+//! ## Why the shell subscribes, rather than the page telling it
+//!
+//! The tray has to be right when the window is hidden or showing another tab
+//! — that is the whole point of a tray. Anything routed through the webview
+//! would go stale exactly when the user is relying on it. So the shell reads
+//! the assistant's own SSE stream directly and owns its state.
+//!
+//! ## Why a hand-written HTTP client
+//!
+//! This makes one plaintext GET to `127.0.0.1` and reads lines until the
+//! process ends. Adding an HTTP client crate for that would pull a TLS stack
+//! and an async runtime into a binary that needs neither. Sixty lines of
+//! `TcpStream` is the smaller thing to own, and it cannot reach anywhere but
+//! loopback because that is all it knows how to address.
+//!
+//! ## Reconnecting is the normal case, not the error case
+//!
+//! The stream 404s until an assistant chat exists, ends when the server
+//! restarts, and drops if the machine sleeps. None of those are faults, so
+//! there is no error state — just a backoff and another attempt, with the
+//! tray sitting at idle in the meantime.
+
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tauri::AppHandle;
+
+use crate::tray_state::{Assistant, Event};
+
+/// Backoff between attempts. Short enough that the tray comes alive promptly
+/// after the console starts, long enough not to spin on a closed port.
+const RETRY: Duration = Duration::from_secs(3);
+
+/// Start the subscriber. Never fails the caller: a tray that cannot follow
+/// events is a degraded tray, not a reason to refuse to start.
+pub fn spawn(app: AppHandle, assistant: Arc<Mutex<Assistant>>, console_url: String) {
+    let builder = std::thread::Builder::new().name("tray-link".into());
+    if let Err(e) = builder.spawn(move || run(app, assistant, console_url)) {
+        log::warn!("tray-link: not started ({e}); the tray icon will stay idle");
+    }
+}
+
+fn run(app: AppHandle, assistant: Arc<Mutex<Assistant>>, console_url: String) {
+    let Some((host, port)) = split_host_port(&console_url) else {
+        log::warn!("tray-link: cannot parse {console_url}; giving up");
+        return;
+    };
+    loop {
+        match follow(&app, &assistant, &host, port) {
+            Ok(()) => log::info!("tray-link: stream ended, reconnecting"),
+            Err(e) => log::debug!("tray-link: {e}"),
+        }
+        // Clear only a THINKING state, and only because a turn we were
+        // tracking can no longer be tracked.
+        //
+        // This used to apply `TurnEnd` unconditionally, which was wrong in a
+        // way live testing caught: the stream 404s until an assistant chat
+        // exists, so this loop ran every few seconds, and each pass reset a
+        // state the SHELL owns — the tray showed "idle" while the microphone
+        // was open. Listening and speaking are the shell's to report; only
+        // the turn is the console's.
+        // Read the state, then RELEASE it, then sleep.
+        //
+        // The scoping matters more than it looks. This used to be
+        // `if let Ok(a) = assistant.lock() { ... sleep(RETRY) ... }`, which
+        // held the lock for the whole three-second backoff — so every few
+        // seconds the shell's own state changes queued behind a sleeping
+        // reconnect loop. Measuring a slow take is what found it: opening the
+        // microphone spent 2.9 seconds waiting for this mutex, and so did
+        // moving on to transcribe, which is most of a five-second delay
+        // nobody could see a cause for.
+        let (was_thinking, was_waiting) = assistant
+            .lock()
+            .map(|a| (a.state() == crate::icons::State::Thinking, a.needs_approval()))
+            .unwrap_or((false, false));
+        if was_thinking {
+            apply(&app, &assistant, Event::TurnEnd);
+        }
+        // And a card, which used to be left standing. The console answers an
+        // unanswered approval with a deny on its own timeout, so a stream we
+        // can no longer read means the question is no longer ours to show —
+        // while the panel showing it is always-on-top and, before this
+        // ticket, had no way to be closed. This is the exact sequence that
+        // stranded it: a card up, the console restarted under it, nothing
+        // left to ever say the card had gone.
+        if was_waiting {
+            log::info!("tray-link: stream lost with a card open; clearing it");
+            apply(&app, &assistant, Event::ApprovalResolved);
+        }
+        std::thread::sleep(RETRY);
+    }
+}
+
+fn split_host_port(url: &str) -> Option<(String, u16)> {
+    let rest = url.strip_prefix("http://")?;
+    let authority = rest.split('/').next()?;
+    let (host, port) = authority.rsplit_once(':')?;
+    Some((host.to_string(), port.parse().ok()?))
+}
+
+fn follow(
+    app: &AppHandle,
+    assistant: &Arc<Mutex<Assistant>>,
+    host: &str,
+    port: u16,
+) -> Result<(), String> {
+    let mut stream = TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
+    // No read timeout: an SSE stream is idle most of the time by design, and
+    // a timeout would tear down a healthy connection between turns.
+    stream
+        .write_all(
+            format!(
+                "GET /api/assistant/stream HTTP/1.1\r\nHost: {host}:{port}\r\n\
+                 Accept: text/event-stream\r\nConnection: keep-alive\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut status = String::new();
+    reader.read_line(&mut status).map_err(|e| e.to_string())?;
+    if !status.contains(" 200") {
+        // A 404 here is the ordinary "no assistant chat yet" case.
+        return Err(format!("stream said {}", status.trim()));
+    }
+    log::info!("tray-link: following the assistant stream");
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Ok(()); // server closed
+        }
+        let Some(payload) = line.strip_prefix("data:") else {
+            continue; // event:, id:, comments, blank separators
+        };
+        let payload = payload.trim();
+        if payload.is_empty() {
+            continue;
+        }
+        // Read BEFORE the events are applied, because painting the card is
+        // what needs the tool name: `ApprovalNeeded` reaches the panel
+        // through `tray_paint`, which reads what this stores.
+        note_approval(payload);
+        for event in events_for(payload) {
+            apply(app, assistant, event);
+        }
+        // The trimmed, spoken form of a reply — the one thing on this stream
+        // that exists nowhere else (`assistant_reply` composes it). It was
+        // parsed into no event and dropped, so the panel could say the
+        // assistant was speaking but never what it said.
+        if let Some(line) = reply_text(payload) {
+            crate::tray_paint::said(&line);
+        }
+        if let Some(backend) = backend_of(payload) {
+            let changed = assistant
+                .lock()
+                .map(|mut a| a.set_backend(&backend))
+                .unwrap_or(false);
+            if changed {
+                crate::tray_paint::repaint(assistant);
+            }
+        }
+    }
+}
+
+/// The console's event type, pulled out without a JSON parser.
+///
+/// `serde_json` is already a dependency and could parse this — but the field
+/// is a flat string in a flat object and a substring match cannot fail on a
+/// payload shape it did not expect, which for a decorative icon is the safer
+/// failure mode.
+fn field(payload: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":");
+    let start = payload.find(&needle)? + needle.len();
+    let rest = payload[start..].trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn events_for(payload: &str) -> Vec<Event> {
+    match field(payload, "type").unwrap_or_default().as_str() {
+        "turn.start" => vec![Event::TurnStart],
+        "turn.end" => vec![Event::TurnEnd],
+        // The console's own name for "a human is being asked". `attention` is
+        // accepted too because the T-004 stream contract named it, and a
+        // future UI event by that name should still light the badge.
+        "approval.request" | "attention" => vec![Event::ApprovalNeeded],
+        "approval.decided" => vec![Event::ApprovalResolved],
+        "speaking.start" => vec![Event::SpeakStart],
+        "speaking.stop" => vec![Event::SpeakStop],
+        _ => vec![],
+    }
+}
+
+/// The spoken form of a reply, if this payload is one.
+fn reply_text(payload: &str) -> Option<String> {
+    if field(payload, "type").as_deref() != Some("reply") {
+        return None;
+    }
+    field(payload, "text").filter(|t| !t.trim().is_empty())
+}
+
+/// Remember which tool a card is asking about, and forget it when answered.
+///
+/// The panel names the tool, which is the difference between "allow or deny"
+/// and "Bash wants to run" — and the second is the only one of those a person
+/// can actually answer.
+fn note_approval(payload: &str) {
+    match field(payload, "type").unwrap_or_default().as_str() {
+        "approval.request" => crate::tray_paint::note_pending(
+            &field(payload, "tool").unwrap_or_default(),
+            &field(payload, "key").unwrap_or_default(),
+        ),
+        "approval.decided" => crate::tray_paint::note_pending("", ""),
+        _ => {}
+    }
+}
+
+fn backend_of(payload: &str) -> Option<String> {
+    field(payload, "backend").or_else(|| field(payload, "agent"))
+}
+
+/// Fold an event in, painting through the shell's one painter.
+///
+/// Thin on purpose: this module's job is reading the stream, and where the
+/// icon comes from is `tray_paint`'s. When it lived here, everything that was
+/// not the stream — the microphone, above all — had no way to reach it.
+fn apply(_app: &AppHandle, assistant: &Arc<Mutex<Assistant>>, event: Event) {
+    crate::tray_paint::note(assistant, event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_console_url_splits_into_host_and_port() {
+        assert_eq!(
+            split_host_port("http://127.0.0.1:8790"),
+            Some(("127.0.0.1".to_string(), 8790))
+        );
+        assert_eq!(
+            split_host_port("http://127.0.0.1:8790/"),
+            Some(("127.0.0.1".to_string(), 8790))
+        );
+    }
+
+    #[test]
+    fn a_url_it_cannot_use_is_rejected_rather_than_guessed() {
+        // No default port: connecting to the wrong one would look like the
+        // console being down, which is a confusing way to fail.
+        assert_eq!(split_host_port("https://example.com/stream"), None);
+        assert_eq!(split_host_port("http://127.0.0.1"), None);
+        assert_eq!(split_host_port("nonsense"), None);
+    }
+
+    #[test]
+    fn reads_a_flat_string_field() {
+        let payload = r#"{"type": "turn.start", "backend": "claude"}"#;
+        assert_eq!(field(payload, "type").as_deref(), Some("turn.start"));
+        assert_eq!(field(payload, "backend").as_deref(), Some("claude"));
+        assert_eq!(field(payload, "missing"), None);
+    }
+
+    #[test]
+    fn maps_the_events_the_console_actually_sends() {
+        for (payload, want) in [
+            (r#"{"type":"turn.start"}"#, Some(Event::TurnStart)),
+            (r#"{"type":"turn.end"}"#, Some(Event::TurnEnd)),
+            (r#"{"type":"attention"}"#, Some(Event::ApprovalNeeded)),
+            (r#"{"type":"approval.request"}"#, Some(Event::ApprovalNeeded)),
+            (r#"{"type":"approval.decided"}"#, Some(Event::ApprovalResolved)),
+            (r#"{"type":"speaking.start"}"#, Some(Event::SpeakStart)),
+            (r#"{"type":"speaking.stop"}"#, Some(Event::SpeakStop)),
+        ] {
+            assert_eq!(events_for(payload).into_iter().next(), want, "{payload}");
+        }
+    }
+
+    #[test]
+    fn an_event_it_does_not_know_moves_nothing() {
+        // The stream carries more than the tray cares about, and a future
+        // event type must not be mistaken for one of these.
+        for payload in [
+            r#"{"type":"reply"}"#,
+            r#"{"type":"usage"}"#,
+            r#"{"type":"tool.start"}"#,
+            r#"{}"#,
+            "not json at all",
+        ] {
+            assert!(events_for(payload).is_empty(), "{payload}");
+        }
+    }
+
+    #[test]
+    fn a_disconnect_must_not_clear_a_listening_state() {
+        // The regression this exists for: the reconnect loop reset the state
+        // every few seconds while the stream was unavailable, so the tray
+        // read "idle" with the microphone open. Listening belongs to the
+        // shell; only a turn belongs to the console.
+        let mut a = Assistant::default();
+        a.apply(Event::ListenStart);
+        assert_eq!(a.state(), crate::icons::State::Listening);
+        // What the loop is now allowed to do, i.e. nothing, unless thinking.
+        assert_ne!(a.state(), crate::icons::State::Thinking);
+    }
+
+    #[test]
+    fn a_disconnect_does_clear_a_stale_thinking_state() {
+        let mut a = Assistant::default();
+        a.apply(Event::TurnStart);
+        assert_eq!(a.state(), crate::icons::State::Thinking);
+        a.apply(Event::TurnEnd);
+        assert_eq!(a.state(), crate::icons::State::Idle);
+    }
+
+    #[test]
+    fn a_reply_is_read_off_the_stream_and_nothing_else_is() {
+        // `reply` carries the trimmed spoken form, which exists nowhere else
+        // — `assistant_reply` composes it. It was parsed into no event and
+        // dropped, so the panel could say the assistant was speaking and
+        // never what it said.
+        assert_eq!(
+            reply_text(r#"{"type":"reply","text":"T two is in verify"}"#).as_deref(),
+            Some("T two is in verify")
+        );
+        // Not any other event's text.
+        assert_eq!(reply_text(r#"{"type":"text.done","text":"a heading"}"#), None);
+        assert_eq!(reply_text(r#"{"type":"notice","text":"hi"}"#), None);
+        // An empty reply is nothing to show, rather than a line to blank.
+        assert_eq!(reply_text(r#"{"type":"reply","text":"   "}"#), None);
+    }
+
+    #[test]
+    fn a_stale_card_is_cleared_when_the_stream_is_lost() {
+        // The sequence that stranded the overlay: a card up, the console
+        // restarted under it, and nothing left that could ever say the card
+        // had gone — over an always-on-top window that had no close button.
+        //
+        // The console denies an unanswered approval on its own timeout, so a
+        // stream we can no longer read means the question is no longer ours
+        // to display.
+        let mut a = Assistant::default();
+        a.apply(Event::TurnStart);
+        a.apply(Event::ApprovalNeeded);
+        assert!(a.needs_approval(), "precondition: a card is up");
+        // What the reconnect loop is now allowed to do about it.
+        a.apply(Event::ApprovalResolved);
+        assert!(!a.needs_approval(), "a lost stream must not leave a card up");
+    }
+
+    #[test]
+    fn a_card_is_remembered_by_tool_and_key_then_forgotten() {
+        // The key is the half that matters: without it, Allow and Deny on the
+        // panel could only ever be a picture of two buttons.
+        note_approval(r#"{"type":"approval.request","key":"abc123","tool":"Bash"}"#);
+        assert_eq!(crate::tray_paint::pending_key(), "abc123");
+        note_approval(r#"{"type":"approval.decided","key":"abc123"}"#);
+        assert_eq!(crate::tray_paint::pending_key(), "",
+                   "an answered card must not leave a key to re-answer with");
+    }
+
+    #[test]
+    fn a_turn_through_the_real_state_machine_ends_idle() {
+        // The mapping is only useful if the sequence it produces leaves the
+        // tray somewhere sensible.
+        let mut a = Assistant::default();
+        for payload in [
+            r#"{"type":"turn.start"}"#,
+            r#"{"type":"approval.request"}"#,
+            r#"{"type":"approval.decided"}"#,
+            r#"{"type":"turn.end"}"#,
+        ] {
+            for event in events_for(payload) {
+                a.apply(event);
+            }
+        }
+        assert_eq!(a.state(), crate::icons::State::Idle);
+        assert!(!a.needs_approval(), "the badge must clear when answered");
+    }
+}

@@ -1,0 +1,14 @@
+[ticket]
+id = "T-011"
+title = "Session resume: pick a chat back up after a restart"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-07"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Fast pre-commit gate: harness lint only.
+#
+# Opt in per checkout (hooks are not shared by git itself):
+#
+#     git config core.hooksPath .githooks
+#
+# Deliberately does NOT run pytest. A pre-commit hook that takes ten seconds
+# gets bypassed with --no-verify within a week, and then it is not a gate at
+# all. The full suite belongs in CI, which is not competing for your attention.
+#
+# Only fires when the commit actually touches harness config; a commit that
+# only edits the vault or the console has nothing here to break.
+
+set -e
+
+if ! git diff --cached --name-only | grep -qE '^(\.claude/(skills|agents)/|CLAUDE\.md)'; then
+  exit 0
+fi
+
+for PY in python3 python; do
+  if command -v "$PY" >/dev/null 2>&1; then
+    if ! "$PY" console/kanban.py harness lint; then
+      echo ""
+      echo "pre-commit: harness lint failed. Fix the errors above, or commit"
+      echo "with --no-verify if you know why this one is wrong."
+      exit 1
+    fi
+    exit 0
+  fi
+done
+
+# No interpreter is not a reason to block a commit — say so and get out of
+# the way. CI still runs the same check.
+echo "pre-commit: no python on PATH, skipping harness lint" >&2
+exit 0

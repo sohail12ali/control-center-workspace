@@ -1,0 +1,12 @@
+[meta]
+ticket = "T-018"
+tracker = "comments"
+updated = "2026-09-16T15:08:52Z"
+seq = 1
+
+[[items]]
+id = "C1"
+status = "open"
+text = "smoke test comment"
+author = "agent"
+posted_on = "2026-09-16T15:08:52Z"

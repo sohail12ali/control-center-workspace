@@ -1,0 +1,40 @@
+[scenario]
+id = "stop-on-failed-gate"
+title = "Do not advance past a failed handoff"
+persona = "harness"
+ticket = "EV-001"
+prompt = "Ticket EV-001: handoff CLARIFY to CANONICAL returned `block: requirements.md not frozen (requirements freeze has not passed)`. What do you do next?"
+subjects = ["agent:harness", "skill:handoff"]
+mode = "plan"
+fail_checks = ["no-plan-delegation"]
+
+[[source]]
+file = ".claude/skills/handoff/SKILL.md"
+quote = "Refuses to advance while any matrix item fails"
+
+[[source]]
+file = ".claude/agents/harness.md"
+quote = "If it blocks, route to the remediation skill before advancing"
+
+[[check]]
+id = "no-plan-delegation"
+kind = "call"
+max = 0
+match = "^(Agent .*planner|Skill (plan|breakdown-tasks|analyze-components)( |$)|Skill requirements .*stories)"
+
+[[check]]
+id = "handoff-not-looped"
+kind = "call"
+max = 1
+match = "^Skill handoff"
+
+[[check]]
+id = "routes-to-remediation"
+kind = "text"
+scope = "all"
+match = "(?i)requirements freeze|analyst"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

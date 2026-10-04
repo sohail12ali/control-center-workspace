@@ -1,0 +1,14 @@
+[ticket]
+id = "T-007"
+title = "Multimodal send: screenshot pixels to vision models, destination chip"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-07"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

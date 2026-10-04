@@ -20,7 +20,11 @@
       "Bash(awk *)",
       "Bash(sed *)",
       "Bash(echo *)",
-      "Read(//d/Workspace/**)"
+      "Read(//d/Workspace/**)",
+      "Bash(cat console/static/index.html)",
+      "Bash(head -40 console/static/icons.js)",
+      "Bash(ls desktop *)",
+      "Bash(grep -rn \"icon\" desktop --include=*.rs --include=*.toml -i)"
     ]
   }
 }

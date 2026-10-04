@@ -1,0 +1,5 @@
+{"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "Bash"}}}
+{"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"command\": \"python console/kanban.py context EV-001\"}"}}}
+{"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "python console/kanban.py context EV-001"}}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "context loaded", "duration_ms": 1, "num_turns": 1, "usage": {"input_tokens": 3, "output_tokens": 2}, "total_cost_usd": 0.01}

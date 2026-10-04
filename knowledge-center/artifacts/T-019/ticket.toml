@@ -1,0 +1,19 @@
+[ticket]
+id = "T-019"
+title = "Make hands-free listening actually work"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-16"
+updated = "2026-09-16"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+branch = ""
+pr_url = ""
+pr_state = ""

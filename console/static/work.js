@@ -141,6 +141,85 @@
       }, { skeletonRows: 4 });
   }
 
+  /* ---------------- audit trail ----------------
+     On the Work tab because it answers the timesheet's own question — what
+     happened and who did it — for the half of the work nobody types into a
+     log file: verbs run, chats started, approvals answered.
+
+     It is the console's record, not the person's, so it sits BELOW the
+     timesheet and is collapsed by default. The two must not be confused: one
+     is a claim about hours, the other is a machine's account of itself. */
+
+  var ACTION_TONE = {
+    "approval.decide": "warn", "job.cancel": "warn",
+    "chat.start": "accent", "chat.stop": null,
+    "verb.run": "ok", "verb.submit": "ok", "schedule.fire": "info",
+  };
+
+  function auditPanel() {
+    var host = C.el("div");
+    var open = C.prefs.get("workAuditOpen", false);
+
+    C.get("/api/work/audit?limit=60").then(function (d) {
+      var entries = (d && d.entries) || [];
+      if (!d.enabled && !entries.length) return;   // switched off: say nothing
+
+      var body = C.el("div");
+      function fill() {
+        C.clear(body);
+        if (!open) return;
+        if (!entries.length) {
+          body.appendChild(C.empty("Nothing recorded yet",
+            "Reads are deliberately not logged — only actions that change something.",
+            "list"));
+          return;
+        }
+        var rows = C.el("div", { class: "rows" });
+        entries.forEach(function (e) {
+          rows.appendChild(C.el("div", { class: "lrow" }, [
+            C.el("span", { class: "chip " + (ACTION_TONE[e.action] || ""), text: e.action }),
+            C.el("span", { class: "ltext" }, [
+              C.el("b", { text: e.target || "—" }),
+              /* "ok" is the default outcome on every successful row, so
+                 printing it would be noise on every line and invisible on the
+                 few that matter. Only a non-ok outcome earns space. */
+              e.outcome && e.outcome !== "ok"
+                ? C.el("span", { class: "muted", text: " " + e.outcome }) : null,
+            ]),
+            /* The address is the point of the trail once more than one
+               device can start work — it is how "was that me?" gets an
+               answer. */
+            C.el("span", { class: "chip", title: "Where the request came from",
+                           text: (e.actor && e.actor.addr) || "local" }),
+            C.el("span", { class: "muted mono", style: "font-size:11px",
+                           text: (e.ts || "").replace("T", " ").slice(0, 16) }),
+          ]));
+        });
+        body.appendChild(rows);
+        body.appendChild(C.el("p", { class: "muted", style: "margin:8px 0 0;font-size:11px",
+          text: "Local and gitignored — these rows carry client addresses." }));
+      }
+
+      var toggle = C.el("button", {
+        class: "btn sm",
+        onclick: function () {
+          open = !open;
+          C.prefs.set("workAuditOpen", open);
+          toggle.textContent = open ? "Hide" : "Show";
+          fill();
+        },
+      }, [open ? "Hide" : "Show"]);
+
+      host.appendChild(C.panel("Console activity", [body],
+        C.el("span", { class: "row", style: "gap:6px" }, [
+          C.el("span", { class: "chip", text: entries.length + " recent" }), toggle,
+        ]), { icon: "list" }));
+      fill();
+    }).catch(function () { /* plugin off, or a static export */ });
+
+    return host;
+  }
+
   function paint() {
     var host = C.clear(st.host);
     C.get("/api/work/authors").then(function (authors) {
@@ -148,6 +227,7 @@
       var body = C.el("div", {});
       host.appendChild(body);
       if (st.mode === "day") paintDay(body); else paintRange(body);
+      host.appendChild(auditPanel());
     }).catch(function (err) {
       host.appendChild(controls([]));
       host.appendChild(C.errbox(err));

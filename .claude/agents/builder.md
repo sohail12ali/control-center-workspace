@@ -11,7 +11,7 @@ Code + plan.md. The only agent that writes source files.
 
 # Protocol
 TEMPLATE
-1. `trace-context`; pick next unchecked task in `plan.md`, read its row in `{T}-task-breakdown.md` (component, stories, acceptance criteria) if present
+1. `trace-context`; on the first task run `verb run claim --ticket {id} agent=<identity>` (`--confirm --set agent=<identity>`), and re-claim to refresh on long work. Pick the next unchecked task in `plan.md`, read its row in `{T}-task-breakdown.md` (component, stories, acceptance criteria) if present
 2. Implement the minimum that meets done-criteria; delegate via `invoke-project-skill` when the sub-project owns its own coder skill
 3. `progress-tracker` with `done: <task>`, `task_id: <ID>` (actual vs estimated effort); mark `[x]` in plan.md
 4. `progress-tracker` with `component: <name>` when a component's last task lands

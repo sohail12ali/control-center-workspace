@@ -33,7 +33,7 @@ Stages: **GROUND → CLARIFY → CANONICAL → TEMPLATE → SIMPLIFY → VERIFY*
 | `analyst` | GROUND, CLARIFY | `analyze` → `requirements draft` → `challenge-requirements` → `requirements enrich` → `clarify`/`questions` → `requirements iterate`× → `requirements freeze` |
 | `planner` | CANONICAL | `requirements stories` → `plan` (flat) or `analyze-components` → `breakdown-tasks` (+`estimate`) → `challenge-plan` |
 | `builder` | TEMPLATE, SIMPLIFY | task-by-task from plan; `tech-select(confirm-existing)` before new deps; `progress-tracker` per task; `simplify` |
-| `verifier` | VERIFY | `challenge-implementation` → `verify cases` → `verify {scope}` → `validate-artifacts` (+links) → `reconcile` → `close-work` |
+| `verifier` | VERIFY | `challenge-implementation` → `verify cases` → `verify {scope}` → `validate-artifacts` (+links) → `reconcile` → `close-check` (`harness` runs `close-work`) |
 | `fixer` | any | `fix` → `progress-tracker`; `evolve` on design shifts |
 | `deployer` | after close-work | ASK-gated: `invoke-project-skill` → sub-project publish → `log-work` |
 
@@ -46,6 +46,7 @@ Exactly **7 agents** — no additions without explicit user intent. Free-form en
 ## Console sync
 
 - Ticket + tracker state lives in TOML under the ticket dir, mutated **only** via `console/kanban.py` (directly or through `kickoff`/`questions`/`bugs`/`todos`/`close-work`).
+- **Compute, don't reason.** Anything with one right answer is a **verb** (`console/config/verbs.toml`) — run it, don't re-derive it. `console context {T}` replaces reading a ticket's artifacts (~16x fewer tokens); `trace-context` uses it. The same verbs are MCP tools via `console/mcp_server.py`.
 - Stage → lane: `kickoff` → `open` · first build task → `in-progress` · blocker → `blocked` · verification → `verify` · `close-work` → `done` (via `ticket move`; mapping canonical in the `console` skill).
 - The Work tab reads `log-work`'s daily files; the Agents tab launches backends from `console/config/agents.toml`; session hooks run `refresh --quiet`.
 

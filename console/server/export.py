@@ -87,7 +87,7 @@ def _copy_frontend(out_dir):
     """Every asset, not a hand-listed subset: a tab added as one new .js file
     must not need this list edited to appear in an export."""
     copied = []
-    for pattern in ("*.html", "*.js", "*.css"):
+    for pattern in ("*.html", "*.js", "*.css", "*.png"):
         for src in sorted(glob.glob(os.path.join(STATIC_DIR, pattern))):
             name = os.path.basename(src)
             shutil.copyfile(src, os.path.join(out_dir, name))

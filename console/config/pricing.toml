@@ -1,0 +1,30 @@
+# Model rates, USD per million tokens, for turns whose backend does not report
+# a cost of its own.
+#
+# READ THIS BEFORE ADDING A ROW. These numbers are copied from a provider's
+# public price list on a date, by hand. They are not fetched, not validated,
+# and they go stale. A wrong row is worse than a missing one: a missing model
+# is reported as `unpriced` and visibly excluded from totals, while a wrong
+# rate produces a confident number nobody questions.
+#
+# So: add a row only for a model you have checked the current price of, put the
+# date you checked it in `verified`, and delete rows you no longer trust.
+#
+# Matching is exact first, then longest prefix — `claude-opus-5` also prices
+# `claude-opus-5-20260114`, so a dated release needs no row of its own.
+# Aliases (`opus`, `sonnet`, `haiku`) are deliberately NOT listed: an alias
+# points at a different model over time, so a rate for one would silently
+# misprice the other.
+#
+# Turns from Claude Code carry `total_cost_usd` from the CLI itself and never
+# consult this table. It exists for backends that report tokens but not cost —
+# an OpenAI-compatible or OpenRouter backend, or any CLI that reports neither.
+
+# Example row, commented out because this template ships no verified prices.
+# Uncomment and set real values from the provider's price list.
+#
+# [[model]]
+# id = "some-model-id"
+# input_per_mtok = 0.00
+# output_per_mtok = 0.00
+# verified = "YYYY-MM-DD"

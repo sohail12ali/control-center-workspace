@@ -1,6 +1,22 @@
 [general]
+# What this workspace is called. Shows in the brand header, the browser tab and
+# every static export. Leaving it at the stock "Delivery Console" is what the
+# onboarding checklist nags about.
+title          = "Noble Delivery Console"
 data_root      = "knowledge-center/artifacts"
 id_pattern     = "^[A-Z][A-Za-z0-9-]{1,31}$"
+# Loopback by default, and it should usually stay that way.
+#
+# The console has NO authentication of its own. The supported way to reach it
+# from elsewhere is a private network — Tailscale or equivalent — that
+# authenticates before traffic ever arrives, so put the tailnet address here
+# (or 0.0.0.0 if the machine is only on the tailnet) rather than adding a
+# password to this app. A second, weaker authentication layer beside a working
+# one adds risk without adding safety.
+#
+# Any non-loopback value prints a warning at every start. That is deliberate:
+# a console listening beyond this machine must never be a fact you forgot.
+# Never expose this port directly to the internet.
 host           = "127.0.0.1"
 port           = 8790
 enabled_boards = ["tickets", "investigations"]
@@ -12,15 +28,78 @@ enabled_boards = ["tickets", "investigations"]
 # are enabled in config/plugins.toml, so a tab and the routes behind it are
 # switched together and can never disagree.
 
-[agents]
-# Backend command templates for the Agents tab. {prompt} is substituted with
-# the user's message (shell-escaped); {cwd} is the resolved workspace root.
-# A project can add/edit entries here without touching code.
-[agents.backends.claude]
-label = "Claude Code"
-command = "claude"
-args = ["-p", "{prompt}", "--permission-mode", "plan"]
-[agents.backends.cursor-agent]
-label = "Cursor Agent"
-command = "cursor-agent"
-args = ["-p", "{prompt}"]
+# Agent backends live in config/agents.toml, NOT here. This file once carried an
+# `[agents.backends.*]` block; agents.toml superseded it, and leaving a dead copy
+# behind made two files look like they both configured the same thing.
+#
+# `agent_backends._from_legacy()` still reads the old shape, but ONLY when
+# agents.toml is absent — that path exists so an older checkout keeps working,
+# not as a place to edit. Add or change a backend in agents.toml.
+
+# Push a parked approval to a phone. Without this, a run started from anywhere
+# but this desk stalls at its first gated tool and dies on the 300-second
+# timeout with nothing said about it — so this is what makes remote running
+# work, not a decoration on top of it.
+#
+# Credentials go in the workspace's `.env` (gitignored, loaded automatically)
+# or your shell. Read per send, never stored:
+#   TELEGRAM_BOT_TOKEN   from @BotFather
+#   TELEGRAM_CHAT_ID     your own chat id (message the bot, then check
+#                        https://api.telegram.org/bot<token>/getUpdates)
+#
+# Delivery is best-effort and off the request thread. If Telegram is
+# unreachable the approval still appears in the browser and still denies on the
+# same timeout — you are simply not told, which is no worse than not having
+# this configured at all.
+#
+# Off by default: this template ships no credentials and cannot verify any.
+[notify]
+enabled     = true
+channel     = "telegram"
+token_env   = "TELEGRAM_BOT_TOKEN"
+chat_id_env = "TELEGRAM_CHAT_ID"
+# "approval" is the one that matters. A phone that buzzes for everything gets
+# muted, and then it buzzes for nothing.
+#   approval   a gated tool is waiting on a human
+#   turn_end   a run finished (or failed)
+#   job_error  a scheduled job died — by definition nobody was watching
+events      = ["approval", "turn_end", "job_error"]
+timeout     = 8
+
+# --- inbound: answering from the phone, not just being told ------------------
+# Off by default, and it should stay off unless you have set the allowlist.
+#
+# With this on, tapping a button answers a parked approval — including
+# `run_command`, which runs a shell command on this machine. The allowlist is
+# then the ONLY thing between a Telegram message and that shell, because a bot
+# token addresses a public endpoint that anyone who finds it can message.
+#
+# Who may drive it, in two spellings — TELEGRAM_ALLOWED_USERS (comma-separated,
+# for more than one person) or TELEGRAM_USER_ID (just yours, the common case).
+# Numeric USER ids, not chat ids; `kanban notify who` prints them and says
+# whether each would be let in.
+#
+# FAIL-CLOSED: with neither set, the bot answers nobody. That is deliberate —
+# treating "no list" as "everyone" is how a pasted token becomes a remote shell.
+#
+# `inbound = true` is safe to ship on: the poller refuses to start unless a
+# token is configured and the notify config is provably workable, so a checkout
+# with no Telegram setup prints one OFF line and does nothing.
+inbound              = true
+allowed_users_env    = "TELEGRAM_ALLOWED_USERS"
+self_user_env        = "TELEGRAM_USER_ID"
+# Development only. Named so it cannot be set by accident, and announced at
+# every start when it is on.
+allow_all_users_env  = "TELEGRAM_ALLOW_ALL_USERS"
+poll_timeout         = 25
+
+# Who asked the console to start work or change state, and from where.
+# Records only actions that DO something — starting a chat, running or queuing
+# a verb, answering an approval. Not reads: an audit log that records every
+# board poll is one nobody scrolls through.
+#
+# Local and gitignored by default. These lines carry client addresses, which
+# are a fact about your network rather than about the project.
+[audit]
+enabled = true
+dir     = "console/.cache/audit"

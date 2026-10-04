@@ -9,6 +9,8 @@ generic concept. A fork can still add typed edges later by extending
 import os
 import re
 
+from .paths import vault_dir
+
 VAULT_SUBDIR = "knowledge-center"
 MAX_FILE_BYTES = 256 * 1024
 _TEXT_EXTENSIONS = {".md", ".toml", ".txt", ".sql", ".yaml", ".yml", ".json"}
@@ -16,7 +18,7 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 
 
 def _vault_root(repo_root):
-    return os.path.join(repo_root, VAULT_SUBDIR)
+    return vault_dir(repo_root)
 
 
 def _safe_join(repo_root, rel_path):

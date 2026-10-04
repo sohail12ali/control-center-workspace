@@ -276,26 +276,90 @@ def dump(path, data):
         f.write(dumps(data))
 
 
-def atomic_write(path, data, timeout=5.0):
-    """Write with a lock + temp-file-then-rename so concurrent CLI/HTTP
-    writers (e.g. two agent worktrees) never interleave partial writes."""
-    lock_path = str(path) + ".lock"
+def _acquire_lock(lock_path, timeout):
+    """Retries on `PermissionError` as well as `FileExistsError`: on Windows,
+    `os.open(..., O_CREAT | O_EXCL)` against a lock file another thread is
+    mid-delete-and-recreate on can transiently raise `PermissionError`
+    instead of `FileExistsError` — NTFS delete+create is not the single
+    atomic step POSIX unlink+create is. Surfaced by 3a-5's own concurrency
+    test at higher contention than this file's prior tests exercised; not
+    treating it as a retryable contention signal turned a real, if rare,
+    race into a crashed claim instead of a slower one."""
     deadline = time.time() + timeout
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
             os.close(fd)
-            break
-        except FileExistsError:
+            return
+        except (FileExistsError, PermissionError):
             if time.time() > deadline:
                 raise TimeoutError(f"could not acquire lock: {lock_path}")
             time.sleep(0.05)
+
+
+def _release_lock(lock_path):
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
+
+
+#: Windows raises PermissionError from `os.replace` while another handle on the
+#: target is open for an instant (a concurrent reader, a virus scan); that
+#: clears in milliseconds, so retry briefly rather than fail the write.
+REPLACE_TRIES = 10
+REPLACE_PAUSE = 0.02
+
+
+def _replace(src, dst):
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_PAUSE)
+
+
+def atomic_write(path, data, timeout=5.0):
+    """Write with a lock + temp-file-then-rename so concurrent CLI/HTTP
+    writers (e.g. two agent worktrees) never interleave partial writes."""
+    lock_path = str(path) + ".lock"
+    _acquire_lock(lock_path, timeout)
     try:
         tmp_path = str(path) + ".tmp"
         dump(tmp_path, data)
-        os.replace(tmp_path, path)
+        _replace(tmp_path, path)
     finally:
-        try:
-            os.remove(lock_path)
-        except FileNotFoundError:
-            pass
+        _release_lock(lock_path)
+
+
+def atomic_update(path, mutate, timeout=5.0):
+    """Read-modify-write `path` under the same lock file `atomic_write` uses,
+    so a get-then-set two-step (e.g. a ticket claim) cannot interleave with a
+    concurrent writer the way two separate `load()` + `atomic_write()` calls
+    could — that pair only wraps the write half, leaving the read-then-decide
+    half racy (T-017 FR-8's claim race-safety, task 3a-5). Reuses this
+    module's existing lock-file primitive rather than adding a second
+    concurrency mechanism.
+
+    `mutate(data)` is called with the file's current parsed contents (or `{}`
+    if it doesn't exist yet) while the lock is held, and may mutate `data` in
+    place or return a replacement dict. It may also raise to refuse the
+    update entirely — the lock still releases cleanly and nothing is written.
+    Returns the data actually written.
+    """
+    lock_path = str(path) + ".lock"
+    _acquire_lock(lock_path, timeout)
+    try:
+        data = load(path) if os.path.isfile(path) else {}
+        result = mutate(data)
+        if result is not None:
+            data = result
+        tmp_path = str(path) + ".tmp"
+        dump(tmp_path, data)
+        _replace(tmp_path, path)
+        return data
+    finally:
+        _release_lock(lock_path)

@@ -62,7 +62,7 @@ foreach ($key in $Replace.Keys) {
     $map[$token] = [string]$Replace[$key]
 }
 
-$content = Get-Content $templateFile -Raw
+$content = Get-Content $templateFile -Raw -Encoding UTF8
 foreach ($entry in $map.GetEnumerator()) {
     if ($entry.Value) {
         $content = $content.Replace($entry.Key, $entry.Value)
@@ -84,6 +84,7 @@ if ($outputDir -and -not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 }
 
-Set-Content -Path $outputFile -Value $content -Encoding UTF8
+# UTF-8 without BOM; Set-Content -Encoding UTF8 on Windows PowerShell 5.1 writes a BOM
+[System.IO.File]::WriteAllText($outputFile, $content, (New-Object System.Text.UTF8Encoding $false))
 Write-Output "Created: $outputFile"
 return $outputFile

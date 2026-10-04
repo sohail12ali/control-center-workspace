@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "console": {
+      "command": "python",
+      "args": ["console/mcp_server.py"]
+    }
+  }
+}

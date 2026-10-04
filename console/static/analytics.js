@@ -41,6 +41,106 @@
     ]);
   }
 
+  /* ---------------- spend ----------------
+     Agent cost belongs on the tab that already answers "where did the effort
+     go" — it is the same question with a different unit.
+
+     The rule this section is built around: **an unpriced turn is never
+     silently free.** A model the pricing table does not know contributes
+     tokens but no cost, and every total drawn from such a window says so,
+     inline, every time. A dashboard that quietly under-reports spend is worse
+     than one that reports nothing, because it gets believed. */
+
+  function costText(t) {
+    return t.cost_complete ? "$" + (t.cost_usd || 0).toFixed(2)
+                           : "$" + (t.cost_usd || 0).toFixed(2) + "*";
+  }
+
+  function spendTable(rows, keyLabel) {
+    return C.el("div", { class: "tablewrap" }, [
+      C.el("table", { class: "dt" }, [
+        C.el("thead", {}, [C.el("tr", {}, [
+          C.el("th", { text: keyLabel }),
+          C.el("th", { class: "num", text: "Turns" }),
+          C.el("th", { class: "num", text: "Tokens" }),
+          C.el("th", { class: "num", text: "Cost" }),
+        ])]),
+        C.el("tbody", {}, rows.map(function (r) {
+          return C.el("tr", {}, [
+            C.el("td", { text: r.key || "—" }),
+            C.el("td", { class: "num", text: String(r.turns) }),
+            C.el("td", { class: "num", text: C.fmtNum(r.tokens) }),
+            C.el("td", {
+              class: "num", text: costText(r),
+              title: r.cost_complete ? "" :
+                r.unpriced_turns + " turn(s) had no price — excluded from this total",
+            }),
+          ]);
+        })),
+      ]),
+    ]);
+  }
+
+  function spendPanels(grid, spend) {
+    /* Older server, or the telemetry module unavailable: show nothing rather
+       than an empty box explaining an absence nobody asked about. */
+    if (!spend) return;
+
+    if (!spend.available) {
+      grid.appendChild(C.panel("Agent spend", [
+        C.empty("Telemetry unavailable", spend.reason || "", "alert"),
+      ]));
+      return;
+    }
+
+    var t = spend.totals || {};
+    if (!t.turns) {
+      /* The honest empty state, and a genuinely useful one here: it names the
+         single action that fills it, because "no data" on a brand-new console
+         means "nothing has run yet", not "something is broken". */
+      grid.appendChild(C.panel("Agent spend", [
+        C.empty("No agent turns recorded yet",
+          "Start a chat from the Agents tab. Every turn records its tokens and cost here.",
+          "cpu"),
+      ], scopeNote("window")));
+      return;
+    }
+
+    grid.appendChild(C.panel("Agent spend", [
+      C.stats([
+        C.stat(C.fmtNum(t.turns), "Turns", { tone: "accent" }),
+        C.stat(C.fmtNum(t.tokens), "Tokens", { sub: "in + out" }),
+        C.stat(costText(t), "Cost", {
+          tone: t.cost_complete ? "ok" : "warn",
+          sub: t.cost_complete ? "all turns priced"
+                               : t.unpriced_turns + " unpriced",
+        }),
+        C.stat(C.fmtNum(t.input_tokens), "Input"),
+        C.stat(C.fmtNum(t.output_tokens), "Output"),
+      ]),
+      t.cost_complete ? null : C.el("p", {
+        class: "muted", style: "margin:8px 0 0;font-size:11px",
+        text: "* " + t.unpriced_turns + " turn(s) ran on a model with no entry in "
+            + "console/config/pricing.toml. Their tokens are counted; their cost "
+            + "is excluded rather than assumed to be zero.",
+      }),
+    ], scopeNote("window"), { icon: "cpu" }));
+
+    if (spend.by_model.length) {
+      grid.appendChild(C.panel("Spend by model", [
+        C.bars(spend.by_model.map(function (r) { return [r.key || "—", r.tokens]; }),
+          { colorByIndex: true, keyLabel: "Model", valLabel: "Tokens" }),
+        C.el("div", { style: "margin-top:8px" }, [spendTable(spend.by_model, "Model")]),
+      ], scopeNote("window")));
+    }
+
+    if (spend.by_ticket.length) {
+      grid.appendChild(C.panel("Spend by ticket", [
+        spendTable(spend.by_ticket, "Ticket"),
+      ], scopeNote("window")));
+    }
+  }
+
   function kindsToShow(data) {
     var all = Object.keys(data.lane_funnel);
     return st.board === "all" ? all : all.filter(function (k) { return k === st.board; });
@@ -144,6 +244,8 @@
           ], scopeNote("window")));
         }
       }
+
+      spendPanels(grid, d.spend);
 
       body.appendChild(grid);
     }, { skeletonRows: 6 });

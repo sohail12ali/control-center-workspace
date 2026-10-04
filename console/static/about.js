@@ -23,7 +23,8 @@
      paragraph describing a tab that isn't there. */
   var BLURBS = {
     overview: "What needs a human right now — blocked, stale and unowned work, plus lane flow and what changed recently.",
-    agents: "Launch a configured CLI as a one-shot headless run and watch its output.",
+    assistant: "Talk to the workspace. Live Runs and a ticket strip live here; the Agents tab inspects a Run in full.",
+    agents: "Run inspector — chats and named Runs, including resume of a past chat.",
     work: "Read-only timesheet over the per-author daily logs that /log-work writes.",
     analytics: "Pipeline shape, ageing, throughput and hours. Every chart has a table twin.",
     todos: "Every open todo across every ticket, plus general ones, in one filterable list.",

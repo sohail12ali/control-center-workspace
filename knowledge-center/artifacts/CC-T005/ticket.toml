@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T005"
+title = "Phase 4 - UI and chat: diff cards, command palette, pickers, cost badges"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

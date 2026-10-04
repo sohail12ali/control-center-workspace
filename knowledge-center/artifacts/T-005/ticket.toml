@@ -1,0 +1,14 @@
+[ticket]
+id = "T-005"
+title = "Native bridge: tray icon states, screenshot, OCR, clipboard"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-07"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

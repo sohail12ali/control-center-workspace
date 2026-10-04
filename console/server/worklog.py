@@ -13,6 +13,8 @@ import glob
 import os
 import re
 
+from .paths import resolve_rel
+
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 _FIELD_RE = re.compile(r"^([a-zA-Z_]+):\s*(.*)$")
 _WORK_LINE_RE = re.compile(
@@ -69,7 +71,7 @@ def parse_log_file(path):
 
 
 def _log_dir(repo_root):
-    return os.path.join(repo_root, "knowledge-center", "logs")
+    return resolve_rel(repo_root, os.path.join("knowledge-center", "logs"))
 
 
 def find_log_files(repo_root, start_date=None, end_date=None, author_slug=None):

@@ -51,7 +51,7 @@ control-center-workspace/
 │   │   └── log-work/ optimize-cursor-artifacts/ project-layout/ caveman/
 │   ├── projects/control-center/memory/   # Persistent memory across sessions
 │   ├── hooks/                     # SessionStart context + console refresh
-│   └── settings.json              # Workspace config (agents/skills roster, hooks)
+│   └── settings.json              # Permission gates + hooks (agents/skills are the dirs above)
 ├── .cursor/                       # Cursor wiring (same harness; no duplicate skills)
 ├── console/                       # The Delivery Console (see section below)
 │   ├── kanban.py                  # CLI entry point

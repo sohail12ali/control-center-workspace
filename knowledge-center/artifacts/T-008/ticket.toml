@@ -1,0 +1,14 @@
+[ticket]
+id = "T-008"
+title = "Hands-free listening: wake word, echo handling, barge-in"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-09-07"
+updated = "2026-09-07"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

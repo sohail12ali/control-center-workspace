@@ -1,0 +1,14 @@
+[ticket]
+id = "CC-T006"
+title = "Phase 3b - remote: Tailscale bind, audit log, Telegram approval notifications"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-08-29"
+updated = "2026-08-29"
+tags = []
+links = []
+scripts_dir = ""
+url = ""

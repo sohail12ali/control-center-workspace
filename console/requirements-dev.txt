@@ -1,0 +1,9 @@
+# Development-only dependencies.
+#
+#   python -m pip install --user -r console/requirements-dev.txt
+#
+# The console RUNTIME has none — it is stdlib Python on purpose, so the
+# template stays drop-in-anywhere. Nothing below is imported by console/server
+# or console/kanban.py; it exists so the test suite and CI can run.
+
+pytest>=8.0
