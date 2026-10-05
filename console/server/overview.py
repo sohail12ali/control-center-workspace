@@ -10,23 +10,36 @@ release-gap panel, both of which depended on project-specific
 infrastructure this template doesn't have.
 """
 
+from . import agent_approvals
 from . import analytics as analytics_mod
 from . import boards as boards_mod
 from . import render
+from . import runs as runs_mod
 from . import tickets as tickets_mod
 from . import trackers as trackers_mod
+
+_ATTN_RUNS = ("failed", "timed_out", "scheduled_retry")
+_PENDING_Q = ("open", "answered")
 
 
 def _stale_days(repo_root):
     return boards_mod.load_console_config(repo_root)["general"].get("stale_days", 7)
 
 
+def _entry(ticket_id, title, kind, stage, **extra):
+    row = {"id": ticket_id, "title": title, "kind": kind, "stage": stage,
+           "idle_days": 0, "blocking": 0, "owner": "", "href": "board"}
+    row.update(extra)
+    return row
+
+
 def needs_attention(repo_root):
-    """Three distinct kinds of "look at me", kept separate because the fix
-    differs: blocked (a tracker item is critical), stale (nobody has touched
-    it), and unowned (nobody has picked it up)."""
+    """What a person should look at. The same payload feeds the Overview
+    panel and the sidebar badge: blocked, stale, and unowned tickets, plus
+    pending questions, live approval cards, and runs that failed or are
+    waiting to retry."""
     stale_days = _stale_days(repo_root)
-    blocked, stale, unowned = [], [], []
+    blocked, stale, unowned, questions = [], [], [], []
 
     for kind in boards_mod.enabled_boards(repo_root):
         lanes = {l["id"]: l for l in boards_mod.lanes_for(kind, repo_root)}
@@ -36,21 +49,40 @@ def needs_attention(repo_root):
             if lane.get("terminal"):
                 continue  # finished work is not "attention"
             card = render.build_card(ticket, repo_root, show, stale_days)
-            entry = {
-                "id": card["id"],
-                "title": card["title"],
-                "kind": kind,
-                "stage": ticket.get("stage"),
-                "idle_days": card["idle_days"],
-                "blocking": card["blocking"],
-                "owner": card["owner"],
-            }
+            entry = _entry(card["id"], card["title"], kind, ticket.get("stage"),
+                           idle_days=card["idle_days"], blocking=card["blocking"],
+                           owner=card["owner"])
             if card["blocking"]:
                 blocked.append(entry)
             if card["stale"]:
                 stale.append(entry)
             if not card["owner"]:
                 unowned.append(entry)
+            if "questions" in show:
+                for item in trackers_mod.list_items(repo_root, card["id"], "questions"):
+                    if item.get("status") in _PENDING_Q:
+                        questions.append(_entry(
+                            card["id"], item.get("text") or item.get("id"), kind,
+                            item.get("status") or "open"))
+
+    approvals = []
+    for card in agent_approvals.REGISTRY.pending_all():
+        approvals.append(_entry(card["chat"], card["tool"], "agents", "approval", href="agents"))
+
+    runs = []
+    try:
+        for rec in runs_mod.list_runs(repo_root):
+            if rec.get("state") not in _ATTN_RUNS:
+                continue
+            ticket = rec.get("ticket") or ""
+            runs.append(_entry(
+                ticket or rec["id"],
+                "Run %s is %s" % (rec["id"], rec.get("state")),
+                "tickets" if ticket else "agents",
+                rec.get("state") or "",
+                href="board" if ticket else "agents"))
+    except OSError:
+        runs = []
 
     blocked.sort(key=lambda e: -e["blocking"])
     stale.sort(key=lambda e: -(e["idle_days"] or 0))
@@ -58,7 +90,13 @@ def needs_attention(repo_root):
         "blocked": blocked[:8],
         "stale": stale[:8],
         "unowned": unowned[:8],
-        "counts": {"blocked": len(blocked), "stale": len(stale), "unowned": len(unowned)},
+        "questions": questions[:8],
+        "approvals": approvals[:8],
+        "runs": runs[:8],
+        "counts": {
+            "blocked": len(blocked), "stale": len(stale), "unowned": len(unowned),
+            "questions": len(questions), "approvals": len(approvals), "runs": len(runs),
+        },
     }
 
 

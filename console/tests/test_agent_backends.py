@@ -53,6 +53,19 @@ class TestShippedConfig:
                 assert row.get(field), "backend %r should declare %s" % (
                     row.get("id"), field)
 
+    def test_openai_row_is_an_api_backend_and_needs_its_key(self, monkeypatch):
+        row = next(r for r in tomlio.load(SHIPPED).get("backend", [])
+                   if r.get("id") == "openai")
+        backend = agent_backends.Backend(row)
+        assert backend.is_api and backend.transport == "openai_api"
+        assert backend.base_url == "https://api.openai.com/v1"
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        assert backend.installed is False
+        assert "OPENAI_API_KEY" in backend.unavailable_reason
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        assert backend.installed is True
+        assert backend.unavailable_reason == ""
+
 
 @pytest.fixture
 def on_path(monkeypatch):

@@ -15,6 +15,21 @@ python console/kanban.py reset --yes       # applies without prompting (scripts/
 Always run `--dry-run` first. The prompt (without `--yes`) requires typing
 `reset` to confirm — there is no undo outside of git.
 
+The same clean is on the Settings tab, under Workspace. It shows the
+template check, then applies only after you type `reset`. It does not
+commit.
+
+```bash
+python console/kanban.py workspace check            # leftover content, and any secret in git
+python console/kanban.py workspace check --secrets  # secret paths only; tickets are allowed
+python console/kanban.py workspace check --staged   # what the pre-commit hook runs
+```
+
+`workspace check` exits 1 when workspace content is still in this checkout
+or a secret path is tracked. `--secrets` and `--staged` exit 1 only for
+secret paths. A ticket, log, or investigation file is allowed: that is how
+a fork stores its own project.
+
 Options:
 
 | Flag | Effect |
@@ -50,10 +65,30 @@ Options:
 
 ## After a reset
 
-1. `python console/kanban.py onboard` walks the six first-run steps
+Clean deletes files in this checkout. The branch a clone or fork sees still
+has them until you commit those deletions. Older commits keep the files.
+There is no history rewrite.
+
+1. Commit the deletions when you want that branch to be the blank starting
+   point. Until then, `git status` shows them as deleted.
+2. `python console/kanban.py onboard` walks the six first-run steps
    (identity, project name, boards, agent CLI, first ticket, requirements).
-2. `python console/kanban.py ticket create T001 --title "..."` to start the
+3. `python console/kanban.py ticket create T001 --title "..."` to start the
    first real ticket, or use `kickoff` from a Claude/Cursor session.
+
+Someone who clones or forks the commit that contains those deletions gets
+an empty workspace and commits their own tickets on their own branch.
+Ticket paths stay normal git files.
+
+Secret paths stay off the branch: `.env`, key and certificate files,
+`console/config/notify-local.toml`, `.claude/settings.local.json`, and
+`console/.cache/`. `knowledge-center/logs/author.local` is one person's
+name; log-work creates it locally and it is gitignored. The commit hook
+that refuses staged secrets is opt-in:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Starting a genuinely new project from this template
 

@@ -197,16 +197,21 @@
     }
     return sect("ab-agents", "Agents", [
       C.el("p", {}, [
-        "The Agents tab runs a configured CLI (", C.el("code", {}, ["claude"]), ", ",
-        C.el("code", {}, ["cursor-agent"]), ", or whatever a fork adds under ",
-        C.el("code", {}, ["[agents.backends]"]), ") as a headless one-shot subprocess in this checkout, and polls "
-        + "its output. Skill and persona pickers are read off disk from ", C.el("code", {}, [".claude/skills/"]),
+        "The Agents tab is a live chat with a configured backend — a CLI (", C.el("code", {}, ["claude"]), ", ",
+        C.el("code", {}, ["cursor-agent"]), ", ", C.el("code", {}, ["codex"]), ") or an OpenAI-compatible API — "
+        + "whatever rows ", C.el("code", {}, ["console/config/agents.toml"]), " defines. Output streams in as it is "
+        + "produced. Skill and persona pickers are read off disk from ", C.el("code", {}, [".claude/skills/"]),
         " and ", C.el("code", {}, [".claude/agents/"]), ".",
       ]),
       C.el("ul", {}, [
-        C.el("li", {}, [C.el("b", {}, ["No live steering."]), " A running job can be watched and stopped, not replied to."]),
-        C.el("li", {}, [C.el("b", {}, ["No worktree isolation."]), " Jobs run directly in the target directory."]),
-        C.el("li", {}, [C.el("b", {}, ["Approval gate on live chats."]), " Gated tools (", C.el("code", {}, ["gated_tools"]), " in agents.toml) park on a Permission-needed card in the chat until you answer — Allow once, Allow for this chat, or Deny; no answer within the timeout denies fail-closed. One-shot CLI runs (", C.el("code", {}, ["kanban.py agents launch"]), ") have no gate, which is why their default stays ", C.el("code", {}, ["--permission-mode plan"]), "."]),
+        C.el("li", {}, [C.el("b", {}, ["Steering."]), " You can reply, and on a backend that holds its process open (Claude) a message sent mid-turn steers it at the next step boundary. Other backends queue the next turn instead; the composer says which you are about to do."]),
+        C.el("li", {}, [C.el("b", {}, ["Worktree per ticket."]), " A chat started with a ticket runs in that ticket's own git worktree; a chat with no ticket runs at the workspace root."]),
+        C.el("li", {}, [C.el("b", {}, ["Approval gate."]), " Gated tools (", C.el("code", {}, ["gated_tools"]), " in agents.toml) park on a Permission-needed card in the chat until you answer — Allow once, Allow for this chat, or Deny; no answer within the timeout denies fail-closed."]),
+      ]),
+      C.el("p", { class: "muted" }, [
+        "The one-shot path is separate: ", C.el("code", {}, ["kanban.py agents launch"]),
+        " runs a headless subprocess with no steering, no worktree and no approval gate, which is why its default "
+        + "mode stays ", C.el("code", {}, ["plan"]), ".",
       ]),
       C.el("button", { class: "btn sm", onclick: function () { api.go("agents"); } }, ["Open the Agents tab"]),
     ]);

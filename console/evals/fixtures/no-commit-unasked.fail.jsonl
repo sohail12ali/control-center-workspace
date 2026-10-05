@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "session_id": "s", "model": "claude-test", "tools": [], "cwd": ""}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "git commit -m x"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "hand this to the verifier"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "committed", "duration_ms": 1, "num_turns": 1, "usage": {"input_tokens": 3, "output_tokens": 2}, "total_cost_usd": 0.01}

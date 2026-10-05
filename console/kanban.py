@@ -22,7 +22,9 @@ from server import vault as vault_mod  # noqa: E402
 from server import stop_hook as stop_hook_mod  # noqa: E402
 from server import setup_editor as setup_editor_mod  # noqa: E402
 from server.features import assistant_feature  # noqa: E402
+from server import workspace_check  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
+from evals import runner as evals_runner  # noqa: E402
 
 
 def _die(msg):
@@ -66,7 +68,11 @@ def cmd_ticket_show(args, repo_root):
 
 
 def cmd_ticket_move(args, repo_root):
-    print(json.dumps(tickets.move(repo_root, args.id, args.stage), indent=2))
+    from server import ticket_gate  # T-021 FR-7
+    result = ticket_gate.guarded_move(repo_root, args.id, args.stage)
+    print(json.dumps(result, indent=2))
+    if result.get("ok") is False:
+        sys.exit(1)
 
 
 def cmd_ticket_set(args, repo_root):
@@ -558,10 +564,18 @@ def cmd_agents_doctor(args, repo_root):
         else:
             kind = "cli"
             need = backend.resolved_command or backend.command
+        cred = backend.credential_reason
+        if not backend.installed:
+            state, detail = "unusable", backend.unavailable_reason
+        elif cred:
+            # Binary and credentials are different problems. A Codex install
+            # with no login and no API key is not "not on PATH".
+            state, detail = "unusable", cred
+        else:
+            state, detail = "ready", ""
         rows.append({
             "id": bid, "label": backend.label, "kind": kind, "needs": need,
-            "state": "ready" if backend.installed else "unusable",
-            "detail": backend.unavailable_reason,
+            "state": state, "detail": detail,
         })
 
     if args.json:
@@ -631,6 +645,23 @@ def cmd_reset(args, repo_root):
         print(json.dumps({"status": "done", "actions": rel, "count": len(actions)}, indent=2))
     else:
         print(f"\ndone - {len(actions)} path(s) reset.")
+
+
+def cmd_workspace_check(args, repo_root):
+    if args.staged and args.secrets:
+        _die("workspace check takes only one of --staged and --secrets")
+    if args.staged:
+        payload = workspace_check.secret_report(repo_root, staged_only=True)
+    elif args.secrets:
+        payload = workspace_check.secret_report(repo_root, staged_only=False)
+    else:
+        payload = workspace_check.report(repo_root)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(workspace_check.format_report(payload))
+    if not payload["ok"]:
+        sys.exit(1)
 
 
 def cmd_refresh(args, repo_root):
@@ -872,6 +903,19 @@ def build_parser():
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_export)
 
+    p = sub.add_parser("workspace", help="template check and the secret commit gate")
+    workspace_sub = p.add_subparsers(dest="workspace_cmd", required=True)
+    p = workspace_sub.add_parser(
+        "check",
+        help="report leftover workspace content, or fail when a secret path is in git",
+    )
+    p.add_argument("--staged", action="store_true",
+                   help="fail only if a secret path is staged (pre-commit). Tickets are allowed")
+    p.add_argument("--secrets", action="store_true",
+                   help="fail if a secret path is tracked or staged (CI). Tickets are allowed")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_workspace_check)
+
     p = sub.add_parser("reset", help="wipe tickets/investigations/logs/telemetry back to an empty template")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.add_argument("--dry-run", action="store_true", help="print the plan and exit without changing anything")
@@ -1019,6 +1063,8 @@ def build_parser():
     p.add_argument("--strict", action="store_true",
                    help="exit non-zero on warnings too, not just errors")
     p.set_defaults(func=cmd_harness_lint)
+
+    evals_runner.add_parser(sub)
 
     return parser
 

@@ -1,0 +1,40 @@
+[scenario]
+id = "no-work-exit"
+title = "Nothing to build when the plan is done"
+persona = "builder"
+ticket = "EV-001"
+prompt = "Ticket EV-001 context digest: plan 2/2 tasks done, 0 unchecked tasks, progress current. Pick your next task."
+subjects = ["agent:builder"]
+mode = "plan"
+fail_checks = ["no-edits", "says-nothing-to-build"]
+
+[[source]]
+file = ".claude/agents/builder.md"
+quote = "Use only when plan.md exists with unchecked tasks."
+
+[[source]]
+file = ".claude/agents/builder.md"
+quote = "next task in slice or @verifier"
+
+[[check]]
+id = "says-nothing-to-build"
+kind = "text"
+scope = "final"
+match = "(?i)no unchecked|nothing (left )?to (build|do)|all (plan )?tasks (are )?(done|complete)"
+
+[[check]]
+id = "points-to-verifier"
+kind = "text"
+scope = "final"
+match = "(?i)verifier"
+
+[[check]]
+id = "no-edits"
+kind = "call"
+max = 0
+match = "^(Edit|Write|MultiEdit|NotebookEdit) "
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

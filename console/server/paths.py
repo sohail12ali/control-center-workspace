@@ -67,10 +67,29 @@ def _repo_root_from_workspace(resolved):
     return resolved["root"]
 
 
+def _anchored_root():
+    """The root named by `CONSOLE_REPO_ROOT` (T-024), or `None`. An agent whose
+    cwd is a ticket worktree gets this from `procs.clean_env`, so console state
+    stays in the main repo. Valid = absolute, an existing directory, and a root
+    (`_is_repo_root` or a `workspace.toml`). Anything else is ignored silently,
+    and is never walked upward from."""
+    value = os.environ.get("CONSOLE_REPO_ROOT")
+    if not value or not os.path.isabs(value) or not os.path.isdir(value):
+        return None
+    try:
+        ws = workspace_config.resolve(value)
+    except Exception:  # a broken workspace.toml must not break the locator
+        return None
+    if ws is not None:
+        return _repo_root_from_workspace(ws)
+    return value if _is_repo_root(value) else None
+
+
 def find_repo_root(start=None):
-    """Search upward for a repo root, trying `start`/cwd first, then the
-    console/ package's own location (so the CLI works regardless of the
-    caller's current directory).
+    """Search upward for a repo root. Order: explicit `start`, a valid
+    `CONSOLE_REPO_ROOT` (T-024, see `_anchored_root`), cwd, then the console/
+    package's own location (so the CLI works regardless of the caller's current
+    directory).
 
     For each candidate, a `workspace.toml` found anywhere above it (T-017 2c)
     is tried first via `workspace_config.resolve`, which itself returns
@@ -86,11 +105,17 @@ def find_repo_root(start=None):
     candidates = []
     if start:
         candidates.append(os.path.abspath(start))
+    candidates.append(None)  # the CONSOLE_REPO_ROOT anchor, between start and cwd
     candidates.append(os.getcwd())
     candidates.append(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     )
     for candidate in candidates:
+        if candidate is None:
+            anchored = _anchored_root()
+            if anchored is not None:
+                return anchored
+            continue
         ws = workspace_config.resolve(candidate)
         if ws is not None:
             return _repo_root_from_workspace(ws)

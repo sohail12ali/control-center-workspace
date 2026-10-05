@@ -14,10 +14,11 @@ boards (present in config, disabled by default — see Config below) and
 This stdlib server also does **not** capture the desktop, run OCR, drive
 mouse/keyboard, or keep a private microphone. A browser tab on `127.0.0.1`
 cannot do those things; live chat `/send` is text-only. Screen, voice, and
-OS control belong in a planned native shell that wraps this UI and reuses
-the Agents backends — see
-`knowledge-center/wiki/desktop-assistant.md`. Windows shell spike:
-`desktop/README.md`.
+tray live in the native shell at `desktop/` (a Tauri window around this same
+UI, reaching the server over a loopback bridge) — how to build and run it is
+`desktop/README.md`, the design is
+`knowledge-center/wiki/desktop-assistant.md`. OS-level mouse/keyboard
+actuation is not built.
 
 ## Onboarding
 
@@ -62,9 +63,20 @@ onboard [--json]        first-run setup steps, ending at the requirements pipeli
 serve [--host H] [--port N]
 export --out DIR
 refresh [--quiet]
+workspace check [--staged | --secrets] [--json]
+                         template check: leftover tickets, logs, investigations,
+                         telemetry, and cache in this checkout. Exit 1 when any
+                         remain, or when a secret path is tracked.
+                         --staged fails only on a staged secret (the pre-commit
+                         hook). --secrets fails on a tracked or staged secret
+                         (CI). Tickets, logs, and investigations are allowed
+                         under both flags — a fork commits those.
 reset [--yes] [--dry-run] [--keep-logs] [--keep-investigations]
-                         wipe tickets/investigations/logs/telemetry back to an empty
-                         template — see knowledge-center/wiki/reset-to-clean-slate.md
+                         wipe tickets/investigations/logs/telemetry from this
+                         checkout back to an empty template. Does not commit
+                         and does not rewrite history. Commit the deletions
+                         yourself when you want a blank branch others can clone.
+                         See knowledge-center/wiki/reset-to-clean-slate.md
 
 stop-hook check [--agent A] [--json]
                          session stop-hook (T-017 FR-10): reminds the calling identity
@@ -240,9 +252,22 @@ Three rules worth knowing:
   refused-paths list and are skipped by the search tool — an agent
   authenticating with a key cannot read that key back.
 
-To use OpenRouter after setting the key, flip `enabled = true` on the
-`openrouter` row in `config/agents.toml`. The model shortlist ships empty on
+To use OpenRouter, set the key: the `openrouter` row in `config/agents.toml`
+ships `enabled = true`, and `installed` stays false until the key is set. The model shortlist ships empty on
 purpose — see **Model catalogues** below, which is how the picker gets filled.
+
+Codex is a CLI agent, a peer of Claude Code and Cursor. The `codex` row runs
+`codex exec --json` with the prompt on stdin and a `workspace-write` sandbox.
+It does not offer a bypass from this page. Set `OPENAI_API_KEY` (that key is
+written into a per-chat `CODEX_HOME`, not into `~/.codex`) or sign in with
+`codex`. `agents doctor` reports a missing binary and missing credentials
+separately.
+
+OpenAI's own API is the same shape. The `openai` row ships `enabled = true`,
+`base_url = "https://api.openai.com/v1"`, and `api_key_env = "OPENAI_API_KEY"`.
+`installed` stays false until that key is set. It appears in the Console agent
+lane and is not the Assistant default. Refresh its models with
+`python console/kanban.py agents models openai --refresh`.
 
 If a key does get committed, rotate it. Removing the commit does not un-publish
 it.
@@ -476,9 +501,9 @@ budget, the prompt says so — a silently truncated skill is the worst failure
 available, because the agent follows the half it received and the transcript
 gives no sign.
 
-To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console and
-flip `enabled = true` on the `openrouter` row in `config/agents.toml`. It ships
-disabled because this template has no key and cannot verify one. `installed` for
+To enable it: set `OPENROUTER_API_KEY` in the shell that starts the console;
+the `openrouter` row in `config/agents.toml` ships `enabled = true`, and
+`installed` stays false until the key is set. `installed` for
 an API backend means "the key is set", not "a binary is on PATH" — asking PATH
 would report it missing and grey out something that would have worked.
 
@@ -510,7 +535,13 @@ frontmatter names against their directory/filename, `.claude/...` paths against
 what exists, orphan skills, and the roster counts CLAUDE.md states. Exits
 non-zero on errors; warnings need `--strict` to fail. Run in CI by
 `.github/workflows/verify.yml` and, for harness-touching commits only, by
-`.githooks/pre-commit`.
+`.githooks/pre-commit`. That hook also always runs `workspace check --staged`,
+which refuses a staged secret path and allows tickets. Opt in with
+`git config core.hooksPath .githooks`. CI runs `workspace check --secrets`.
+
+Prompt evals live in `console/evals/`. `python console/kanban.py evals replay`
+grades the committed fixtures and does not start a model. How to add a
+scenario, and what replay does not prove, is `console/evals/README.md`.
 
 `questions`/`bugs`/`todos` skill docs (`.claude/skills/{questions,bugs,todos}/SKILL.md`)
 describe their own verbs (`answer`, `fix`, `verify`, `close`, `doing`, `done`,
@@ -633,6 +664,33 @@ static/           vanilla HTML/JS/CSS frontend, no build step, one file per
                   tab (core.js has the shared tab-registry/fetch helpers)
 ```
 
+### Four doors, one manager
+
+An agent gets started through one of four doors. Three go through
+`server/agent_manager.py` (`create` / `send`), so they share one live-session
+stack: steering, approvals, per-ticket worktrees, telemetry.
+
+1. **Agents tab** — `static/agents.js` → `POST /api/agents/chats`
+   (`features/agents_feature.py`).
+2. **Assistant, tray and voice** — `POST /api/assistant/say`
+   (`features/assistant_feature.py`) reuses one `agent_manager` chat.
+3. **Runs, verbs, MCP** — the `delegate` and `launch_role` verbs
+   (`verb_handlers.py`, rows in `config/verbs.toml`) start a chat through
+   `agent_manager`; a Run in `runs.py` points at that chat and
+   `run_watchdog.py` watches it. Schedules and `mcp_server.py` reach the same
+   verbs.
+4. **`kanban.py agents launch`** — the one-shot debug CLI
+   (`server/agents.py`). It reads the same backend registry but skips
+   steering, worktrees and the approval gate, and a server restart loses
+   track of an in-flight job.
+
+(The Telegram bot, `telegram_bot.py`, is a further `agent_manager` caller.)
+
+Names that trip people up: `server/backends/` is the **ticket-storage vault**
+adapter, not the agent registry (that is `agent_backends.py`); `jobs.py` is the
+**verb queue**; the "jobs" in `agents.py` are **one-shot processes**; `runs.py`
+is the **durable work record**.
+
 ## Plugin architecture
 
 A feature is one server module plus one client file, and adding one edits no
@@ -735,9 +793,10 @@ Deliberately smaller than a full agent-orchestration UI:
 - **No live steering (one-shot launcher only).** `agents launch` starts a
   process and lets you watch/stop it, not talk to it mid-turn — steering
   needs the open stdin channel a live chat holds.
-- **No worktree isolation.** Every run executes directly in the workspace
-  root (or a `cwd` you pass, still inside the workspace). Don't launch two
-  runs against the same ticket/repo concurrently.
+- **No worktree isolation on the one-shot launcher.** `agents launch` runs
+  directly in the workspace root (or a `cwd` you pass, still inside the
+  workspace); don't launch two against the same ticket/repo concurrently.
+  Ticketed live chats and Runs isolate in a worktree (T-018).
 - **Approval gate on live chats only.** In a live chat, tools listed under
   `gated_tools` in `console/config/agents.toml` are held by a PreToolUse hook:
   a "Permission needed" card appears in the transcript (Allow once / Allow for
@@ -1077,7 +1136,7 @@ actuation, and watch mode.
 
 ### Choosing where the model runs
 
-Every OpenAI-compatible endpoint is a provider: OpenRouter, **Ollama**, **LM
+Every OpenAI-compatible endpoint is a provider: **OpenAI**, OpenRouter, **Ollama**, **LM
 Studio**, or anything else that speaks that API — a vLLM box, llama.cpp, a
 hosted gateway. Settings → **Model providers** switches them on and off and
 adds your own; `kanban agents provider list|enable|disable|add|remove` does the

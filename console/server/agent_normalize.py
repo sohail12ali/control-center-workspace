@@ -49,6 +49,30 @@ def _text_of(content):
     return "".join(parts)
 
 
+#: Bounds on the failure evidence copied onto `turn.end` (T-020 FR-10).
+EVIDENCE_TEXT_MAX = 500
+EVIDENCE_ERRORS_MAX = 10
+
+
+def _failure_evidence(raw):
+    """`errors`, `error`, `api_error_status`, `stop_reason` from a result line,
+    bounded, with empty defaults so the classifier never branches on absence."""
+    errors = raw.get("errors")
+    items = []
+    for item in (errors if isinstance(errors, list) else [])[:EVIDENCE_ERRORS_MAX]:
+        text = item.get("message") if isinstance(item, dict) else item
+        items.append(str(text if text is not None else "")[:EVIDENCE_TEXT_MAX])
+    status = raw.get("api_error_status")
+    err = raw.get("error")
+    stop = raw.get("stop_reason")
+    return {
+        "errors": items,
+        "error": err[:EVIDENCE_TEXT_MAX] if isinstance(err, str) else "",
+        "api_error_status": status if isinstance(status, int) and not isinstance(status, bool) else None,
+        "stop_reason": stop[:64] if isinstance(stop, str) else "",
+    }
+
+
 class Normalizer:
     """Stateful because deltas only make sense in sequence: a `text.delta`
     belongs to whichever block is currently open.
@@ -111,6 +135,20 @@ class Normalizer:
                      "text": _text_of((raw.get("message") or {}).get("content"))}]
         if t == "result":
             return self._result(raw)
+        if t == "thread.started":
+            return [{
+                "type": "session.init",
+                "session_id": raw.get("thread_id") or "",
+                "model": "",
+                "tools": [],
+                "cwd": "",
+            }]
+        if t in ("item.started", "item.completed"):
+            return self._codex_item(raw, started=(t == "item.started"))
+        if t == "turn.completed":
+            return self._codex_turn(raw, failed=False)
+        if t in ("turn.failed", "error"):
+            return self._codex_turn(raw, failed=True)
         if t == "control_response":
             resp = raw.get("response") or {}
             if resp.get("subtype") == "success":
@@ -297,6 +335,86 @@ class Normalizer:
                     {"type": "text.delta", "block": self._text_blk, "text": text}]
         return [{"type": "text.delta", "block": self._text_blk, "text": text}]
 
+    _CODEX_TOOLS = frozenset({
+        "command_execution", "function_call", "tool_call", "mcp_tool_call", "web_search",
+    })
+
+    def _codex_item(self, raw, started=False):
+        """Codex `exec --json` item events. Shape-driven, same as the rest."""
+        item = raw.get("item") if isinstance(raw.get("item"), dict) else {}
+        kind = item.get("type") or ""
+        if kind == "agent_message":
+            if started:
+                return []
+            text = item.get("text") or ""
+            self._had_output = bool(text.strip())
+            blk = self._next_block()
+            return [
+                {"type": "text.start", "block": blk},
+                {"type": "text.delta", "block": blk, "text": text},
+                {"type": "text.done", "block": blk, "text": text},
+            ]
+        if kind == "reasoning":
+            if started:
+                return []
+            text = item.get("text") or ""
+            blk = self._next_block()
+            return [
+                {"type": "thinking.start", "block": blk},
+                {"type": "thinking.delta", "block": blk, "text": text},
+                {"type": "thinking.done", "block": blk, "text": text},
+            ]
+        if kind in self._CODEX_TOOLS:
+            tid = str(item.get("id") or "")
+            name = kind
+            args = {}
+            if item.get("command"):
+                name = "command"
+                args = {"command": item.get("command")}
+            elif item.get("name"):
+                name = str(item.get("name"))
+                raw_args = item.get("arguments") if item.get("arguments") is not None else item.get("input")
+                args = raw_args if isinstance(raw_args, dict) else {"input": raw_args or ""}
+            if not tid:
+                tid = self._next_block()
+            if started:
+                return [{"type": "tool.pending", "id": tid, "name": name}]
+            out = []
+            if tid not in self._tools:
+                out.extend(self._tool_start(self._next_block(), tid, name, args))
+                self._tools[tid] = True
+            output = item.get("aggregated_output")
+            if output is None:
+                output = item.get("output") if item.get("output") is not None else item.get("result")
+            if not isinstance(output, str):
+                output = json.dumps(output)[:8000] if output is not None else ""
+            exit_code = item.get("exit_code")
+            ok = exit_code in (None, 0) and str(item.get("status") or "") not in ("failed", "error")
+            out.append({"type": "tool.result", "id": tid, "ok": ok, "content": output[:8000]})
+            return out
+        return [{"type": "raw", "payload": raw}]
+
+    def _codex_turn(self, raw, failed):
+        usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+        err = raw.get("error") if isinstance(raw.get("error"), dict) else {}
+        message = raw.get("message") or err.get("message") or ""
+        out = []
+        if usage:
+            out.append({
+                "type": "usage",
+                "input_tokens": usage.get("input_tokens") or 0,
+                "output_tokens": usage.get("output_tokens") or 0,
+            })
+        shaped = {
+            "subtype": "error" if failed else "success",
+            "is_error": failed,
+            "usage": usage,
+            "result": "" if failed else (raw.get("result") or ""),
+            "error": message if failed else "",
+        }
+        out.extend(self._result(shaped))
+        return out
+
     def _result(self, raw):
         out = self._seal_thinking() + self._seal_text()
         # A turn that produced no assistant content at all is a real outcome,
@@ -320,6 +438,7 @@ class Normalizer:
             "input_tokens": ((raw.get("usage") or {}).get("input_tokens") or 0),
             "output_tokens": ((raw.get("usage") or {}).get("output_tokens") or 0),
             "result": (raw.get("result") or "")[:4000],
+            **_failure_evidence(raw),
         })
         return out
 

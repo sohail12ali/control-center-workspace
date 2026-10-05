@@ -572,6 +572,30 @@ class Backend:
                 argv.append(part)
         return argv
 
+    @property
+    def prompt_via(self):
+        """`argv` (default) puts the prompt in the command line. `stdin` writes
+        it to the process and closes stdin — Codex `exec` reads the prompt
+        that way and rejects it as an argument."""
+        return self.raw.get("prompt_via") or "argv"
+
+    def child_env(self, repo_root, session_id):
+        """Extra environment for one child. Empty for every backend except a
+        Codex row, which may point `CODEX_HOME` at a per-chat directory."""
+        if self.auth != "codex":
+            return {}
+        from . import codex_auth
+        return codex_auth.child_env(repo_root, session_id)
+
+    @property
+    def credential_reason(self):
+        """Why this backend cannot start even though its binary is present.
+        Empty when credentials are not this row's problem, or when they are ready."""
+        if self.auth != "codex" or not self.installed:
+            return ""
+        from . import codex_auth
+        return codex_auth.missing_reason()
+
     def turn_argv(self, prompt, *, mode="", model="", resume_id=""):
         """The argv for one turn of a `resume` backend, or a `oneshot` run."""
         key = "resume_args" if (resume_id and self.raw.get("resume_args")) else None

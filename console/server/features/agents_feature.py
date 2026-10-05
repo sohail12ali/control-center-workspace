@@ -29,6 +29,8 @@ def apply(ctx):
     # approval hook as one started from this tab — the hook needs a port to
     # call home to, and a verb handler has no request to read it from.
     agent_manager.set_server_port(server_port)
+    # The Run watchdog (T-020 FR-14); it honours `[runs] watchdog_enabled`.
+    agent_manager.start_watchdog(repo_root)
 
     ctx.provide("agents", agent_manager)
     ctx.register_tab(

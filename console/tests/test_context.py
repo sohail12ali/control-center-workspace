@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from server import context, telemetry, tickets, trackers
+from server import context, runs, telemetry, tickets, trackers
 
 PLAN = """\
 ---
@@ -176,3 +176,74 @@ class TestMarkdown:
     def test_stays_small_enough_to_paste_into_a_prompt(self, ticket):
         # The whole point is replacing ~27 KB of artifacts with a digest.
         assert len(context.format_markdown(context.build(ticket, "CC-T001"))) < 2048
+
+
+class TestClaimReviewRuns:
+    """T-020 FR-23: claim, review and Run facts in the digest (stable JSON
+    shape for T-021; markdown lines only when there is something to say)."""
+
+    def _failed_run(self, repo):
+        rec = runs.create(repo, executor="chat", executor_id="c", ticket="CC-T001",
+                          role="builder")
+        runs.update(repo, rec["id"], state="failed", failure_class="process_lost")
+        return rec["id"]
+
+    def test_stale_claim_two_rounds_one_failed_run_render_three_lines_and_json_keys(
+            self, ticket):
+        tickets.set_claim(ticket, "CC-T001", "old-agent", claimed_at="2026-01-01T00:00:00Z")
+        tickets.record_review(ticket, "CC-T001", "changes_requested")
+        tickets.record_review(ticket, "CC-T001", "changes_requested")
+        rid = self._failed_run(ticket)
+        d = context.build(ticket, "CC-T001")
+        assert d["claim"]["state"] == "stale" and d["claim"]["holder"] == "old-agent"
+        assert d["claim"]["basis"] == "ttl"
+        assert d["review"] == {"rounds": 2, "escalated": False}
+        assert d["runs"]["total"] == 1 and d["runs"]["failed"] == 1
+        assert d["runs"]["active"] == 0 and d["runs"]["latest"]["id"] == rid
+        md = context.format_markdown(d).splitlines()
+        facts = [l for l in md if l.startswith(("**Claim**", "**Review**", "**Runs**"))]
+        assert len(facts) == 3
+        assert "stale" in facts[0] and "old-agent" in facts[0]
+        assert "2" in facts[1]
+        assert "1 failed" in facts[2] and "process_lost" in facts[2]
+
+    def test_plain_ticket_markdown_identical_to_before(self, ticket):
+        d = context.build(ticket, "CC-T001")
+        assert d["claim"]["state"] == "free"
+        assert d["review"] == {"rounds": 0, "escalated": False}
+        assert d["runs"] == {"total": 0, "active": 0, "failed": 0, "latest": None}
+        legacy = {k: v for k, v in d.items() if k not in ("claim", "review", "runs")}
+        assert context.format_markdown(d) == context.format_markdown(legacy)
+
+    def test_escalated_review_line_says_escalated(self, ticket):
+        for _ in range(3):
+            tickets.record_review(ticket, "CC-T001", "changes_requested")
+        d = context.build(ticket, "CC-T001")
+        assert d["review"] == {"rounds": 3, "escalated": True}
+        line = [l for l in context.format_markdown(d).splitlines()
+                if l.startswith("**Review**")][0]
+        assert "ESCALATED" in line
+
+
+class TestDigest:
+    """T-021 FR-6: the ticket_liveness key and `Liveness:` line, only on a finding."""
+
+    def test_in_progress_without_path_shows_line_and_json_key(self, ticket):
+        tickets.move(ticket, "CC-T001", "in-progress")
+        d = context.build(ticket, "CC-T001")
+        assert [f["code"] for f in d["ticket_liveness"]["findings"]] == ["no_action_path"]
+        lines = [l for l in context.format_markdown(d).splitlines()
+                 if l.startswith("**Liveness:**")]
+        assert len(lines) == 1 and "no_action_path" in lines[0]
+
+    def test_done_and_healthy_tickets_render_as_before(self, ticket):
+        d = context.build(ticket, "CC-T001")  # open lane: not applicable
+        assert "ticket_liveness" not in d
+        tickets.move(ticket, "CC-T001", "in-progress")
+        trackers.add(ticket, "CC-T001", "questions", "Q?")
+        healthy = context.build(ticket, "CC-T001")
+        tickets.move(ticket, "CC-T001", "done")
+        done = context.build(ticket, "CC-T001")
+        for digest in (healthy, done):
+            assert "ticket_liveness" not in digest
+            assert "Liveness" not in context.format_markdown(digest)

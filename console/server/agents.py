@@ -21,9 +21,9 @@ silently pretending to have parity:
 
 - No live steering — a running job can be watched and stopped, not talked
   to mid-turn.
-- No worktree isolation — every job runs directly in the target directory.
-  Don't launch two jobs against the same ticket/repo concurrently. (True of
-  the live chats too.)
+- No worktree isolation on this launcher — every job runs directly in the
+  target directory. Don't launch two jobs against the same ticket/repo
+  concurrently. (Ticketed live chats isolate in a worktree since T-018.)
 - No approval-hook gate on THIS one-shot path — a launched command runs with
   whatever permission mode its own config/args grant it. That is why a row's
   `oneshot_args` should pass `{mode}` and why `launch()` defaults the mode to
@@ -49,6 +49,7 @@ import uuid
 from . import agent_backends
 from . import boards as boards_mod
 from . import procs
+from . import run_config
 from . import tickets as tickets_mod
 from .paths import find_repo_root, resolve_rel
 
@@ -177,20 +178,55 @@ def _build_argv(backend, prompt, mode="", model=""):
     return backend.turn_argv(prompt, mode=mode, model=model)
 
 
+def _is_result_line(line):
+    """A parsed JSON line whose `type` is `result` (the CLI's terminal event)."""
+    if '"result"' not in line:
+        return False
+    try:
+        return json.loads(line).get("type") == "result"
+    except (ValueError, AttributeError):
+        return False
+
+
+def _linger_kill(job, proc):
+    if proc.poll() is not None:
+        return
+    procs.kill_tree(proc, grace=2.0)
+    with job["lock"]:
+        job["lingering_killed"] = True
+        job["buffer"].append("[console] process kept running after its result and was ended" + chr(10))
+
+
 def _reader_thread(job_id, proc, repo_root):
     job = _JOBS[job_id]
+    cfg = run_config.runs_cfg(repo_root)
+    cap = cfg["max_line_bytes"]
+    total_len = 0  # running count: summing the buffer per line was O(n^2)
+    linger = None
     try:
-        for line in proc.stdout:
+        for line in procs.iter_capped_lines(proc.stdout, cap):
+            if linger is None and _is_result_line(line):
+                # FR-8: result printed; if the process does not exit within the
+                # grace, kill it. The reader then ends through EOF.
+                linger = threading.Timer(cfg["linger_grace_secs"], _linger_kill,
+                                         args=(job, proc))
+                linger.daemon = True
+                linger.start()
             with job["lock"]:
                 job["buffer"].append(line)
-                total_len = sum(len(x) for x in job["buffer"])
+                total_len += len(line)
                 if total_len > MAX_BUFFERED_CHARS:
                     job["buffer"] = job["buffer"][-1000:]
+                    total_len = sum(len(x) for x in job["buffer"])
                     job["truncated"] = True
         proc.wait()
     finally:
+        if linger is not None:
+            linger.cancel()
         with job["lock"]:
-            job["status"] = "done" if proc.returncode == 0 else "error"
+            # A process we ended after its result did its work: not an error.
+            ok = proc.returncode == 0 or job.get("lingering_killed")
+            job["status"] = "done" if ok else "error"
             job["exit_code"] = proc.returncode
             job["finished_at"] = time.time()
         _persist_job(repo_root, job_id)
@@ -248,7 +284,8 @@ def launch(repo_root, backend_id, prompt, cwd=None, skill=None, persona=None,
             stdin=subprocess.DEVNULL,
             text=True,
             bufsize=1,
-            **procs.popen_kwargs(),
+            env=procs.clean_env(repo_root),
+            **procs.tree_spawn_kwargs(),
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"backend command not found on PATH: {argv[0]!r} ({exc})") from None
@@ -336,5 +373,8 @@ def stop_job(repo_root, job_id):
     with job["lock"]:
         if job["status"] != "running":
             return {"id": job_id, "status": job["status"]}
-        job["proc"].terminate()
+        proc = job["proc"]
+    # Outside the job lock: the tree kill can wait out its grace period, and
+    # the reader thread needs that lock to finalise the job.
+    procs.kill_tree(proc, grace=2.0)
     return {"id": job_id, "status": "stopping"}

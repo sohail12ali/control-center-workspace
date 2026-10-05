@@ -1,0 +1,149 @@
+[meta]
+ticket = "T-021"
+tracker = "questions"
+updated = "2026-10-01T12:23:23Z"
+seq = 12
+
+[[items]]
+id = "Q1"
+status = "resolved"
+text = "Where does the liveness-contract check live: harness lint, or a separate ticket-state check?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (decision-log a1). A separate ticket-state check: new module plus read-only verb ticket-liveness, surfaced in the console context digest. Not harness lint: lint is static over .claude (harness_lint.py:1-25), CI has no Run records (console/.cache is gitignored) and pre-commit only fires on .claude or CLAUDE.md paths."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q2"
+status = "resolved"
+text = "Which lanes carry a liveness expectation, and is the open lane exempt?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a2). kind=tickets only. open and terminal lanes exempt (Paperclip backlog/todo carry no execution expectation). in-progress and verify need at least one path: a live Run, a held claim, or a pending question. blocked has its own rule. The human owner field is not a path (every ticket has one, so the check would be vacuous)."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q3"
+status = "resolved"
+text = "What severity does the liveness check have, and where is prose-only blocked rejected?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a3). The scan is WARN-level and report-only, never a CI failure. Rejection happens at the transition into blocked (verb and CLI), prospective only, as Paperclip does (routable-blocked.ts rollout marker). The vault has 0 blocked tickets today, so nothing existing is touched. No override: the remedy (add a question) is always available."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q4"
+status = "resolved"
+text = "What counts as a pending question, and what are the owner and next action for a blocked ticket?"
+type = "decision"
+priority = "critical"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a4). Pending question = status open or answered (clarify/question-templates.md lifecycle), any priority. A blocked ticket is routable iff it has a pending question or an open critical bug (trackers.blockers) AND an owner (claim holder if held, else the ticket owner field, which stands in for Paperclip's board owner). The action is the item text. A named-responder field is deferred as a todo."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q5"
+status = "resolved"
+text = "What does close-check accept as evidence, and which classes block versus warn?"
+type = "decision"
+priority = "critical"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a5). Measured on 212 historical PASS rows: 84 percent are prose-only, 16 percent cite a resolvable path, 0 are empty, 1 cites only phantom refs. So: block on empty evidence, on all-phantom refs, on non-pass rows; warn on prose-only and partial; accepted means exists, never passes. A at-least-one-resolvable-ref rule would have blocked 84 percent of rows and was rejected."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q6"
+status = "resolved"
+text = "Does ticket-move to done consult close-check, and how does a human override it with an audited reason?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a6). Yes: ticket-move (verb) and CLI ticket move consult close-check when the target is a terminal lane of a tickets-kind ticket; on blocks they refuse and write nothing. tickets.move stays the raw writer (tests, board drag). A human overrides with the separate verb close-override (confirm, reason of at least 10 chars, audit row plus comment), so it can be gated by tool name."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q7"
+status = "resolved"
+text = "Skill-description lint: threshold, severity, what happens to the existing offenders, is use-when/not-when enforced?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a7). Threshold 300 (Paperclip tested cap). WARN only; 20 of 39 skills exceed it (2,550 of 12,137 description chars), and shrinking prompt-facing text without evals is what the dossier itself warns against, so offenders are not edited here. use-when/not-when stays a documented convention: Paperclip does not test it and a regex on prose would guess (28 of 39 contain a use word, 6 an explicit not-when). Agents out of scope. Follow-up todo: trim after T-022, then raise to ERROR."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q8"
+status = "resolved"
+text = "What is the smallest doc-drift mechanism, given the roster must stay at 39 skills?"
+type = "decision"
+priority = "high"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a8). Fix the verifiably stale docs now. Mechanism: extend the existing stale-count roster check to README.md, plus one test that a doc claim about a backend shipping disabled agrees with agents.toml. No SHA cursor (shallow CI clone, noise), no claim registry (false positives), no dated-snapshot rule (one dated doc exists). Semantic drift stays a human step; stated as a limit."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q9"
+status = "resolved"
+text = "assistant.md is over PERSONA_CAP: trim the file or raise the cap, so the untrusted-content clause is actually delivered?"
+type = "decision"
+priority = "critical"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a9). Trim the file, keep PERSONA_CAP at 4000. Measured: assistant.md is 4,725 chars, so persona_text cuts it mid-bullet in Safety today; the bullet that says the Assistant does not approve its own tool calls and the Known fast commands section never reach the model. The clause goes inside Safety; the file must fit under the cap; a test pins fit, the clause and the previously cut bullet."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q10"
+status = "resolved"
+text = "What must T-021 wait for from T-020, and what can be built before or in parallel?"
+type = "decision"
+priority = "critical"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a10). Slice A (skill lint, plan text, docs, README count check, assistant clause) has no T-020 dependency. Slice B (liveness, close-check, guarded move, override, protocol text) is built after T-020: it consumes runs.ACTIVE, tickets.claim_status, review_escalated and the FR-23 digest pattern. Without T-020 every Run stays running forever, so a live-Run test would be wrong."
+resolved_on = "2026-10-01"
+
+[[items]]
+id = "Q11"
+status = "open"
+text = "Should override of a blocked close need a human approval card? That needs the user to add the close-override tool name to gated_tools in agents.toml by hand."
+type = "decision"
+priority = "medium"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q12"
+status = "resolved"
+text = "Who closes a ticket: the verifier that judged the criteria, or a separate actor behind the close-check gate?"
+type = "decision"
+priority = "critical"
+raised_by = "analyst"
+raised_on = "2026-10-01"
+affects = []
+answer = "Decided under delegated authority 2026-10-01, reversible (a12). The verifier reports a Disposition and stops at close-check; it does not run close-work. The harness (or the user) runs close-work, which goes through the guarded move. CLAUDE.md verifier row and harness.md row are edited to match; today verifier.md step 10 says close-work while its own output contract asks the user to approve it."
+resolved_on = "2026-10-01"

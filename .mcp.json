@@ -2,7 +2,10 @@
   "mcpServers": {
     "console": {
       "command": "python",
-      "args": ["console/mcp_server.py"]
+      "args": ["console/mcp_server.py"],
+      "env": {
+        "CONSOLE_REPO_ROOT": "${CONSOLE_REPO_ROOT:-}"
+      }
     }
   }
 }

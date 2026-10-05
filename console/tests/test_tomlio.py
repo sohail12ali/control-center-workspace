@@ -109,6 +109,52 @@ class TestFileIO:
         assert tomlio.load(path)["t"]["k"].startswith("w")
 
 
+class TestReplaceRetry:
+    """Windows refuses os.replace with PermissionError while another process or
+    thread has the target open for an instant; the writer retries briefly."""
+
+    def _flaky(self, monkeypatch, failures):
+        real, calls = os.replace, []
+
+        def replace(src, dst):
+            calls.append(1)
+            if len(calls) <= failures:
+                raise PermissionError(13, "sharing violation")
+            return real(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        monkeypatch.setattr(tomlio.time, "sleep", lambda s: None)
+        return calls
+
+    def test_two_permission_errors_then_success_writes_the_file(self, tmp_path, monkeypatch):
+        path = tmp_path / "f.toml"
+        calls = self._flaky(monkeypatch, 2)
+        tomlio.atomic_write(str(path), {"a": 1})
+        assert len(calls) == 3 and tomlio.load(str(path)) == {"a": 1}
+        assert not os.path.exists(str(path) + ".lock")
+
+    def test_atomic_update_retries_the_same_way(self, tmp_path, monkeypatch):
+        path = tmp_path / "f.toml"
+        calls = self._flaky(monkeypatch, 2)
+        tomlio.atomic_update(str(path), lambda d: {"b": 2})
+        assert len(calls) == 3 and tomlio.load(str(path)) == {"b": 2}
+
+    def test_exhausted_retries_reraise_and_release_the_lock(self, tmp_path, monkeypatch):
+        path = tmp_path / "f.toml"
+        calls = self._flaky(monkeypatch, 10 ** 6)
+        with pytest.raises(PermissionError):
+            tomlio.atomic_write(str(path), {"a": 1})
+        assert len(calls) == tomlio.REPLACE_TRIES
+        assert not os.path.exists(str(path) + ".lock")
+
+    def test_other_errors_are_not_retried(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(os, "replace", lambda s, d: calls.append(1) or (_ for _ in ()).throw(OSError("x")))
+        with pytest.raises(OSError):
+            tomlio.atomic_write(str(tmp_path / "f.toml"), {"a": 1})
+        assert len(calls) == 1
+
+
 class TestAtomicUpdate:
     """T-017 3a-5: the read-modify-write primitive `tickets.set_claim` reuses
     for race-safe claims — generic, so it is tested at this layer once rather

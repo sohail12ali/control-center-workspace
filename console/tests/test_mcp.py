@@ -285,7 +285,7 @@ class TestResourcesSubscribeAndNotify:
         session.server.handle({
             "jsonrpc": "2.0", "id": 99, "method": "tools/call",
             "params": {"name": "ticket-move",
-                      "arguments": {"ticket": "CC-T001", "stage": "blocked", "confirm": True}},
+                      "arguments": {"ticket": "CC-T001", "stage": "in-progress", "confirm": True}},
         })
         session.out.seek(before)
         lines = [json.loads(l) for l in session.out.read().strip().splitlines()]

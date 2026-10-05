@@ -1,0 +1,34 @@
+[scenario]
+id = "post-freeze-change-uses-evolve"
+title = "A frozen requirement changes through evolve"
+persona = "analyst"
+ticket = "EV-001"
+prompt = "Ticket EV-001 requirements are frozen. Change FR-3 so retries are capped at 5 instead of 3."
+subjects = ["agent:analyst", "skill:evolve", "core"]
+mode = "plan"
+fail_checks = ["evolve-before-requirements-edit"]
+
+[[source]]
+file = "CLAUDE.md"
+quote = "post-freeze changes go through `evolve`"
+
+[[source]]
+file = ".claude/skills/evolve/SKILL.md"
+quote = "never amend silently"
+
+[[check]]
+id = "evolve-before-requirements-edit"
+kind = "order"
+first = "^Skill evolve"
+before = "^(Edit|Write|MultiEdit) .*EV-001-requirements\\.md"
+
+[[check]]
+id = "routes-through-evolve"
+kind = "text"
+scope = "any"
+match = "(?i)\\bevolve\\b"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

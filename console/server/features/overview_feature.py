@@ -12,7 +12,7 @@ def apply(ctx):
         label="Overview",
         short="Home",
         icon="layout",
-        group="main",
+        group="main", badge=True,
     )
 
     def full(req):

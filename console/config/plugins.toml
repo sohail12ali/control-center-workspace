@@ -95,6 +95,14 @@ id = "assistant"
 module = "features.assistant_feature"
 enabled = true
 
+# Template check and the typed clean on Settings. No tab — the panel lives
+# on the Settings page. Disabling this removes the routes; the CLI reset
+# command still works.
+[[plugin]]
+id = "workspace"
+module = "features.workspace_feature"
+enabled = true
+
 # The nav manifest itself. Disabling this leaves the frontend with no tab
 # list to boot from, so it is effectively required.
 [[plugin]]

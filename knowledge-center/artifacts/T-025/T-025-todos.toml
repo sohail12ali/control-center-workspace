@@ -1,0 +1,18 @@
+[meta]
+ticket = "T-025"
+tracker = "todos"
+updated = "2026-10-05T02:12:16Z"
+seq = 1
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "From T-024 verification: .mcp.json launches the relative console/mcp_server.py, so a worktree chat runs the worktree branch's copy of the MCP server code (state is anchored to main via CONSOLE_REPO_ROOT, but only if that branch copy already has T-024's paths.py). When T-025 rewrites the per-chat Claude launch, write a per-chat --mcp-config pointing at the MAIN repo's absolute mcp_server.py (with --strict-mcp-config), so worktrees cut before T-024 can't regress."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-05"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""

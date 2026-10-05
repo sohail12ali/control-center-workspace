@@ -1,12 +1,12 @@
 [meta]
 ticket = "T-015"
 tracker = "todos"
-updated = "2026-09-10T16:24:35Z"
+updated = "2026-10-05T02:37:54Z"
 seq = 8
 
 [[items]]
 id = "TD-1"
-status = "open"
+status = "done"
 text = "Set OPENROUTER_API_KEY in the workspace .env, then pick a small tool-capable model in Settings > Assistant. Until this is done the chain reports the key missing and falls back to claude, which is correct but still slow — the speed win is configured, not demonstrated. Then read duration_ms/ttft_ms from knowledge-center/telemetry/."
 type = "task"
 priority = "medium"
@@ -16,6 +16,7 @@ due = ""
 context = ""
 done_on = ""
 drop_reason = ""
+answer = "2026-10-05: key set; Assistant talk = openrouter nvidia/nemotron-3.5-lightning:free (free, tool-capable per OpenRouter's live model list). 6 turns: median duration_ms 1732, ttft 1603.5 (telemetry 2026-10.jsonl, session 1bea55008c29). AC2 PASS. Side finding: on 'What day is it today?' the model called run_command `date` (gated card; denied) â€” the talk prompt doesn't carry today's date."
 
 [[items]]
 id = "TD-2"
@@ -45,7 +46,7 @@ drop_reason = ""
 
 [[items]]
 id = "TD-4"
-status = "open"
+status = "done"
 text = "Fix or remove the lm-studio 'where' override in console/.cache/agents/providers.json — 192.168.1.14:1234 is a guaranteed 1.5s timeout on every probe of that provider."
 type = "task"
 priority = "medium"
@@ -55,6 +56,7 @@ due = ""
 context = ""
 done_on = ""
 drop_reason = ""
+answer = "2026-10-04: 192.168.1.14:1234 unreachable (curl http 000). Disabled lm-studio via POST /api/agents/providers {\"enabled\":{\"lm-studio\":false}}; providers.json now enabled.lm-studio=false, base_url kept for re-enabling."
 
 [[items]]
 id = "TD-5"

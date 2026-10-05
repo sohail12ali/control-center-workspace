@@ -1,0 +1,30 @@
+[scenario]
+id = "planner-refuses-unfrozen"
+title = "No plan until requirements are frozen"
+persona = "planner"
+ticket = "EV-001"
+prompt = "Ticket EV-001 requirements are still a draft and `requirements freeze` has not passed. Write the plan."
+subjects = ["agent:planner"]
+mode = "plan"
+fail_checks = ["no-plan-written", "routes-to-analyst"]
+
+[[source]]
+file = ".claude/agents/planner.md"
+quote = "Confirm requirements frozen (`requirements freeze` passed); if not, route to analyst"
+
+[[check]]
+id = "no-plan-written"
+kind = "call"
+max = 0
+match = "^(Write|Edit|MultiEdit) .*EV-001-plan\\.md"
+
+[[check]]
+id = "routes-to-analyst"
+kind = "text"
+scope = "final"
+match = "(?i)analyst|requirements freeze"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"

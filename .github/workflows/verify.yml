@@ -68,6 +68,14 @@ jobs:
       - name: Lint skills and agents
         run: python console/kanban.py harness lint
 
+      # Tracked secret paths only. Tickets in this repo are meant to be here;
+      # a ticket scan would fail the template on purpose.
+      - name: Secret paths stay untracked
+        run: python console/kanban.py workspace check --secrets
+
+      - name: Eval replay (free, no model)
+        run: python console/kanban.py evals replay
+
   cli:
     name: cli smoke
     runs-on: ubuntu-latest
@@ -165,5 +173,18 @@ jobs:
             summary=$(grep -aE "^(FAILED|ERROR)|^E  " pytest.log | tail -25 | tr '\n' ' ')
             [ -z "$summary" ] && summary=$(tail -c 1200 pytest.log | tr '\n' ' ')
             echo "::error title=desktop pytest failed on ${{ matrix.os }}::$summary"
+            exit 1
+          }
+
+      # T-020 FR-9: a real process tree (root -> child -> grandchild) must be
+      # gone after `procs.kill_tree` on every OS the agent runs on.
+      - name: python -m pytest console process tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest console/tests/test_proc_tree.py console/tests/test_procs.py -o addopts="" -rA 2>&1 | tee proc-pytest.log || {
+            summary=$(grep -aE "^(FAILED|ERROR)|^E  " proc-pytest.log | tail -25 | tr '\n' ' ')
+            [ -z "$summary" ] && summary=$(tail -c 1200 proc-pytest.log | tr '\n' ' ')
+            echo "::error title=console process tests failed on ${{ matrix.os }}::$summary"
             exit 1
           }

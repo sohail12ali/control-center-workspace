@@ -93,6 +93,7 @@ class TestRoutesExist:
         ("GET", "/api/agents/files"),
         ("GET", "/api/agents/models"),
         ("GET", "/api/runs"),
+        ("GET", "/api/workspace"),
     ])
     def test_the_tab_endpoints_are_routed(self, app, method, path):
         assert routed(app, method, path), "%s %s is not routed" % (method, path)

@@ -1,0 +1,22 @@
+[ticket]
+id = "T-029"
+title = "Truth pass: About, console README and agents.js describe the console that exists"
+kind = "tickets"
+stage = "done"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-04"
+updated = "2026-10-05"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

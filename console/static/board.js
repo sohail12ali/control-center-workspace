@@ -15,7 +15,11 @@
 (function (C) {
   "use strict";
 
-  var st = { kind: null, view: null, query: "", host: null, api: null, dragId: null };
+  var PAGE = 10;
+  var st = {
+    kind: null, view: null, query: "", host: null, api: null, dragId: null,
+    coldOpen: {}, shown: {},
+  };
 
   function laneToneChip(lane) {
     if (lane.over_wip) return C.el("span", { class: "chip warn", text: lane.cards.length + "/" + lane.wip });
@@ -123,20 +127,57 @@
 
   function laneNode(lane) {
     var cards = lane.cards.filter(function (c) { return matches(c, st.query); });
+    /* A finished column is cold: a count rail until opened. A search that
+       hits it stays expanded, otherwise the match would be invisible. */
+    var cold = !!lane.terminal && !st.query && !st.coldOpen[lane.id];
+    var limit = st.shown[lane.id] || PAGE;
+    var visible = cold ? [] : cards.slice(0, limit);
+    var hidden = Math.max(cards.length - visible.length, 0);
+    var reveal = Math.min(PAGE, hidden);
+
     var body = C.el("div", { class: "lanebody" });
-    if (!cards.length) {
-      body.appendChild(C.el("div", { class: "muted", style: "padding:6px 3px", text: st.query ? "No match" : "—" }));
+    if (!cold) {
+      if (!visible.length) {
+        body.appendChild(C.el("div", { class: "muted", style: "padding:6px 3px", text: st.query ? "No match" : "—" }));
+      }
+      visible.forEach(function (c) { body.appendChild(cardNode(c)); });
+      if (hidden > 0) {
+        body.appendChild(C.el("button", {
+          class: "more", type: "button",
+          onclick: function (e) {
+            e.stopPropagation();
+            st.shown[lane.id] = limit + PAGE;
+            paint();
+          },
+        }, ["Show " + reveal + " more"]));
+        body.appendChild(C.el("div", { class: "showing",
+          text: "Showing " + visible.length + " of " + cards.length }));
+      }
     }
-    cards.forEach(function (c) { body.appendChild(cardNode(c)); });
 
     var head = C.el("header", {}, [
+      C.statusGlyph(lane.id, lane.label),
       C.el("h3", { text: lane.label }),
-      laneToneChip(lane),
+      cold ? null : laneToneChip(lane),
     ]);
     if (lane.tone) head.querySelector("h3").style.color = "var(--" + lane.tone + ")";
+    if (!cold && lane.terminal) {
+      head.appendChild(C.el("button", {
+        class: "btn sm", type: "button", title: "Collapse this finished column",
+        onclick: function (e) {
+          e.stopPropagation();
+          st.coldOpen[lane.id] = false;
+          paint();
+        },
+      }, ["Collapse"]));
+    }
 
     var node = C.el("div", {
-      class: "lane", "data-lane": lane.id,
+      class: "lane" + (cold ? " cold" : ""),
+      "data-lane": lane.id,
+      title: cold ? (lane.label + ": " + cards.length + ". Activate to expand.") : "",
+      role: cold ? "button" : null,
+      tabindex: cold ? "0" : null,
       ondragover: function (e) {
         if (!st.dragId) return;
         e.preventDefault();
@@ -149,7 +190,17 @@
         var id = st.dragId || e.dataTransfer.getData("text/plain");
         if (id) moveTicket(id, lane.id);
       },
-    }, [head, body]);
+    }, [head, cold ? C.el("span", { class: "chip", text: String(cards.length) }) : body]);
+    if (cold) {
+      function expand() {
+        st.coldOpen[lane.id] = true;
+        paint();
+      }
+      node.addEventListener("click", expand);
+      node.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); expand(); }
+      });
+    }
     return node;
   }
 
@@ -162,7 +213,10 @@
     if (from === stage) return;
     C.post("/api/ticket/" + encodeURIComponent(id) + "/move", { stage: stage })
       .then(function () {
-        C.toast(id + " → " + stage, "ok");
+        var dest = null;
+        (st.view.lanes || []).forEach(function (l) { if (l.id === stage) dest = l; });
+        var hidden = dest && dest.terminal && !st.coldOpen[stage];
+        if (hidden) C.toast(id + " → " + stage, "ok");
         reload();
         if (st.api) st.api.refreshBadges();
       })
@@ -170,6 +224,10 @@
   }
 
   function render(host, api) {
+    if (st.kind !== api.tab.kind) {
+      st.coldOpen = {};
+      st.shown = {};
+    }
     st.host = host;
     st.api = api;
     st.kind = api.tab.kind;

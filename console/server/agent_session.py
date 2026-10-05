@@ -48,8 +48,10 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 
 from . import procs
+from . import run_config
 from . import telemetry
 from .agent_events import Stream
 from .agent_normalize import Normalizer
@@ -59,6 +61,21 @@ def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _utc_now():
+    """UTC `...Z`, for the Run layer. `_now()` is local-naive and shown to
+    humans; comparing it with a UTC clock is wrong by the UTC offset (CR-24).
+    A module function so a test can pin the clock."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+#: Reply text kept in the `last_turn` summary (liveness reads its opening).
+TURN_TEXT_MAX = 2000
+
+#: Distinct tool names kept per turn in `last_turn["tools"]`, so a runaway turn
+#: cannot grow a session's memory by inventing names. The rest count as "(other)".
+TOOL_NAMES_MAX = 32
+
+
 class BaseSession:
     """Everything about a chat that doesn't depend on its transport."""
 
@@ -66,8 +83,15 @@ class BaseSession:
 
     def __init__(self, sid, backend, cwd, stream, *, log_path=None, title="",
                  model="", mode="", skill="", persona="", on_exit=None,
-                 settings_path="", ticket="", system_append="", extra=""):
+                 settings_path="", ticket="", system_append="", extra="",
+                 repo_root="", on_limit=None):
         self.id = sid
+        #: `on_limit(session, failure_class, detail)`, called before a cap kill
+        #: so the Run is terminal before the exit it causes (CR-15, CR-21).
+        self.on_limit = on_limit
+        # Where console.toml lives: `cwd` is a worktree for a ticketed Run, so
+        # it cannot stand in (T-020 CR-21). "" means "find it".
+        self.repo_root = repo_root
         self.backend = backend
         self.agent = backend.id
         self.cwd = cwd
@@ -110,6 +134,17 @@ class BaseSession:
         self.native_session_id = ""
         self.started = ""
         self.ended = ""
+        # What the Run layer reads (T-020 FR-4), kept as attributes because the
+        # event ring can overflow inside one watchdog tick. "" / None mean
+        # "never happened", never "now". `last_turn` is replaced whole at each
+        # turn end, so a reader on another thread sees one consistent turn.
+        self.started_utc = ""
+        self.last_output_at = ""
+        self._last_output_mono = 0.0
+        self.last_turn = None
+        self.turn_count = 0
+        self._turn_rate_limit = None
+        self._turn_tools = {}
         self.exit_code = None
         self.cost_usd = 0.0
         self.tokens_in = 0
@@ -117,6 +152,11 @@ class BaseSession:
         self.num_turns = 0
         self._turn_in = 0
         self._turn_out = 0
+        # Output volume of the turn in flight, in decoded characters (the pipes
+        # are text mode). Reset where `turn.start` is published.
+        self._turn_chars = 0
+        self._turn_cap = None
+        self._cap_hit = False
 
         self._norm = Normalizer()
         self._write_lock = threading.Lock()
@@ -153,11 +193,44 @@ class BaseSession:
     def stop(self):
         raise NotImplementedError
 
+    def _line_cap(self):
+        return run_config.runs_cfg(self.repo_root or None)["max_line_bytes"]
+
+    def kill_process(self, grace=5.0):
+        """Tree-kill the current child (BR-11). Unlike `stop` it does not mark
+        the session as human-stopped, so a watchdog or cap kill still reads as
+        what it was."""
+        procs.kill_tree(self.proc, grace)
+
     # -- state ---------------------------------------------------------------
     @property
     def busy(self):
         with self._state_lock:
             return self._busy
+
+    @property
+    def stop_requested(self):
+        """A human asked this session to end. How the Run layer tells a stop
+        from a crash (CR-16)."""
+        return self._stopping
+
+    def _last_turn_summary(self):
+        lt = self.last_turn
+        if lt is None:
+            return None
+        te = lt["turn_end"]
+        # The bounded failure evidence (T-020 FR-10) rides along so the Run
+        # layer can classify and judge liveness without the event ring.
+        return {"subtype": te.get("subtype", ""),
+                "is_error": bool(te.get("is_error")),
+                "rate_limit": (lt["rate_limit"] or {}).get("status", ""),
+                "resets_at": (lt["rate_limit"] or {}).get("resets_at") or 0,
+                "tools": dict(lt["tools"]),
+                "result": (te.get("result") or "")[:TURN_TEXT_MAX],
+                "error": te.get("error") or "",
+                "errors": list(te.get("errors") or []),
+                "api_error_status": te.get("api_error_status"),
+                "stop_reason": te.get("stop_reason") or ""}
 
     def snapshot(self):
         with self._state_lock:
@@ -172,6 +245,10 @@ class BaseSession:
             "native_session_id": self.native_session_id,
             "alive": self.alive, "busy": busy, "queued": queued,
             "started": self.started, "ended": self.ended,
+            "started_utc": self.started_utc,
+            "last_output_at": self.last_output_at,
+            "turn_count": self.turn_count,
+            "last_turn": self._last_turn_summary(),
             "exit_code": self.exit_code, "cost_usd": round(self.cost_usd, 4),
             "tokens_in": self.tokens_in, "tokens_out": self.tokens_out,
             "num_turns": self.num_turns, "head": self.stream.head,
@@ -217,6 +294,7 @@ class BaseSession:
             text = prefix + "\n\n" + text
         extra = {"wire": text} if shown != text else {}
         if not busy:
+            self._reset_turn_output()
             self.stream.publish({"type": "turn.start", "text": shown, "steered": False, **extra})
         else:
             self.stream.publish({"type": "turn.steer", "text": shown, **extra})
@@ -243,6 +321,7 @@ class BaseSession:
             depth = len(self._queue)
             self._busy = True
         self.stream.publish({"type": "queue.drain", "item": item, "depth": depth})
+        self._reset_turn_output()
         self.stream.publish({"type": "turn.start", "text": item["text"], "steered": False})
         try:
             self._deliver(item["text"])
@@ -252,7 +331,38 @@ class BaseSession:
             self.stream.publish({"type": "error", "text": str(e)})
 
     # -- observing -----------------------------------------------------------
+    def _reset_turn_output(self):
+        self._turn_chars = 0
+        self._cap_hit = False
+
+    def _count_output(self, line):
+        """Enforce `[runs].max_turn_output_bytes` for this turn (BR-9: applies
+        to every chat). On the first breach: one notice, the `on_limit`
+        callback, then the tree kill, in that order."""
+        self._turn_chars += len(line) + 1
+        if self._cap_hit:
+            return
+        if self._turn_cap is None:
+            self._turn_cap = run_config.runs_cfg(self.repo_root or None)["max_turn_output_bytes"]
+        if self._turn_chars <= self._turn_cap:
+            return
+        self._cap_hit = True
+        detail = "turn output passed %d characters" % self._turn_cap
+        self.stream.publish({"type": "notice", "kind": "output_cap", "limit": self._turn_cap})
+        if self.on_limit is not None:
+            try:
+                self.on_limit(self, "output_cap", detail)
+            except Exception:  # noqa: BLE001
+                # The kill is the point; a bookkeeping bug must not skip it.
+                pass
+        self.kill_process(grace=2.0)
+
     def _handle_line(self, line):
+        # Stamped before anything is parsed, so a backend printing plain text
+        # still shows as alive to the watchdog.
+        self._last_output_mono = time.monotonic()
+        self.last_output_at = _utc_now()
+        self._count_output(line)
         if self._log_fh is not None:
             try:
                 self._log_fh.write(line.encode("utf-8") + b"\n")
@@ -269,13 +379,16 @@ class BaseSession:
             # rather than dropping it.
             for ev in self._norm.feed({"text": line}):
                 self.stream.publish(ev)
-            return
+            return False
+        ended = False
         for ev in self._norm.feed(raw):
             # Publish BEFORE observing: `_observe` reacts to turn.end by
             # draining, and draining publishes turn.start — observing first
             # would open the next turn at a lower seq than the turn it follows.
             self.stream.publish(ev)
             self._observe(ev)
+            ended = ended or ev.get("type") == "turn.end"
+        return ended  # lets a reader see its own turn end without hooking `_observe`
 
     def _observe(self, ev):
         t = ev.get("type")
@@ -288,7 +401,24 @@ class BaseSession:
             # CLI re-reports the turn's cumulative usage as it goes.
             self._turn_in = max(self._turn_in, int(ev.get("input_tokens") or 0))
             self._turn_out = max(self._turn_out, int(ev.get("output_tokens") or 0))
+        elif t == "notice" and ev.get("kind") == "rate_limit":
+            self._turn_rate_limit = dict(ev)
+        elif t == "tool.start":
+            # A count of `tool.start` events, not of distinct calls: a CLI that
+            # repeats a call in its final assistant message may count it twice.
+            # Readers ask "was anything done", not "how many times".
+            name = str(ev.get("name") or "tool")[:64]
+            if name not in self._turn_tools and len(self._turn_tools) >= TOOL_NAMES_MAX:
+                name = "(other)"
+            self._turn_tools[name] = self._turn_tools.get(name, 0) + 1
         elif t == "turn.end":
+            # Before anything below can start the drain thread: once the queue
+            # drains, a reader sees an idle session and must find this turn.
+            self.last_turn = {"turn_end": dict(ev), "rate_limit": self._turn_rate_limit,
+                              "tools": self._turn_tools}
+            self.turn_count += 1
+            self._turn_rate_limit = None
+            self._turn_tools = {}
             self.cost_usd += float(ev.get("cost_usd") or 0.0)
             self.num_turns += int(ev.get("num_turns") or 0)
             # A backend may report the turn's usage in its result event, or
@@ -318,7 +448,7 @@ class BaseSession:
         """
         try:
             from . import notify
-            notify.send(self.cwd, "turn_end", notify.turn_end_message(
+            notify.send(self.repo_root or self.cwd, "turn_end", notify.turn_end_message(
                 self.title, self.agent, self.model,
                 int(ev.get("num_turns") or 0), self.cost_usd,
                 error=bool(ev.get("is_error"))))
@@ -330,8 +460,10 @@ class BaseSession:
 
         Recorded per turn rather than per session because a session can run for
         hours and a session-level total cannot answer "which stage cost that" —
-        which is the only question the data exists to answer. `self.cwd` is the
-        repo root the manager built this session with.
+        which is the only question the data exists to answer. Written to the main
+        repo (`self.repo_root`), not `self.cwd`: for a ticketed chat `cwd` is a
+        worktree the Analytics tab never reads. Falls back to `cwd` when no
+        `repo_root` was given.
 
         Cost is taken from the backend when it reported one and left to the
         pricing table otherwise; `cost_usd=None` means unknown, and telemetry
@@ -340,7 +472,7 @@ class BaseSession:
         reported = ev.get("cost_usd")
         try:
             telemetry.record_turn(
-                self.cwd,
+                self.repo_root or self.cwd,
                 session=self.id,
                 backend=self.agent,
                 model=self.model,
@@ -400,6 +532,8 @@ class LiveSession(BaseSession):
     """One long-lived process, stdin held open for the whole chat."""
 
     steerable = True
+    #: Seconds `stop` waits after closing stdin before it kills the tree.
+    stop_wait_secs = 10
 
     def start(self):
         self._open_log()
@@ -412,10 +546,11 @@ class LiveSession(BaseSession):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=self._log_fh or subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
-            creationflags=procs.no_window_flags(
-                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)),
+            env=procs.clean_env(self.repo_root or None),
+            **procs.tree_spawn_kwargs(),
         )
         self.started = _now()
+        self.started_utc = _utc_now()
         self.stream.publish({
             "type": "session.started", "id": self.id, "pid": self.proc.pid,
             "cmd": argv, "cwd": self.cwd, "title": self.title,
@@ -487,15 +622,15 @@ class LiveSession(BaseSession):
         except OSError:
             pass
         try:
-            self.proc.wait(timeout=10)
+            self.proc.wait(timeout=self.stop_wait_secs)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
+            self.kill_process(grace=2.0)
 
     def _read(self):
         """Own the stdout pipe for the life of the process. Must always reach
         `_finish`, which publishes the last event and closes the stream."""
         try:
-            for line in self.proc.stdout:
+            for line in procs.iter_capped_lines(self.proc.stdout, self._line_cap()):
                 line = line.strip()
                 if line:
                     self._handle_line(line)
@@ -529,6 +664,7 @@ class TurnSession(BaseSession):
     def start(self):
         self._open_log()
         self.started = _now()
+        self.started_utc = _utc_now()
         self.stream.publish({
             "type": "session.started", "id": self.id, "pid": None,
             "cmd": [self.backend.command], "cwd": self.cwd, "title": self.title,
@@ -542,20 +678,34 @@ class TurnSession(BaseSession):
         return not self._ended
 
     def _deliver(self, text):
+        via_stdin = getattr(self.backend, "prompt_via", "argv") == "stdin"
         argv = self.backend.turn_argv(
-            text, mode=self.mode, model=self.model, resume_id=self.native_session_id)
+            "" if via_stdin else text, mode=self.mode, model=self.model,
+            resume_id=self.native_session_id)
+        env = procs.clean_env(self.repo_root or None)
+        extra = getattr(self.backend, "child_env", None)
+        if callable(extra):
+            env.update(extra(self.repo_root, self.id) or {})
         try:
             self._turn_proc = subprocess.Popen(
                 argv, cwd=self.cwd,
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE if via_stdin else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
-                **procs.popen_kwargs(),
+                env=env,
+                **procs.tree_spawn_kwargs(),
             )
         except FileNotFoundError as e:
             with self._state_lock:
                 self._busy = False
             raise RuntimeError("backend command not found: %s (%s)" % (argv[0], e)) from None
+        if via_stdin and self._turn_proc.stdin is not None:
+            try:
+                body = text or ""
+                self._turn_proc.stdin.write(body if body.endswith("\n") else body + "\n")
+            finally:
+                self._turn_proc.stdin.close()
         self.proc = self._turn_proc
         threading.Thread(target=self._read_turn, args=(self._turn_proc,), daemon=True).start()
 
@@ -563,29 +713,26 @@ class TurnSession(BaseSession):
         """One turn's output. Ends with a synthetic turn.end if the CLI didn't
         emit a result event, so the queue still drains and the UI stops showing
         the turn as in-flight."""
-        saw_end = {"v": False}
-        original_observe = self._observe
-
-        def observe(ev):
-            if ev.get("type") == "turn.end":
-                saw_end["v"] = True
-            original_observe(ev)
-
-        self._observe = observe
+        # Per reader, so an overlapping next-turn reader cannot clobber it
+        # (CR-31); `_handle_line` reports a turn end instead of a `_observe` swap.
+        saw_end = False
+        linger = None
         try:
-            for line in proc.stdout:
+            for line in procs.iter_capped_lines(proc.stdout, self._line_cap()):
                 line = line.strip()
-                if line:
-                    self._handle_line(line)
+                if line and self._handle_line(line) and not saw_end:
+                    saw_end = True
+                    linger = self._arm_linger(proc)
         except (OSError, ValueError) as e:
             self.stream.publish({"type": "error", "text": "stream read failed: %s" % e})
         finally:
-            self._observe = original_observe
+            if linger is not None:
+                linger.cancel()
             try:
                 code = proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 code = None
-            if not saw_end["v"]:
+            if not saw_end:
                 for ev in self._norm.reset_turn():
                     self.stream.publish(ev)
                 synthetic = {"type": "turn.end", "subtype": "process_exit",
@@ -595,17 +742,31 @@ class TurnSession(BaseSession):
                 # Route it through _observe as well: publishing alone skips the
                 # accounting that _handle_line normally performs, which left a
                 # completed turn showing num_turns 0 in the snapshot.
-                original_observe(synthetic)
+                self._observe(synthetic)
+
+    def _arm_linger(self, proc):
+        """FR-8: a per-turn process that has printed its result but not exited
+        within `[runs].linger_grace_secs` is tree-killed. The timer holds the
+        process it was armed for, never `self.proc` (a later turn's)."""
+        grace = run_config.runs_cfg(self.repo_root or None)["linger_grace_secs"]
+        timer = threading.Timer(grace, self._linger_kill, args=(proc,))
+        timer.daemon = True
+        timer.start()
+        return timer
+
+    def _linger_kill(self, proc):
+        if proc.poll() is not None:
+            return
+        procs.kill_tree(proc, grace=2.0)
+        self.stream.publish({"type": "notice", "level": "warn", "kind": "lingering_killed",
+                             "text": "The agent process kept running after its result and was ended."})
 
     def interrupt(self):
         """Kill the turn in flight; the session survives for the next one."""
         proc = self._turn_proc
         if proc is None or proc.poll() is not None:
             return False
-        try:
-            proc.terminate()
-        except OSError:
-            return False
+        procs.kill_tree(proc, grace=2.0)
         self.stream.publish({"type": "turn.interrupt", "via": "terminate"})
         return True
 
@@ -614,21 +775,15 @@ class TurnSession(BaseSession):
         self._ended = True
         proc = self._turn_proc
         if proc is not None and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+            procs.kill_tree(proc, grace=2.0)
         self.exit_code = 0
         self._finish()
 
 
 def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
           skill="", persona="", on_exit=None, settings_path="", ticket="",
-          system_append="", extra="", start_seq=0, resume_id=""):
+          system_append="", extra="", start_seq=0, resume_id="", repo_root="",
+          on_limit=None):
     """Pick the transport the backend declared. The only place that decision
     is made, so a new transport is one branch here plus a class."""
     if backend.transport == "openai_api":
@@ -646,7 +801,8 @@ def build(sid, backend, cwd, *, log_path=None, title="", model="", mode="",
     sess = cls(sid, backend, cwd, stream, log_path=log_path, title=title,
                model=model, mode=mode, skill=skill, persona=persona,
                on_exit=on_exit, settings_path=settings_path, ticket=ticket,
-               system_append=system_append, extra=extra)
+               system_append=system_append, extra=extra, repo_root=repo_root,
+               on_limit=on_limit)
     # A resumed session already has an identity on the CLI's side. Carrying it
     # in before `start()` is what makes the process continue that conversation
     # instead of opening a new one.

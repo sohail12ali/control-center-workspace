@@ -1,0 +1,22 @@
+[meta]
+ticket = "T-020"
+tracker = "bugs"
+updated = "2026-10-03T04:33:07Z"
+seq = 1
+
+[[items]]
+id = "D-1"
+status = "verified"
+text = "Baseline: 3 tests in console/tests/test_stop_hook.py fail on any date after 2026-09-16 (TestStaleClaims::test_claim_with_no_update_is_stale, TestCliOneApi::test_json_reports_stale_claims, ::test_plain_mode_prints_a_reminder_line). Fixtures hard-code claimed_at=2026-09-16 while tickets.set_claim stamps updated with the real date.today(). Pre-existing, found in GROUND, fixed by FR-19 clock seam."
+severity = "minor"
+found_on = "2026-10-01"
+phase = ""
+found_by = "agent"
+steps = ""
+expected = ""
+actual = ""
+fix = "FR-19 clock seam: _freeze_tickets_date in test_stop_hook.py plus UTC claimed_at; TestDateIndependence parametrised over 3 dates"
+fixed_by = "builder"
+fixed_on = "2026-10-01"
+verified_by = "orchestrator"
+verified_on = "2026-10-03"

@@ -1,13 +1,17 @@
-/* Settings tab — everything here is stored in THIS BROWSER and nowhere else.
+/* Settings tab. Two kinds of control live here, and the page says which
+   is which.
 
-   That distinction is the one thing this page has to get across, so it is
-   said in the UI and not only in a comment: hiding a tab here is a personal
-   view preference, while `enabled = false` in console/config/plugins.toml is
-   a committed, server-side decision that removes the routes for everyone who
+   Appearance, tab visibility, and the "Stored in this browser" panel are
+   this browser only. `enabled = false` in console/config/plugins.toml is a
+   committed, server-side decision that removes the routes for everyone who
    pulls the checkout. Conflating the two would let someone "turn off" the
    agents plugin by hiding its tab and believe the launch endpoint was gone.
-   The Diagnostics panel exists to make that concrete: it lists what the
-   server actually loaded, which no browser preference can change. */
+   The Diagnostics panel lists what the server actually loaded.
+
+   The Workspace panel is the other server action: it reports leftover
+   tickets and secret paths, and it can delete workspace content from this
+   checkout after you type reset. It does not commit, and it does not
+   rewrite history. */
 (function (C) {
   "use strict";
 
@@ -1711,6 +1715,116 @@
     });
   }
 
+  /* Workspace content on this checkout, and whether a secret path is in git.
+
+     Clean deletes the working tree. The branch others clone still has the
+     files until those deletions are committed. Older commits keep them.
+     Ticket paths stay committable so a fork can store its own project. */
+  function workspace() {
+    var body = C.el("div", {}, [C.skeleton(3)]);
+
+    function paint(d) {
+      C.clear(body);
+      var instance = d.instance || [];
+      var secrets = d.secrets || [];
+      var hook = d.hook || {};
+      var blank = !!d.blank;
+
+      body.appendChild(C.el("div", { class: "row", style: "flex-wrap:wrap;margin-bottom:8px" }, [
+        C.chip(blank ? "blank template" : "workspace content present", blank ? "ok" : "warn"),
+        C.chip(secrets.length
+          ? secrets.length + " secret path" + (secrets.length === 1 ? "" : "s")
+          : "no secrets in git",
+          secrets.length ? "danger" : "ok"),
+        C.chip(hook.active ? "commit hook on" : "commit hook off", hook.active ? "ok" : "warn"),
+      ]));
+
+      if (d.note) {
+        body.appendChild(C.el("p", { class: "muted", style: "margin:0 0 10px", text: d.note }));
+      }
+
+      if (instance.length) {
+        body.appendChild(C.el("b", { text: "Still in this checkout" }));
+        var shown = instance.slice(0, 20);
+        var rows = C.el("div", { class: "rows", style: "margin-top:6px" });
+        shown.forEach(function (row) {
+          rows.appendChild(C.el("div", { class: "lrow" }, [
+            C.chip(row.action),
+            C.el("span", { class: "mono", style: "font-size:11.5px", text: row.path }),
+          ]));
+        });
+        body.appendChild(rows);
+        if (instance.length > shown.length) {
+          body.appendChild(C.el("p", { class: "muted", style: "margin:6px 0 0;font-size:11.5px",
+            text: (instance.length - shown.length) + " more" }));
+        }
+      }
+
+      if (secrets.length) {
+        body.appendChild(C.el("b", { text: "Secrets in git", style: "display:block;margin-top:10px" }));
+        var srows = C.el("div", { class: "rows", style: "margin-top:6px" });
+        secrets.forEach(function (row) {
+          srows.appendChild(C.el("div", { class: "lrow" }, [
+            C.chip(row.where, "danger"),
+            C.el("span", { class: "mono", style: "font-size:11.5px", text: row.path }),
+          ]));
+        });
+        body.appendChild(srows);
+      }
+
+      body.appendChild(C.el("p", { class: "muted", style: "margin:10px 0 0;font-size:11.5px" }, [
+        hook.detail ? hook.detail + ". " : "",
+        hook.active ? null : C.el("code", {}, [hook.command || "git config core.hooksPath .githooks"]),
+      ]));
+
+      if (!blank) {
+        var input = C.el("input", {
+          type: "text",
+          placeholder: "type reset",
+          "aria-label": "Type reset to confirm",
+          style: "min-width:9em",
+        });
+        var btn = C.el("button", {
+          class: "btn sm danger", type: "button", disabled: true,
+        }, ["Clean this workspace"]);
+        input.addEventListener("input", function () {
+          btn.disabled = input.value.trim() !== "reset";
+        });
+        btn.addEventListener("click", function () {
+          btn.disabled = true;
+          C.post("/api/workspace/clean", { confirm: "reset" }).then(function () {
+            C.toast("Workspace cleaned. Commit the deletions when you want a blank branch.", "ok");
+            load();
+          }, function (err) {
+            C.toast(err.message || "Clean failed", "err");
+            btn.disabled = input.value.trim() !== "reset";
+          });
+        });
+        body.appendChild(C.el("div", { class: "row", style: "margin-top:10px;flex-wrap:wrap" }, [
+          input, btn,
+        ]));
+      }
+    }
+
+    function load() {
+      C.get("/api/workspace").then(paint, function (err) {
+        C.clear(body).appendChild(C.errbox(err));
+      });
+    }
+
+    load();
+    return C.panel("Workspace", [body], null, {
+      icon: "trash",
+      tone: "danger",
+      collapse: { id: "set.workspace", open: false },
+      help: ["Lists tickets, investigations, logs, telemetry, and cache still "
+             + "in this checkout, and any secret path that is tracked or staged. "
+             + "Clean deletes the working tree after you type ",
+             C.el("code", {}, ["reset"]),
+             ". It does not commit. Older commits keep the files. A fork commits its own tickets."],
+    });
+  }
+
   /* The jump bar. Every panel on this page folds, so the page is a menu of
      subjects — and a menu you have to scroll to read is not one. A chip opens
      its panel and scrolls to it, because a fold you then have to find is not
@@ -1765,6 +1879,7 @@
         kids.push(assistant());
         kids.push(telegram(paint));
         kids.push(machine());
+        kids.push(workspace());
       }
       kids.push(storage(paint));
       if (!C.IS_STATIC) kids.push(diagnostics());

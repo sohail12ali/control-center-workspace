@@ -189,7 +189,13 @@ def update(repo_root, ticket_id, kind, item_id, **fields):
     data = load(repo_root, ticket_id, kind)
     for item in data["items"]:
         if item["id"] == item_id:
+            before = item.get("status")
             item.update(fields)
+            if kind == "questions":
+                from . import question_wake
+                if question_wake.should_wake(before, item) and question_wake.deliver(
+                        repo_root, ticket_id, item):
+                    question_wake.mark(item)
             _save(repo_root, ticket_id, kind, data)
             return item
     raise KeyError(f"no item {item_id!r} in {ticket_id}-{kind}.toml")

@@ -35,6 +35,8 @@ import os
 import re
 
 from . import boards as boards_mod
+from . import runs as runs_mod
+from . import ticket_liveness as liveness_mod
 from . import telemetry as telemetry_mod
 from . import tickets as tickets_mod
 from . import trackers as trackers_mod
@@ -161,6 +163,25 @@ def tickets_digest(repo_root, cap=TICKETS_DIGEST_CAP):
     return {"text": text, "count": len(lines), "truncated": truncated}
 
 
+def run_facts(repo_root, ticket_id):
+    """Counts and the newest Run for the ticket (T-020 FR-23). An unreadable
+    Run store reads as no Runs rather than failing the whole digest."""
+    try:
+        rows = runs_mod.list_runs(repo_root, ticket=ticket_id)
+    except (OSError, ValueError):
+        rows = []
+    latest = max(rows, key=lambda r: (r.get("created", ""), r.get("id", "")), default=None)
+    return {
+        "total": len(rows),
+        "active": sum(1 for r in rows if r.get("state") in runs_mod.ACTIVE),
+        "failed": sum(1 for r in rows if r.get("state") in ("failed", "timed_out")),
+        "latest": None if latest is None else {
+            "id": latest["id"], "state": latest.get("state", ""),
+            "role": latest.get("role", ""),
+            "failure_class": latest.get("failure_class", "")},
+    }
+
+
 # -------------------------------------------------------------- digest ------
 
 def build(repo_root, ticket_id):
@@ -191,8 +212,9 @@ def build(repo_root, ticket_id):
     open_tasks = [t for t in plan["tasks"] if not t["done"]]
 
     spend = telemetry_mod.summarize(repo_root, group="ticket", ticket=ticket_id)
+    live = liveness_mod.evaluate(repo_root, ticket_id)
 
-    return {
+    digest = {
         "ticket": {
             "id": ticket.get("id"),
             "title": ticket.get("title", ""),
@@ -207,6 +229,10 @@ def build(repo_root, ticket_id):
             "updated": ticket.get("updated", ""),
         },
         "artifacts": tickets_mod.list_artifacts(repo_root, ticket_id),
+        "claim": tickets_mod.claim_status(repo_root, ticket_id),
+        "review": {"rounds": int(ticket.get("review_rounds") or 0),
+                   "escalated": bool(ticket.get("review_escalated"))},
+        "runs": run_facts(repo_root, ticket_id),
         "trackers": trackers,
         "blockers": trackers_mod.blockers(repo_root, ticket_id),
         "plan": {
@@ -220,6 +246,9 @@ def build(repo_root, ticket_id):
         "progress": recent_progress(repo_root, ticket_id),
         "spend": spend["totals"],
     }
+    if live["applies"] and live["findings"]:  # T-021 FR-6: only when there is a finding
+        digest["ticket_liveness"] = live
+    return digest
 
 
 def format_markdown(digest):
@@ -232,6 +261,25 @@ def format_markdown(digest):
                   t["status"] or "?", t["owner"] or "unassigned",
                   t["priority"] or "?"))
     out.append("**Updated** %s · **Created** %s" % (t["updated"], t["created"]))
+
+    # One line each, only when there is something to say (T-020 FR-23).
+    claim, review, run = digest.get("claim"), digest.get("review"), digest.get("runs")
+    if claim and claim["holder"]:
+        out.append("**Claim** %s by %s (%s%s)" % (
+            claim["state"], claim["holder"], claim["basis"],
+            "" if claim["age_secs"] is None else ", %d s old" % claim["age_secs"]))
+    if review and (review["rounds"] or review["escalated"]):
+        out.append("**Review** %s" % (
+            "ESCALATED after %d round(s) of changes requested - stop, a human decides"
+            % review["rounds"] if review["escalated"]
+            else "%d round(s) of changes requested" % review["rounds"]))
+    if run and run["total"]:
+        last = run["latest"]
+        out.append("**Runs** %d total · %d active · %d failed (latest %s %s%s)" % (
+            run["total"], run["active"], run["failed"], last["id"], last["state"],
+            " " + last["failure_class"] if last["failure_class"] else ""))
+    for finding in (digest.get("ticket_liveness") or {}).get("findings", [])[:1]:
+        out.append("**Liveness:** %s - %s" % (finding["code"], finding["message"]))
 
     blockers = digest["blockers"]
     out.append("")

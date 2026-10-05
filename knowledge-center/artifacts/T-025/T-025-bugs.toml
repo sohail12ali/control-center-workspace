@@ -1,0 +1,22 @@
+[meta]
+ticket = "T-025"
+tracker = "bugs"
+updated = "2026-10-05T03:09:58Z"
+seq = 1
+
+[[items]]
+id = "D-1"
+status = "fixed"
+text = "Console-launched Claude chats cannot call console MCP verbs. Live repro 2026-10-05 (T-024 AC-3d smoke, chat 569bed5d941a, haiku, mode=default, worktree .claude/worktrees/T-024): the console MCP server loaded and ToolSearch found mcp__console__comment, but the CLI returned permission_denied -> 'Claude requested permissions to use mcp__console__comment, but you haven't granted it yet.' Nothing written to main or worktree. Cause: agent_approvals.settings_payload writes only a PreToolUse hook for gated tools; no permissions.allow for mcp__console__*, and neither .claude/settings.json nor the old settings.local.json grants it. Headless -p denies any un-allowed tool. Fix: per-chat --settings adds permissions.allow ['mcp__console__*'] (gated console tools still go through the hook matcher; decide Q12 force/human_decision gating at the same time). Blocks T-024 AC-3d."
+severity = "high"
+found_on = "2026-10-05"
+phase = ""
+found_by = "agent"
+steps = ""
+expected = ""
+actual = ""
+fix = ""
+fixed_by = ""
+fixed_on = ""
+verified_by = ""
+verified_on = ""

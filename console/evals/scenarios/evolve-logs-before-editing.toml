@@ -1,0 +1,34 @@
+[scenario]
+id = "evolve-logs-before-editing"
+title = "Log the decision before editing a frozen requirement"
+skill = "evolve"
+ticket = "EV-001"
+prompt = "Ticket EV-001 requirements are frozen. Cap retries at 5 instead of 3 in FR-3."
+subjects = ["skill:evolve"]
+mode = "plan"
+fail_checks = ["decision-log-before-requirements"]
+
+[[source]]
+file = ".claude/skills/evolve/SKILL.md"
+quote = "Snapshot the current target into `decision-log.md`"
+
+[[source]]
+file = ".claude/skills/evolve/SKILL.md"
+quote = "The decision-log entry is mandatory"
+
+[[check]]
+id = "decision-log-before-requirements"
+kind = "order"
+first = "^(Edit|Write|MultiEdit) .*EV-001-decision-log\\.md"
+before = "^(Edit|Write|MultiEdit) .*EV-001-requirements\\.md"
+
+[[check]]
+id = "mentions-decision-log"
+kind = "text"
+scope = "any"
+match = "(?i)decision-log"
+
+[[check]]
+id = "turn-completed"
+kind = "end"
+disposition = "completed"
