@@ -1,4 +1,17 @@
 [meta]
 ticket = "T-025"
 tracker = "questions"
-updated = "2026-10-04T15:49:50Z"
+updated = "2026-10-05T03:19:21Z"
+seq = 1
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "Should launch-role and run-retry raise an approval card like delegate does? All three start a (possibly paid) agent; delegate is gated on every backend (T-014; claude since 2026-10-05), launch-role/run-retry are gated nowhere. Found in the T-020 ready review after console verbs were allowed for claude chats (T-025 D-1)."
+type = "other"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = []
+answer = ""
+resolved_on = ""

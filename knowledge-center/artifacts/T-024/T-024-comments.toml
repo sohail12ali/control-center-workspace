@@ -1,4 +1,12 @@
 [meta]
 ticket = "T-024"
 tracker = "comments"
-updated = "2026-10-04T15:49:41Z"
+updated = "2026-10-05T03:08:10Z"
+seq = 1
+
+[[items]]
+id = "C1"
+status = "open"
+text = "AC-3d smoke: comment written by a Claude chat running in the T-024 worktree (2026-10-05, retry after D-1 fix)"
+author = "agent"
+posted_on = "2026-10-05T03:08:10Z"

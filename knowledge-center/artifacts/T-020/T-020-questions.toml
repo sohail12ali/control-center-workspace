@@ -1,7 +1,7 @@
 [meta]
 ticket = "T-020"
 tracker = "questions"
-updated = "2026-10-01T12:23:41Z"
+updated = "2026-10-05T03:09:58Z"
 seq = 15
 
 [[items]]
@@ -138,14 +138,14 @@ resolved_on = "2026-10-01"
 
 [[items]]
 id = "Q12"
-status = "open"
+status = "resolved"
 text = "NON-BLOCKING, needs the user: should claim-release force=1 and review-round human_decision be human-gated? needs_confirm is only a stray-call guard; the human gate is gated_tools in console/config/agents.toml, which code must not write (tomlio drops comments). Without it the design still works: both paths are audited with caller identity and reason, and protocols treat them as human-only. To gate them the user adds mcp__console__claim-release and mcp__console__review-round to the claude row's gated_tools by hand."
 type = "decision"
 priority = "medium"
 raised_by = "agent"
 raised_on = "2026-10-01"
 affects = "FR-22,FR-24,BR-8,BR-13"
-answer = ""
+answer = "2026-10-05 owner decision: gate claim-release, review-round and close-override (whole verbs) on every backend. agents.toml gated_tools updated for claude (mcp__console__*) and all 4 API rows (console_*). Live: claim-release raised a card and deny reached the agent. Tests: test_desktop_verbs.py::TestConsoleVerbAccess."
 resolved_on = ""
 
 [[items]]
@@ -162,24 +162,24 @@ resolved_on = ""
 
 [[items]]
 id = "Q14"
-status = "open"
+status = "resolved"
 text = "NON-BLOCKING, needs the user: one captured real quota/rate-limit stream (rate_limit_event line and the failed result line) to confirm resetsAt units and status vocabulary. No real claude spawn is allowed here and no sample exists on this machine. Without it the design still works: epoch seconds or milliseconds are accepted by magnitude, prose is the fallback, and anything unparseable means no automatic retry (fail closed)."
 type = "technical"
 priority = "low"
 raised_by = "agent"
 raised_on = "2026-10-01"
 affects = "FR-12,FR-11"
-answer = ""
+answer = "2026-10-05: real sample captured (T-024 smoke chat 569bed5d941a, console/.cache/agent-chats/569bed5d941a.log): rate_limit_event.rate_limit_info = {status: allowed, resetsAt: 1791182400 (epoch SECONDS = 06:40Z), rateLimitType: five_hour, overageStatus, overageResetsAt, isUsingOverage, unifiedWindows{five_hour,seven_day}{utilization,resetsAt}}. parse_reset on it -> 2026-10-05T06:40:00Z. Units settled. Not observed: a 'rejected' status line and its failed result line; magnitude-based units + prose fallback still cover that."
 resolved_on = ""
 
 [[items]]
 id = "Q15"
-status = "open"
+status = "resolved"
 text = "CR-19: plan task 2c-2 edits .github/workflows/verify.yml (outside console/) to run the FR-9 real-process tree test on the Windows runner. Local edit only, nothing pushed. Needs the owner to be aware before it is pushed."
 type = "plan"
 priority = "low"
 raised_by = "agent"
 raised_on = "2026-10-01"
 affects = []
-answer = ""
+answer = "2026-10-05: the verify.yml FR-9 step was pushed by the owner (in 9d0411e) and has run: GitHub Actions run 37210917650 on development @69f54e5, job \"desktop (windows-latest)\", step \"python -m pytest console process tests\" = success. main @82bc302 also green."
 resolved_on = ""

@@ -80,12 +80,12 @@ Run from the workspace root. Test command: `python -m pytest -o addopts="" conso
 - **Split because:** different surface (API transport, approvals) and the only signature change; an independently reviewed piece with the highest regression risk (R4, R9).
 - **Depends on:** T-024-01
 
-### [ ] T-024-06 — FR-6 regression pins, full suite, live smoke, handoff (2.5 h)
+### [x] T-024-06 — FR-6 regression pins, full suite, live smoke, handoff (2.5 h)
 - [x] Pin tests (new file `console/tests/test_anchor_regressions.py`): AC-6a ticketless chat has env var == cwd == `repo_root` and telemetry in the same place as before; AC-6b non-git / `WorktreeError` fallback leaves all three roots equal; AC-6d `agent_manager.send` -> `compose_prompt(repo_root=sess.cwd)` and `prompt_build.build(self.cwd)` still resolve against `cwd`.
 - [x] AC-6c: run `tests/test_codex.py` untouched.
 - [x] Full suite: `python -m pytest -o addopts="" console`; passed count >= the task-01 baseline plus the new tests; compare names, not only totals; no previously passing test missing.
-- [ ] AC-3d manual smoke, after `.mcp.json` is committed by the owner (commit is an ASK-gate, not the builder's call): create a **fresh** worktree (`.mcp.json` only reaches worktrees made after the commit), start a Claude chat for a ticket, have it call a `console_*` write verb, confirm it lands in main's TOML; record in [[T-024-verification]]. Failure -> `evolve` (D3 fallback), not a silent change.
-- [ ] `progress-tracker` entry per task; `python console/kanban.py ticket move T-024 verify`; hand off to `@verifier`.
+- [x] AC-3d manual smoke (passed 2026-10-05 on the second attempt, after T-025 D-1; see [[T-024-verification]]), after `.mcp.json` is committed by the owner (commit is an ASK-gate, not the builder's call): create a **fresh** worktree (`.mcp.json` only reaches worktrees made after the commit), start a Claude chat for a ticket, have it call a `console_*` write verb, confirm it lands in main's TOML; record in [[T-024-verification]]. Failure -> `evolve` (D3 fallback), not a silent change.
+- [x] `progress-tracker` entry per task; `python console/kanban.py ticket move T-024 verify`; hand off to `@verifier`.
 - **Done-criteria:** AC-6a..6d pass; full-suite count >= baseline (numbers cited); AC-3d recorded pass/fail in verification; lane = verify.
 - **Basis:** 3 pin tests (1 h), full suite + count comparison (0.5 h), live smoke + notes (0.5 h), lane/progress (0.5 h).
 - **Split because:** independently reviewed piece (verify gate) plus a manual step by a human-approved commit; last in order by hard dependency on 02-05.

@@ -73,5 +73,11 @@ setting would be a second answer to one question, against the CANONICAL gate. Th
 problem was configuration, and it is reported rather than routed around — see
 [[T-019-summary]] § Reply speed.
 
+## D-6 — Requirements and plan reconstructed at close (2026-10-05)
+
+**Decided:** At the Verify-pile walk ([[T-023-analysis]]), `T-019-requirements.md` and `T-019-plan.md` were still empty templates, with two `(X h)` placeholder tasks. They were filled in from [[T-019-summary]] (the five causes) and [[T-019-progress]] (the work done), and each file is marked as reconstructed. No scope was added or removed.
+
+**Why:** close-check needs an acceptance table and a plan with no unchecked tasks. The honest way to provide both is to record what the ticket set out to do and what it did, not to tick placeholders. This is history, not the "post-freeze change" that would go through `evolve`: nothing was frozen.
+
 ## Links
 - [[T-019-summary]] · [[T-019-analysis]] · [[T-019-requirements]] · [[T-019-decision-log]] · [[T-019-plan]] · [[T-019-progress]] · [[T-019-verification]]

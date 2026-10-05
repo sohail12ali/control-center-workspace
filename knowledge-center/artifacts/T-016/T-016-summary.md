@@ -1,13 +1,14 @@
 ---
-tags: [active]
-status: In Progress
+tags: [completed]
+status: Complete
 ticket: "T-016"
+closed_date: 2026-10-05
 ---
 
 # T-016: Make the Assistant the home, and every piece of work a Run you can watch
 
-**Status:** In Progress  
-**Stage:** VERIFY  
+**Status:** Complete  
+**Stage:** Closed 2026-10-05  
 **Owner:** Sohail Ali  
 **Created:** 2026-09-11  
 **Due:**  
@@ -50,6 +51,10 @@ This ticket inverts that. The desktop shell opens on the **Assistant** (talk, li
 - Wiki said the tray remoted the live Agents session.
 
 Locked with Irshad on 2026-09-11, recorded in [[T-016-decision-log]]: Assistant as home; hybrid harness; this ticket rather than a wiki-only lock.
+
+## Close note (2026-10-05)
+
+Closed during the Verify-pile walk ([[T-023-analysis]]). The one item still open, TC-E-001 (native first paint), was driven in the real debug shell: across two launches with the WebView2 debug port on, the page URL stayed `#assistant`, and a window capture shows the Assistant home. close-check is ok, with all 7 rows citing evidence it can resolve (verification evidence: [[T-016-verification]]). FR-6's cursor-agent-only `launch-role` was accepted as built here, and is replaced by [[T-025-summary]].
 
 ## Links
 - [[T-016-summary]] · [[T-016-analysis]] · [[T-016-requirements]] · [[T-016-decision-log]] · [[T-016-plan]] · [[T-016-progress]] · [[T-016-verification]] · [[T-016-test-cases]]

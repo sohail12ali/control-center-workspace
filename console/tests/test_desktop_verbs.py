@@ -269,3 +269,52 @@ class TestScreenshotArguments:
         # loudly instead of being dropped into a default capture.
         with pytest.raises(Exception):
             verbs.run(root, "desktop-screenshot", args={"windwo_title": "x"})
+
+
+class TestConsoleVerbAccess:
+    """T-025 D-1 and T-020 Q12. A headless claude denies every tool it was not
+    allowed, so console verbs need an allow rule, and the three overriding
+    verbs need the card on every backend, under both spellings."""
+
+    OVERRIDING = ("claim-release", "review-round", "close-override")
+
+    def test_claude_settings_allow_the_console_server(self, root):
+        backend = agent_backends.get(root, "claude")
+        payload = agent_approvals.settings_payload("cmd", backend.gated_tools)
+        assert payload["permissions"]["allow"] == ["mcp__console"]
+
+    def test_the_overriding_verbs_are_gated_for_claude(self, root):
+        import re
+        backend = agent_backends.get(root, "claude")
+        payload = agent_approvals.settings_payload("cmd", backend.gated_tools)
+        pattern = re.compile(payload["hooks"]["PreToolUse"][0]["matcher"])
+        for verb in self.OVERRIDING:
+            assert pattern.match("mcp__console__" + verb), verb
+        for verb in ("comment", "claim", "ticket-move", "tracker-add"):
+            assert not pattern.match("mcp__console__" + verb), verb
+
+    def test_the_overriding_verbs_are_gated_for_every_api_backend(self, root):
+        for backend in agent_backends.registry(root).values():
+            if backend.transport != "openai_api":
+                continue
+            for verb in self.OVERRIDING:
+                name = agent_tools.VERB_PREFIX + verb.replace("-", "_")
+                assert name in backend.gated_tools, (backend.id, name)
+
+    def test_delegating_raises_a_card_under_both_spellings(self, root):
+        # Starting a second agent is gated on every API row (T-014); allowing
+        # the console server for claude must not open it there.
+        import re
+        claude = agent_backends.get(root, "claude")
+        matcher = agent_approvals.settings_payload("cmd", claude.gated_tools)[
+            "hooks"]["PreToolUse"][0]["matcher"]
+        assert re.compile(matcher).match("mcp__console__delegate")
+        for backend in agent_backends.registry(root).values():
+            if backend.transport == "openai_api":
+                assert "console_delegate" in backend.gated_tools, backend.id
+
+    def test_every_gated_console_verb_exists(self, root):
+        ids = set(verbs.registry(root))
+        for verb in self.OVERRIDING:
+            assert verb in ids, verb
+

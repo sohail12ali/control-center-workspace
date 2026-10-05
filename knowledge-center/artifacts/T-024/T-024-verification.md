@@ -24,7 +24,7 @@ Verified 2026-10-05 by the orchestrating session. Two delegated runs (the harnes
 | AC-3a | The `.mcp.json` entry carries the env | PASS | `console/tests/test_mcp_anchor.py::test_ac3a_the_committed_mcp_json_entry`; `.mcp.json` |
 | AC-3b | `setup_editor('claude')` writes the same entry and is idempotent | PASS | `console/tests/test_mcp_anchor.py::TestSetupEditorClaude::test_ac3b_writes_the_committed_entry_and_is_idempotent` |
 | AC-3c | cursor/vscode entries are unchanged | PASS | `console/tests/test_mcp_anchor.py::TestSetupEditorClaude::test_ac3c_cursor_and_vscode_entries_carry_no_env`; `console/tests/test_setup_editor.py` has no diff and passes |
-| AC-3d | Live smoke: a Claude chat in a fresh worktree writes through a `console_*` verb into main's TOML | DEFERRED — needs the owner to commit `.mcp.json` and the `console/server` changes (an ASK-gated action) first; then run the smoke in `T-024-plan.md` task T-024-06 | `knowledge-center/artifacts/T-024/T-024-plan.md` |
+| AC-3d | Live smoke: a Claude chat in a fresh worktree writes through a `console_*` verb into main's TOML | PASS — live 2026-10-05 (second attempt) | Code in `9455478`. Worktree `.claude/worktrees/T-024` (branch `agent/T-024`) was created after that commit. First attempt, chat `569bed5d941a`: the CLI denied `mcp__console__comment`, because no allow rule existed (T-025 bug D-1, a pre-existing gap). After the D-1 fix (`console/server/agent_approvals.py` `CONSOLE_TOOLS_ALLOW`), chat `efcfb0c8223b` (claude haiku, mode=default, cwd = the worktree) called `mcp__console__comment` and replied DONE. Comment C1 is in **main's** `knowledge-center/artifacts/T-024/T-024-comments.toml`, and the worktree's copy has 0 entries. |
 | AC-3e | An MCP server started in a worktree with the var set serves main | PASS | `console/tests/test_mcp_anchor.py::TestServerFromAWorktree::test_ac3e_the_variable_points_a_worktree_started_server_at_main` |
 | AC-4a | Turn telemetry lands in main, none under the worktree | PASS | `console/tests/test_worktree_anchor.py::TestWorktreeTelemetryAnchor::test_ac4a_turn_record_lands_in_the_main_repo`, `console/tests/test_worktree_anchor.py::TestWorktreeTelemetryAnchor::test_ac4a_nothing_is_written_under_the_worktree` |
 | AC-4b | `notify.send` receives the main root | PASS | `console/tests/test_worktree_anchor.py::TestNotifyAndFallback::test_ac4b_the_turn_end_notification_gets_the_main_root` |
@@ -66,7 +66,7 @@ The 2255 total also includes tests from concurrent, unrelated work in the same w
 
 **Open, not blocking:** CR-3. The preview root for the Claude hook path (`console/server/features/agents_feature.py`) was left unchanged and is tracked as a T-024 todo.
 
-**Status:** not closable yet. AC-3d and plan task T-024-06 wait on the owner's commit.
+**Status:** all criteria pass. AC-3d first failed on a pre-existing permission gap (T-025 D-1); that was fixed the same day and the smoke re-run passed.
 
 ## Links
 - [[T-024-summary]] · [[T-024-analysis]] · [[T-024-requirements]] · [[T-024-decision-log]] · [[T-024-plan]] · [[T-024-progress]] · [[T-024-verification]]

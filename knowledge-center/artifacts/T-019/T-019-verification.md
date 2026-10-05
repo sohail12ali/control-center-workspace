@@ -5,6 +5,23 @@ artifact: verification
 
 # Verification: T-019
 
+## Acceptance Criteria
+
+The criteria come from the reconstructed [[T-019-requirements]] (decision D-6). The tests below were re-run on 2026-10-05:
+- `cargo test --bins` (after `. ./desktop/msvc-env.ps1`): **181 passed, 0 failed**.
+- `console/tests/test_assistant_commands.py`: **131 passed**.
+
+| # | Criterion | Status | Evidence |
+|---|-----------|--------|----------|
+| AC-1 | Spotter fires on the trained phrase and not on other speech | PASS (synthetic fixtures) | `desktop/src-tauri/src/wake.rs` tests `the_spotter_fires_on_the_phrase_it_was_trained_on`, `the_spotter_ignores_speech_that_is_not_the_phrase`; `desktop/src-tauri/src/hands_free.rs` `ordinary_conversation_is_not_addressed` |
+| AC-2 | The mic is never deaf; the ring keeps order and its tail | PASS | `desktop/src-tauri/src/audio.rs` tests `a_reader_sees_everything_written_while_it_was_away`, `the_ring_wraps_without_reordering_the_audio`, `a_burst_longer_than_the_ring_keeps_its_tail` |
+| AC-3 | Pre-roll rewind, clamped | PASS | `desktop/src-tauri/src/audio.rs` tests `rewinding_gives_back_audio_from_before_now`, `rewinding_further_than_the_ring_holds_is_clamped` |
+| AC-4 | Decoder prompt names the wake word and ticket ids | PASS | `desktop/src-tauri/src/stt.rs` tests `the_prompt_names_the_words_a_general_model_would_not_expect`, `a_machine_with_no_wake_word_still_gets_a_usable_prompt` |
+| AC-5 | First-pause grace applies to hands-free only | PASS | `desktop/src-tauri/src/audio.rs` tests `someone_who_has_only_just_started_is_given_longer_to_think`, `push_to_talk_asks_for_no_grace_at_all`, `a_configured_silence_window_is_honoured` |
+| AC-6 | Voice settings validated; recorder and diagnostics work live | PASS | `console/tests/test_assistant_commands.py::TestListeningSettings`; live API drive on 2026-09-16, recorded under § Live below |
+| AC-7 | The owner's recorded wake word, spoken, starts a take | PENDING — needs the owner's voice | See § Not verified 1 |
+| AC-8 | A spoken hands-free turn meets the latency target | PENDING — needs the owner's voice; no longer blocked, because the talk backend is fast now (T-015 AC2: 1732 ms median) | See § Not verified 2 |
+
 ## Automated
 
 | Suite | Result |

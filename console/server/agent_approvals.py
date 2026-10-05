@@ -233,9 +233,19 @@ class Approvals:
 REGISTRY = Approvals()
 
 
+#: Console verbs a chat may call without the CLI's own permission prompt.
+#: A headless `claude -p` denies any tool that is not allowed, and nothing else
+#: allowed these, so a console-launched chat could not comment, claim or move a
+#: ticket at all (T-025 D-1, found live 2026-10-05). The approval hook runs
+#: before this rule is consulted, so a console verb listed in `gated_tools`
+#: still waits on a card.
+CONSOLE_TOOLS_ALLOW = ["mcp__console"]  # server-level rule: every tool on that server
+
+
 def settings_payload(hook_cmd, gated, timeout=DEFAULT_TIMEOUT):
     """The ``--settings`` JSON that installs the gate for one session."""
     return {
+        "permissions": {"allow": list(CONSOLE_TOOLS_ALLOW)},
         "hooks": {
             "PreToolUse": [{
                 "matcher": "^(" + "|".join(gated) + ")$",

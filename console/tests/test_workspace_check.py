@@ -86,6 +86,15 @@ class TestSecrets:
         assert not workspace_check.is_secret_path("knowledge-center/artifacts/T-1/ticket.toml")
         assert not workspace_check.is_secret_path("knowledge-center/logs/2026-10/2026-10-04.sam.md")
 
+    def test_a_secret_template_is_not_a_secret(self):
+        # The workspace ships .env.example on purpose; `.env.*` caught it and
+        # failed CI on the template itself (2026-10-05).
+        assert not workspace_check.is_secret_path(".env.example")
+        assert not workspace_check.is_secret_path("config/.env.sample")
+        assert not workspace_check.is_secret_path("deploy/.env.template")
+        assert workspace_check.is_secret_path(".env.local")
+        assert workspace_check.is_secret_path(".env.production")
+
     def test_staged_env_fails_and_a_staged_ticket_does_not(self, repo):
         _git(repo, "init")
         _write(os.path.join(repo, ".env"), "OPENAI_API_KEY=secret\n")

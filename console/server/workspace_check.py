@@ -27,6 +27,11 @@ EXTRA_SECRET_RELS = (
 
 CACHE_PREFIX = "console/.cache"
 
+#: A committed template for a secret file, such as `.env.example`, holds names and
+#: placeholders, not values; the workspace ships one on purpose. `.env.*` would
+#: otherwise catch it and fail CI on the template itself (found 2026-10-05).
+TEMPLATE_SUFFIXES = (".example", ".sample", ".template")
+
 HOOKS_PATH = ".githooks"
 HOOKS_COMMAND = "git config core.hooksPath .githooks"
 
@@ -50,6 +55,8 @@ def is_secret_path(rel):
     if not rel:
         return False
     base = rel.rsplit("/", 1)[-1]
+    if base.endswith(TEMPLATE_SUFFIXES):
+        return False
     for pat in agent_tools.SECRET_PATTERNS:
         if fnmatch.fnmatch(base, pat) or fnmatch.fnmatch(rel, pat):
             return True

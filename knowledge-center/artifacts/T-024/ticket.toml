@@ -2,12 +2,12 @@
 id = "T-024"
 title = "Anchor every agent to the main repo (worktree chats write state to the wrong tree)"
 kind = "tickets"
-stage = "verify"
+stage = "done"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"
 created = "2026-10-04"
-updated = "2026-10-04"
+updated = "2026-10-05"
 tags = []
 links = []
 scripts_dir = ""

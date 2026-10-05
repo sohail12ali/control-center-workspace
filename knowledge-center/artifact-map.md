@@ -5,24 +5,24 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 ## Active
 
 - [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
-- [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Verify — Sohail Ali — 2026-09-11
 - [[T-019-summary]] — Make hands-free listening actually work — Open — Sohail Ali — 2026-09-16
 - [[T-020-summary]] — Reliable Runs: classify failures, catch stalls, retry with caps, reap stale claims — Verify — Sohail Ali — 2026-10-03
 - [[T-021-summary]] — Honest close: enforce evidence, liveness and skill hygiene instead of asking for them — Open — Sohail Ali — 2026-10-01
 - [[T-022-summary]] — Agent evals: golden-prompt checks for roles and skills — In Progress — Sohail Ali — 2026-10-01
 - [[T-023-summary]] — Agents that run themselves, safely (epic: Paperclip-grade agent execution) — Open — Sohail Ali — 2026-10-04
-- [[T-024-summary]] — Anchor every agent to the main repo (worktree chats write state to the wrong tree) — In Progress — Sohail Ali — 2026-10-04
 - [[T-025-summary]] — Roles on Claude with a per-role permission policy and prompt bundle — Open — Sohail Ali — 2026-10-04
 - [[T-026-summary]] — Sessions per ticket and role; a Run is one wakeup — Open — Sohail Ali — 2026-10-04
 - [[T-027-summary]] — Event wakeups: agents start on ticket events, coalesced and capped — Open — Sohail Ali — 2026-10-04
 - [[T-028-summary]] — Budgets, a real Claude login probe, and a background claim reaper — Open — Sohail Ali — 2026-10-04
-- [[T-029-summary]] — Truth pass: About, console README and agents.js describe the console that exists — Open — Sohail Ali — 2026-10-04
 - [[T-030-summary]] — One chat surface: the Assistant renders through ConsoleChatStore/Render — Open — Sohail Ali — 2026-10-04
 
 ## Blocked
 
 ## Completed
 
+- [[T-029-summary]] — Truth pass: About, console README and agents.js describe the console that exists — Complete — Sohail Ali — 2026-10-05
+- [[T-024-summary]] — Anchor every agent to the main repo (worktree chats write state to the wrong tree) — Complete — Sohail Ali — 2026-10-05
+- [[T-016-summary]] — Make the Assistant the home, and every piece of work a Run you can watch — Complete — Sohail Ali — 2026-10-05
 - [[T-018-summary]] — Ticket-git-Run: worktree isolation per Run, ticket id in branch/PR, lane hints from PR open/merge, Run inspector diff — Complete — Sohail Ali — 2026-09-16
 - [[T-017-summary]] — Delivery Console core: one API, MCP resources/HTTP, tracker SPI, workspace.toml, ready/claim/comment verbs — Complete — Sohail Ali — 2026-09-16
 - [[T-002-summary]] — Desktop tray skeleton as the Agents control surface — Complete — Sohail Ali — 2026-09-10

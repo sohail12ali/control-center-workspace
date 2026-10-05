@@ -116,6 +116,17 @@ gated_tools = [
   # password. Both are answered at the desk only (agent_approvals.LOCAL_ONLY).
   "mcp__console__desktop-screenshot",
   "mcp__console__desktop-clipboard-read",
+  # T-020 Q12 (decided 2026-10-05): console verbs are allowed in every chat
+  # (agent_approvals.settings_payload), except these three. Each one overrides
+  # another agent or the close gate, so a human answers the card: a forced
+  # claim release, a review human_decision, and a close despite blocks.
+  "mcp__console__claim-release",
+  "mcp__console__review-round",
+  "mcp__console__close-override",
+  # Matches the API rows' T-014 `console_delegate` gate: delegating starts a
+  # second agent, often a paid one. Before T-025 D-1 every console verb was
+  # denied here, which hid the gap.
+  "mcp__console__delegate",
 ]
 approval_timeout = 300
 
@@ -289,7 +300,11 @@ gated_tools = ["write_file", "edit_file", "run_command",
                # often a paid one. Any API-backed chat that tries it raises the
                # card first — a model should not be able to spend money, or
                # start something with file access, without you seeing it.
-               "console_delegate"]
+               "console_delegate",
+               # T-020 Q12: the three verbs that override another agent
+               # or the close gate (see the claude row).
+               "console_claim_release", "console_review_round",
+               "console_close_override"]
 approval_timeout = 300
 
 # Budgets for the loop the console runs. Omit either and it takes the default
@@ -356,7 +371,11 @@ gated_tools = ["write_file", "edit_file", "run_command",
                # often a paid one. Any API-backed chat that tries it raises the
                # card first — a model should not be able to spend money, or
                # start something with file access, without you seeing it.
-               "console_delegate"]
+               "console_delegate",
+               # T-020 Q12: the three verbs that override another agent
+               # or the close gate (see the claude row).
+               "console_claim_release", "console_review_round",
+               "console_close_override"]
 approval_timeout = 300
 
 # A local model's context is usually far smaller than a hosted one's, so the
@@ -401,7 +420,11 @@ gated_tools = ["write_file", "edit_file", "run_command",
                # often a paid one. Any API-backed chat that tries it raises the
                # card first — a model should not be able to spend money, or
                # start something with file access, without you seeing it.
-               "console_delegate"]
+               "console_delegate",
+               # T-020 Q12: the three verbs that override another agent
+               # or the close gate (see the claude row).
+               "console_claim_release", "console_review_round",
+               "console_close_override"]
 approval_timeout = 300
 
 # Same reasoning as ollama: a locally served model's window is the constraint.
@@ -435,7 +458,11 @@ prompt_prefix_style = "none"
 gated_tools = ["write_file", "edit_file", "run_command",
                "console_desktop_screenshot",
                "console_desktop_clipboard_read",
-               "console_delegate"]
+               "console_delegate",
+               # T-020 Q12: the three verbs that override another agent
+               # or the close gate (see the claude row).
+               "console_claim_release", "console_review_round",
+               "console_close_override"]
 approval_timeout = 300
 max_tool_rounds = 25
 max_history_messages = 120
