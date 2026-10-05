@@ -605,11 +605,11 @@ class TestCaptureReachesTheModel:
         from server import agent_tools
         real = agent_tools.dispatch
 
-        def fake(repo_root, name, arguments):
+        def fake(repo_root, name, arguments, workspace_root=None):
             if "desktop_screenshot" in name:
                 return json.dumps({"ok": True, "capture": {
                     "capture_id": "e2e", "path": rel, "width": 4, "height": 4}})
-            return real(repo_root, name, arguments)
+            return real(repo_root, name, arguments, workspace_root)
 
         monkeypatch.setattr(agent_tools, "dispatch", fake)
 

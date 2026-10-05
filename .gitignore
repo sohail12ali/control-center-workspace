@@ -81,6 +81,11 @@ console/config/notify-local.toml
 .claude/logs/
 knowledge-center/agent-runs/
 
+# Per-checkout log author (display name, then slug). log-work creates it
+# from git user.name when it is missing. Committing it would publish one
+# person's name into every clone.
+knowledge-center/logs/author.local
+
 # Python tooling
 .pytest_cache/
 .coverage

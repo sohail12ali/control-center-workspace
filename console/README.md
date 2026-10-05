@@ -14,10 +14,11 @@ boards (present in config, disabled by default — see Config below) and
 This stdlib server also does **not** capture the desktop, run OCR, drive
 mouse/keyboard, or keep a private microphone. A browser tab on `127.0.0.1`
 cannot do those things; live chat `/send` is text-only. Screen, voice, and
-OS control belong in a planned native shell that wraps this UI and reuses
-the Agents backends — see
-`knowledge-center/wiki/desktop-assistant.md`. Windows shell spike:
-`desktop/README.md`.
+tray live in the native shell at `desktop/` (a Tauri window around this same
+UI, reaching the server over a loopback bridge) — how to build and run it is
+`desktop/README.md`, the design is
+`knowledge-center/wiki/desktop-assistant.md`. OS-level mouse/keyboard
+actuation is not built.
 
 ## Onboarding
 
@@ -62,9 +63,20 @@ onboard [--json]        first-run setup steps, ending at the requirements pipeli
 serve [--host H] [--port N]
 export --out DIR
 refresh [--quiet]
+workspace check [--staged | --secrets] [--json]
+                         template check: leftover tickets, logs, investigations,
+                         telemetry, and cache in this checkout. Exit 1 when any
+                         remain, or when a secret path is tracked.
+                         --staged fails only on a staged secret (the pre-commit
+                         hook). --secrets fails on a tracked or staged secret
+                         (CI). Tickets, logs, and investigations are allowed
+                         under both flags — a fork commits those.
 reset [--yes] [--dry-run] [--keep-logs] [--keep-investigations]
-                         wipe tickets/investigations/logs/telemetry back to an empty
-                         template — see knowledge-center/wiki/reset-to-clean-slate.md
+                         wipe tickets/investigations/logs/telemetry from this
+                         checkout back to an empty template. Does not commit
+                         and does not rewrite history. Commit the deletions
+                         yourself when you want a blank branch others can clone.
+                         See knowledge-center/wiki/reset-to-clean-slate.md
 
 stop-hook check [--agent A] [--json]
                          session stop-hook (T-017 FR-10): reminds the calling identity
@@ -523,7 +535,9 @@ frontmatter names against their directory/filename, `.claude/...` paths against
 what exists, orphan skills, and the roster counts CLAUDE.md states. Exits
 non-zero on errors; warnings need `--strict` to fail. Run in CI by
 `.github/workflows/verify.yml` and, for harness-touching commits only, by
-`.githooks/pre-commit`.
+`.githooks/pre-commit`. That hook also always runs `workspace check --staged`,
+which refuses a staged secret path and allows tickets. Opt in with
+`git config core.hooksPath .githooks`. CI runs `workspace check --secrets`.
 
 Prompt evals live in `console/evals/`. `python console/kanban.py evals replay`
 grades the committed fixtures and does not start a model. How to add a
@@ -649,6 +663,33 @@ server/
 static/           vanilla HTML/JS/CSS frontend, no build step, one file per
                   tab (core.js has the shared tab-registry/fetch helpers)
 ```
+
+### Four doors, one manager
+
+An agent gets started through one of four doors. Three go through
+`server/agent_manager.py` (`create` / `send`), so they share one live-session
+stack: steering, approvals, per-ticket worktrees, telemetry.
+
+1. **Agents tab** — `static/agents.js` → `POST /api/agents/chats`
+   (`features/agents_feature.py`).
+2. **Assistant, tray and voice** — `POST /api/assistant/say`
+   (`features/assistant_feature.py`) reuses one `agent_manager` chat.
+3. **Runs, verbs, MCP** — the `delegate` and `launch_role` verbs
+   (`verb_handlers.py`, rows in `config/verbs.toml`) start a chat through
+   `agent_manager`; a Run in `runs.py` points at that chat and
+   `run_watchdog.py` watches it. Schedules and `mcp_server.py` reach the same
+   verbs.
+4. **`kanban.py agents launch`** — the one-shot debug CLI
+   (`server/agents.py`). It reads the same backend registry but skips
+   steering, worktrees and the approval gate, and a server restart loses
+   track of an in-flight job.
+
+(The Telegram bot, `telegram_bot.py`, is a further `agent_manager` caller.)
+
+Names that trip people up: `server/backends/` is the **ticket-storage vault**
+adapter, not the agent registry (that is `agent_backends.py`); `jobs.py` is the
+**verb queue**; the "jobs" in `agents.py` are **one-shot processes**; `runs.py`
+is the **durable work record**.
 
 ## Plugin architecture
 

@@ -1,0 +1,17 @@
+[meta]
+ticket = "T-024"
+tracker = "questions"
+updated = "2026-10-04T15:58:41Z"
+seq = 1
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "Should markdown artifacts that an agent writes with its own Edit/Write tools (progress.md, plan.md, ...) land in the main repo's knowledge-center/ instead of the worktree copy? Phase A anchors only console-mediated state (TOML trackers, telemetry, verbs, notify). Proposed: out of scope for T-024, decide before T-025/T-026."
+type = "scope"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-04"
+affects = "T-024"
+answer = ""
+resolved_on = ""

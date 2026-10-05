@@ -1,0 +1,18 @@
+[meta]
+ticket = "T-024"
+tracker = "todos"
+updated = "2026-10-04T16:29:51Z"
+seq = 1
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "CR-3 (deferred): agents_feature.py:278 hook_pretooluse previews against the Claude hook repo_root; for a worktree Claude chat this may read the main file instead of the worktree file. Left unchanged by T-024 (BR-5); decide whether to pass preview_root there."
+type = "follow-up"
+priority = "low"
+captured_by = "agent"
+captured_on = "2026-10-04"
+due = ""
+context = "critique CR-3; plan risk R10; REGISTRY.request(preview_root=None) default keeps it unchanged"
+done_on = ""
+drop_reason = ""

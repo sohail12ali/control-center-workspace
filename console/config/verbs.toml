@@ -340,3 +340,11 @@ hint = "Move a tickets ticket to the first terminal lane despite close-check blo
 handler = "verb_handlers.close_override"
 needs_ticket = true
 needs_confirm = true
+
+# Read-only. Fails the answer when a secret path is tracked or staged.
+# Ticket, log, and investigation paths are allowed — a fork commits those.
+[[verb]]
+id = "secret-check"
+label = "Secret check"
+hint = "Tracked or staged paths that must stay off the branch: .env, keys, notify-local.toml, settings.local.json, console cache. Tickets are allowed."
+handler = "verb_handlers.secret_check"

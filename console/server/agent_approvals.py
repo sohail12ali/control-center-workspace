@@ -85,7 +85,8 @@ class Approvals:
         self._lock = threading.Lock()
 
     def request(self, chat, tool, tool_input, tool_use_id, publish,
-                timeout=DEFAULT_TIMEOUT, repo_root=None, title=""):
+                timeout=DEFAULT_TIMEOUT, repo_root=None, title="",
+                preview_root=None):
         """Park the calling thread until a human answers or the timeout hits.
 
         Returns ``(decision, reason)`` where decision is ``allow`` or ``deny``.
@@ -95,6 +96,11 @@ class Approvals:
         passing it is what turns this from a yes/no prompt into a review: a card
         showing escaped JSON gets approved unread, which is a speed bump with a
         log rather than a gate.
+
+        ``preview_root`` is where the preview reads files from; ``None`` means
+        ``repo_root``. They differ for a worktree chat (T-024): the notification
+        goes through the main repo, but the file the agent is about to write is
+        in its worktree, so that is the one a diff has to be built against.
         """
         with self._lock:
             # Desk-only tools deliberately skip this: even if something had
@@ -112,7 +118,7 @@ class Approvals:
         if repo_root:
             try:
                 from . import tool_preview
-                preview = tool_preview.build(repo_root, tool, tool_input)
+                preview = tool_preview.build(preview_root or repo_root, tool, tool_input)
             except Exception:  # noqa: BLE001
                 # A preview is a convenience. Failing to build one must never
                 # stop the question being asked, or a gated tool would run

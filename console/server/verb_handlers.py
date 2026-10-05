@@ -33,6 +33,7 @@ from . import tickets as tickets_mod
 from . import todos_agg
 from . import trackers as trackers_mod
 from . import worktrees as worktrees_mod
+from . import workspace_check as workspace_check_mod
 # Backend SPI (T-017 FR-5, decision-log a4). `ticket_move` (2b-4) is the one
 # pre-existing mutating verb this phase rewires through it; `ready`/`claim`/
 # `comment` get their own verb handlers in Phase 3, calling the same
@@ -743,6 +744,11 @@ def tracker_update(repo_root, ticket=None, kind="", item_id="", status="",
     if type:
         fields["type"] = type
     return trackers_mod.update(repo_root, ticket, kind, item_id, **fields)
+
+
+def secret_check(repo_root, ticket=None):
+    """Tracked or staged secret paths. Tickets are not part of this answer."""
+    return workspace_check_mod.secret_report(repo_root, staged_only=False)
 
 
 def desktop_clipboard_write(repo_root, ticket=None, text=""):

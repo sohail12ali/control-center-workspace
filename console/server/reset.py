@@ -43,7 +43,11 @@ tracker = "todos"
 
 
 def plan(repo_root, *, keep_logs=False, keep_investigations=False):
-    """Build the list of (kind, path) actions a reset would take. Never touches disk."""
+    """Build the list of (kind, path) actions a reset would take. Never touches disk.
+
+    `workspace_check.instance_rows` reports this list and skips a rewrite that
+    already matches the empty scaffold. Call `plan()` there; do not copy this walk.
+    """
     actions = []
 
     artifacts_dir = os.path.join(vault_dir(repo_root), "artifacts")

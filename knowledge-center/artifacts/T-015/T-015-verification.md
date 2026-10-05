@@ -10,7 +10,7 @@ artifact: verification
 | # | Criterion | Status | Evidence |
 |---|-----------|--------|----------|
 | 1 | First message of a chat is no slower than the second | **PASS** | `agent_manager.create(open=False)` sends nothing; `TestOpeningWithNoMessage` asserts `sess.sent == []`. The `"Hello."` turn is gone. |
-| 2 | Median conversational turn under 2s on a hosted talk model | **BLOCKED — needs `OPENROUTER_API_KEY`** | See *Not verified* below. The measurement path itself is in place (AC 9). |
+| 2 | Median conversational turn under 2s on a hosted talk model | **PASS — measured 2026-10-05** | `knowledge-center/telemetry/2026-10.jsonl` (session `1bea55008c29`): openrouter `nvidia/nemotron-3.5-lightning:free`, 6 conversational turns through `/api/assistant/say`. **Median duration_ms 1732**, median ttft_ms 1603.5. Per turn: 1835 / 2823 / 4663 / 1629 / 899 / 1133 ms, so 4 of 6 were under 2 s. Every turn carried about 8.9k input tokens, which matches TD-6. |
 | 3 | `GET /api/assistant/settings` opens no sockets | **PASS** | `TestSettingsReadTouchesNoNetwork::test_no_probe_is_ever_initiated` fails the test if `_probe` is called at all. |
 | 4 | Backend resolution does not pay for probes it does not need | **PASS — measured** | Cold probe cache, stored choice `claude`: **8ms**, asking about zero other candidates. The previous behaviour (`installed` for every row up front): **3092ms** on this same machine. |
 | 5 | The chain states why it passed a candidate over, never falls silently | **PASS — live** | With the stored choice cleared, on this machine: ollama *"nothing is listening on 127.0.0.1:11434"*, lm-studio *"192.168.1.14:1234 did not answer within 1.5s"*, openrouter *"OPENROUTER_API_KEY is not set"*. Plus `TestTalkReadyPreflight` for reachable-but-toolless and reachable-but-empty. |
@@ -147,7 +147,8 @@ real Tauri window before being called PASS.
 
 ## Not verified — stated plainly
 
-1. **Criterion 2, the latency number.** Needs `OPENROUTER_API_KEY` in the workspace
+1. **Criterion 2: resolved 2026-10-05.** The key was set and measured; see the table. What follows is the original note.
+   Needs `OPENROUTER_API_KEY` in the workspace
    `.env`. That is the user's to set — this repo neither holds a key nor should. Until it
    is set, `openrouter` reports *"OPENROUTER_API_KEY is not set in this environment"* and
    the chain falls to `claude`, which is correct behaviour and also still slow. **The

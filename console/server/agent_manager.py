@@ -388,8 +388,10 @@ def subscribe(repo_root, sid, from_seq=0, types=None):
 def send(sid, text, mode="auto"):
     """One message into a running chat.
 
-    `sess.cwd` IS the workspace root (chats run there — see `create`), and
-    passing it is what makes an inline `/skill`, `@agent` or `#file` work
+    `sess.cwd` is where the chat runs (see `create`): the repo root, or the
+    ticket's worktree for a ticketed chat, which is not `sess.repo_root`. Skills,
+    agents and `#file` resolve against it on purpose (T-024 D5), and passing it
+    is what makes an inline `/skill`, `@agent` or `#file` work
     mid-conversation. Without it this call resolved nothing, so a skill could
     only ever be chosen at the moment a chat was started.
 

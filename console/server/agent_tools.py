@@ -360,13 +360,20 @@ def tool_definitions(repo_root, include_workspace=True):
     return out
 
 
-def dispatch(repo_root, name, arguments):
+def dispatch(repo_root, name, arguments, workspace_root=None):
     """Run one tool call. Always returns a string — never raises to the loop.
 
     A tool that raises ends the turn; a tool that returns its error lets the
     model read what went wrong and try something that works.
+
+    Two roots (T-024): console verbs act on `repo_root`, the main repo that owns
+    tracker state; the file tools and `run_command` act on `workspace_root`, the
+    directory the agent is confined to (a ticket worktree). `None` means
+    `repo_root`, which is every caller that has only one.
     """
     arguments = dict(arguments or {})
+    if workspace_root is None:
+        workspace_root = repo_root
     try:
         verb_id = _verb_id_from_tool(repo_root, name)
         if verb_id is not None:
@@ -380,7 +387,7 @@ def dispatch(repo_root, name, arguments):
         if entry is None:
             return ("No tool named %r. Available: %s"
                     % (name, ", ".join(sorted(WORKSPACE_TOOLS))))
-        return entry[0](repo_root, **arguments)
+        return entry[0](workspace_root, **arguments)
     except ToolError as exc:
         return "Error: %s" % exc
     except verbs_mod.VerbError as exc:

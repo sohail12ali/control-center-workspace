@@ -22,6 +22,7 @@ from server import vault as vault_mod  # noqa: E402
 from server import stop_hook as stop_hook_mod  # noqa: E402
 from server import setup_editor as setup_editor_mod  # noqa: E402
 from server.features import assistant_feature  # noqa: E402
+from server import workspace_check  # noqa: E402
 from server.paths import RepoRootError, find_repo_root  # noqa: E402
 from evals import runner as evals_runner  # noqa: E402
 
@@ -646,6 +647,23 @@ def cmd_reset(args, repo_root):
         print(f"\ndone - {len(actions)} path(s) reset.")
 
 
+def cmd_workspace_check(args, repo_root):
+    if args.staged and args.secrets:
+        _die("workspace check takes only one of --staged and --secrets")
+    if args.staged:
+        payload = workspace_check.secret_report(repo_root, staged_only=True)
+    elif args.secrets:
+        payload = workspace_check.secret_report(repo_root, staged_only=False)
+    else:
+        payload = workspace_check.report(repo_root)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(workspace_check.format_report(payload))
+    if not payload["ok"]:
+        sys.exit(1)
+
+
 def cmd_refresh(args, repo_root):
     # Cheap re-index: touch every board's ticket list once so a broken
     # config/data file surfaces immediately instead of silently on next use.
@@ -884,6 +902,19 @@ def build_parser():
     p.add_argument("--out", required=True)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("workspace", help="template check and the secret commit gate")
+    workspace_sub = p.add_subparsers(dest="workspace_cmd", required=True)
+    p = workspace_sub.add_parser(
+        "check",
+        help="report leftover workspace content, or fail when a secret path is in git",
+    )
+    p.add_argument("--staged", action="store_true",
+                   help="fail only if a secret path is staged (pre-commit). Tickets are allowed")
+    p.add_argument("--secrets", action="store_true",
+                   help="fail if a secret path is tracked or staged (CI). Tickets are allowed")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_workspace_check)
 
     p = sub.add_parser("reset", help="wipe tickets/investigations/logs/telemetry back to an empty template")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")

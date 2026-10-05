@@ -22,6 +22,11 @@ import os
 MCP_COMMAND = "python"
 MCP_ARGS = ["console/mcp_server.py"]
 
+#: Claude Code only (T-024 FR-3): hands the server the main repo when a console
+#: agent runs in a ticket worktree. Claude expands `${VAR:-}` to empty when the
+#: variable is unset, which `paths.find_repo_root` ignores.
+MCP_CLAUDE_ENV = {"CONSOLE_REPO_ROOT": "${CONSOLE_REPO_ROOT:-}"}
+
 EDITORS = ("cursor", "claude", "vscode")
 
 _AGENTS_START = "<!-- console:agents-snippet:start (T-017 FR-11) -->"
@@ -110,7 +115,8 @@ def setup_editor(repo_root, editor):
         # root as .mcp.json (predates this ticket) — merge into it rather
         # than writing a second, competing file.
         config_path = os.path.join(repo_root, ".mcp.json")
-        mcp_changed = _merge_mcp_json(config_path, "mcpServers", entry_stdio)
+        mcp_changed = _merge_mcp_json(
+            config_path, "mcpServers", dict(entry_stdio, env=dict(MCP_CLAUDE_ENV)))
     else:  # vscode
         # VS Code's MCP config: .vscode/mcp.json, "servers" key, each entry
         # additionally names its transport type.

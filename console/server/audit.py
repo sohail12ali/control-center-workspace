@@ -78,7 +78,10 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            # T-021 FR-7: a move into `blocked`, refused or allowed.
            "ticket.block",
            # T-021 FR-9 / FR-10: a close, refused or allowed, and a human override.
-           "ticket.close", "ticket.close.override")
+           "ticket.close", "ticket.close.override",
+           # Settings clean: deletes workspace content from this checkout.
+           # It does not commit and does not rewrite history.
+           "workspace.clean")
 
 
 def audit_dir(repo_root):

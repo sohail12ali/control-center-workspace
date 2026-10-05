@@ -117,6 +117,14 @@ def _clear_caches():
     agent_backends._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_repo_root(monkeypatch):
+    """A run inside a console agent session inherits `CONSOLE_REPO_ROOT` (T-024),
+    which would re-point `paths.find_repo_root()` in unrelated tests. Tests that
+    need it set it themselves."""
+    monkeypatch.delenv("CONSOLE_REPO_ROOT", raising=False)
+
+
 @pytest.fixture
 def repo(tmp_path):
     """A minimal but valid workspace root. Returns its path as a string."""

@@ -13,8 +13,10 @@
    down, so the control is hidden there rather than offered and quietly
    downgraded. The composer says which you're about to do.
 
-   Working directory is not offered: chats run at the workspace root, which is
-   what the harness assumes everywhere else.
+   Working directory is not offered. A chat with no ticket runs at the
+   workspace root; a chat started with a ticket runs in that ticket's managed
+   git worktree (agent_manager._resolve_worktree, T-018), falling back to the
+   root with a stated reason if the worktree cannot be made.
 
    Backends come from console/config/agents.toml — adding a CLI is config, not
    code, and this file names no product. Capability flags (steerable,

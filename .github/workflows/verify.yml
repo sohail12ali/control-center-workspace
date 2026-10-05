@@ -68,6 +68,11 @@ jobs:
       - name: Lint skills and agents
         run: python console/kanban.py harness lint
 
+      # Tracked secret paths only. Tickets in this repo are meant to be here;
+      # a ticket scan would fail the template on purpose.
+      - name: Secret paths stay untracked
+        run: python console/kanban.py workspace check --secrets
+
       - name: Eval replay (free, no model)
         run: python console/kanban.py evals replay
 

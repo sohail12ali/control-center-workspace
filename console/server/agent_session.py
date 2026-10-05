@@ -448,7 +448,7 @@ class BaseSession:
         """
         try:
             from . import notify
-            notify.send(self.cwd, "turn_end", notify.turn_end_message(
+            notify.send(self.repo_root or self.cwd, "turn_end", notify.turn_end_message(
                 self.title, self.agent, self.model,
                 int(ev.get("num_turns") or 0), self.cost_usd,
                 error=bool(ev.get("is_error"))))
@@ -460,8 +460,10 @@ class BaseSession:
 
         Recorded per turn rather than per session because a session can run for
         hours and a session-level total cannot answer "which stage cost that" —
-        which is the only question the data exists to answer. `self.cwd` is the
-        repo root the manager built this session with.
+        which is the only question the data exists to answer. Written to the main
+        repo (`self.repo_root`), not `self.cwd`: for a ticketed chat `cwd` is a
+        worktree the Analytics tab never reads. Falls back to `cwd` when no
+        `repo_root` was given.
 
         Cost is taken from the backend when it reported one and left to the
         pricing table otherwise; `cost_usd=None` means unknown, and telemetry
@@ -470,7 +472,7 @@ class BaseSession:
         reported = ev.get("cost_usd")
         try:
             telemetry.record_turn(
-                self.cwd,
+                self.repo_root or self.cwd,
                 session=self.id,
                 backend=self.agent,
                 model=self.model,

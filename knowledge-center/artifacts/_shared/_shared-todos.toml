@@ -1,4 +1,18 @@
 [meta]
 ticket = "_shared"
 tracker = "todos"
-updated = "2026-08-24T05:00:53Z"
+updated = "2026-10-05T02:38:14Z"
+seq = 1
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "Assistant talk prompt carries no current date/time: asked 'What day is it today?' (2026-10-05, openrouter nemotron-3.5-lightning) it called run_command 'date +%A', raising a gated approval card for a trivial question (chat 092430b581c1). Add today's date + local time to the prompt_build orientation section so the talk model never shells out for it."
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-05"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""

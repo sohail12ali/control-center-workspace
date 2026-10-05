@@ -175,7 +175,7 @@ class ApiSession(BaseSession):
 
     # -- the loop ----------------------------------------------------------
     def _run_turn(self):
-        tools = agent_tools.tool_definitions(self.cwd)
+        tools = agent_tools.tool_definitions(self.repo_root or self.cwd)
         rounds = 0
         total_in = total_out = 0
         reported_cost = 0.0
@@ -269,7 +269,7 @@ class ApiSession(BaseSession):
                     # to use OCR instead. Silence here is what produces a
                     # confident description of a screen nobody looked at.
                     follow_up = multimodal.after_capture(
-                        self.cwd, call.name, tool_result, self.model,
+                        self.repo_root or self.cwd, call.name, tool_result, self.model,
                         self._vision_patterns())
                     if follow_up is not None:
                         self._messages.append(follow_up)
@@ -348,11 +348,13 @@ class ApiSession(BaseSession):
                 self.id, name, arguments, call.id or "",
                 self.stream.publish,
                 timeout=self.backend.approval_timeout,
-                repo_root=self.cwd, title=self.title)
+                repo_root=self.repo_root or self.cwd, title=self.title,
+                preview_root=self.cwd)
             if decision == "deny":
                 return finish(False, "Denied: %s" % reason)
 
-        return finish(True, agent_tools.dispatch(self.cwd, name, arguments))
+        return finish(True, agent_tools.dispatch(
+            self.repo_root or self.cwd, name, arguments, workspace_root=self.cwd))
 
     def _vision_patterns(self):
         """Model-id globs that can actually see a picture.
@@ -363,7 +365,7 @@ class ApiSession(BaseSession):
         """
         try:
             from . import assistant_config
-            return assistant_config.settings(self.cwd).get("vision_models") or []
+            return assistant_config.settings(self.repo_root or self.cwd).get("vision_models") or []
         except Exception:  # noqa: BLE001
             return []
 

@@ -58,10 +58,18 @@ def tree_spawn_kwargs():
 def clean_env(repo_root=None):
     """`os.environ` minus the `[runs].env_strip` deny list (session-identity and
     nesting variables), for every agent child. Names only; values are never
-    read or logged."""
+    read or logged.
+
+    When `repo_root` is given the child also gets `CONSOLE_REPO_ROOT` (T-024),
+    the main repo that `paths.find_repo_root` anchors to even when the child's
+    cwd is a ticket worktree. Set after the strip, so it is never stripped and
+    a stale inherited value is overwritten."""
     from . import run_config  # lazy: run_config imports boards, procs is imported early
     strip = set(run_config.runs_cfg(repo_root)["env_strip"])
-    return {k: v for k, v in os.environ.items() if k not in strip}
+    env = {k: v for k, v in os.environ.items() if k not in strip}
+    if repo_root:
+        env["CONSOLE_REPO_ROOT"] = os.path.abspath(repo_root)
+    return env
 
 
 def _taskkill(pid, force):
