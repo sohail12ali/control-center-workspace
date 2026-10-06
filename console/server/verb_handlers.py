@@ -22,6 +22,7 @@ from . import audit
 from . import context as context_mod
 from . import harness_lint
 from . import kickoff as kickoff_mod
+from . import link_check
 from . import model_catalog
 from . import native_bridge
 from . import pr_state as pr_state_mod
@@ -75,6 +76,18 @@ def plan_status(repo_root, ticket=None):
 def harness_lint_verb(repo_root, ticket=None):
     findings, summary = harness_lint.lint(repo_root)
     return {"summary": summary, "findings": [f.as_dict() for f in findings]}
+
+
+def link_check_verb(repo_root, ticket=None, strict=""):
+    """Read-only link check. Findings are a RESULT, never an exception, so a
+    scheduled run that finds errors still ends `done` with `ok: false` and its
+    findings; `LinkCheckError` (could not run: unreadable vault, unknown ticket)
+    does propagate, so that job ends `error` and notifies instead of looking
+    green. `ok` is "the CLI would exit 0 under the same flags"."""
+    flag = str(strict).lower() in ("1", "true", "yes", "on")
+    findings, summary = link_check.check(repo_root, ticket=ticket or None)
+    return {"ok": link_check.exit_code(summary, flag) == 0, "summary": summary,
+            "findings": [f.as_dict() for f in findings]}
 
 
 def evals_replay(repo_root, ticket=None, scenario="", agent="", skill="", changed=""):

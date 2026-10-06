@@ -22,7 +22,7 @@
      this deployment actually loaded, so a disabled plugin doesn't leave a
      paragraph describing a tab that isn't there. */
   var BLURBS = {
-    overview: "What needs a human right now — blocked, stale and unowned work, plus lane flow and what changed recently.",
+    overview: "What needs a human right now — Needs you (open questions and approvals) apart from Needs repair (blocked, stale or unowned tickets, unapplied answers, failed runs), plus lane flow and what changed recently.",
     assistant: "Talk to the workspace. Live Runs and a ticket strip live here; the Agents tab inspects a Run in full.",
     agents: "Run inspector — chats and named Runs, including resume of a past chat.",
     work: "Read-only timesheet over the per-author daily logs that /log-work writes.",

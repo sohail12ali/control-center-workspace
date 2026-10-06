@@ -2,7 +2,7 @@
 id = "T-041"
 title = "Nightly link checker: flag artifact-map and Links entries that moved"
 kind = "tickets"
-stage = "open"
+stage = "verify"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"

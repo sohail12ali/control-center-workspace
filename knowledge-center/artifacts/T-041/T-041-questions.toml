@@ -1,4 +1,29 @@
 [meta]
 ticket = "T-041"
 tracker = "questions"
-updated = "2026-10-06T04:51:32Z"
+updated = "2026-10-06T07:55:59Z"
+seq = 2
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "Day-one debt: the real vault has 1,344 one-way sibling pairs and 28 dangling Links-block targets. Default taken: one-way and incomplete-sibling findings are WARN (exit 1 only with --strict), dangling Links targets and missing Links blocks are ERROR. Do you want one-way pairs to be ERROR from the start (needs a repair pass and fixed templates first)?"
+type = "decision"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-06"
+affects = "FR-8,FR-9"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q2"
+status = "open"
+text = "Nightly time: the console is the clock and skips missed firings, so a 02:30 row only fires if the console runs overnight. Default taken: cron 30 2 * * * (local), parked. Pick another time at unpark if the console is only up in working hours."
+type = "decision"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-06"
+affects = "FR-15"
+answer = ""
+resolved_on = ""

@@ -201,7 +201,13 @@ def test_post_carries_the_status_and_is_otherwise_what_it_was(core):
 
 def test_core_adds_no_interval(core):
     # NFR-5/AC-66: the debounce and the hydrate bound are one-shot timeouts.
-    assert "setInterval(" not in core
+    # T-039 (PC-1, FR-12): the one shared freshness timer is the only interval,
+    # and it lives in its own block; the prefs code still adds none.
+    start = core.index("/* ---------------- panel freshness")
+    end = core.index("/* A collapsible block INSIDE a panel")
+    assert core.count("setInterval(") == 1
+    assert core[start:end].count("setInterval(") == 1
+    assert "setInterval(" not in core[:start] + core[end:]
 
 
 def test_set_and_del_go_through_one_staging_function(prefs_block):

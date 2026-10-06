@@ -26,9 +26,10 @@ description: The Delivery Console — a local Tickets/Investigations board plus 
 /console telemetry [--by ticket|model|skill|backend|day] [--ticket {T}]   # token + cost totals
 /console telemetry skills                  # per-skill invocation counts; what never fired
 /console harness lint [--strict]           # frontmatter, dead .claude paths, orphan skills
+/console vault links [--json] [--strict] [--all] [--ticket {T}]   # read-only: dangling/one-way links, Links blocks, map drift; exit 0/1/2; verb `link-check`
 ```
 
-Also: `overview`, `todos`, `work day|range`, `analytics`, `vault tree|file|graph`, `agents backends|catalog|jobs|show|stop`, `onboard`. Full CLI + architecture: [console/README.md](../../../console/README.md).
+Also: `overview`, `todos`, `work day|range`, `analytics`, `vault tree|file|graph|links`, `agents backends|catalog|jobs|show|stop`, `onboard`. Full CLI + architecture: [console/README.md](../../../console/README.md).
 
 **When:** A visual board beats grepping `artifact-map.md`, or a skill needs to mutate ticket/tracker state.
 

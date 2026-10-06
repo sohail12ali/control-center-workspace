@@ -25,13 +25,56 @@
       }, [
         badgeFn(r),
         C.el("span", { class: "ltext" }, [
-          C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: r.id + " " }),
+          C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: r.id + " " + (r.ref ? r.ref + " " : "") }),
           r.title,
         ]),
         C.el("span", { class: "chip", text: r.stage }),
       ]));
     });
     return C.el("div", {}, [C.el("h4", { text: label }), box]);
+  }
+
+  function ofType(rows, type) {
+    return (rows || []).filter(function (r) { return r.type === type; });
+  }
+
+  /* Needs you is capped; the rows beyond the cap are one click away on the
+     board, with the exact number said out loud. Navigates only. */
+  function moreRow(n, api) {
+    return C.el("div", { class: "rows" }, [C.el("div", {
+      class: "lrow clickable", title: "Open the Tickets board",
+      onclick: function () { api.go("board:tickets"); },
+    }, [
+      C.el("span", { class: "ltext", text: "and " + n + " more" }),
+      C.el("span", { class: "chip" }, [C.icon("chevRight")]),
+    ])]);
+  }
+
+  /* j/k/arrows move the highlighted row, Enter opens it. One function for both
+     attention panels so they cannot drift apart. */
+  function rowNav(panel) {
+    panel.tabIndex = 0;
+    panel.addEventListener("keydown", function (e) {
+      if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+      /* The header is a fold control (Enter toggles it); it must fold without
+         also opening the highlighted row. A folded panel has no rows to open. */
+      if (e.target && e.target.closest && e.target.closest("header")) return;
+      /* A button (the Refresh button in the as-of row) keeps its own Enter: it
+         must act, not open the highlighted row. */
+      if (e.target && ((e.target.tagName === "BUTTON") || (e.target.closest && e.target.closest(".fresh-row")))) return;
+      if (panel.classList.contains("collapsed")) return;
+      var rows = panel.querySelectorAll(".lrow");
+      if (!rows.length) return;
+      var idx = 0;
+      rows.forEach(function (r, i) { if (r.classList.contains("kbd")) idx = i; });
+      if (e.key === "j" || e.key === "ArrowDown") idx = Math.min(rows.length - 1, idx + 1);
+      else if (e.key === "k" || e.key === "ArrowUp") idx = Math.max(0, idx - 1);
+      else if (e.key === "Enter") { rows[idx].click(); e.preventDefault(); return; }
+      else return;
+      rows.forEach(function (r, i) { r.classList.toggle("kbd", i === idx); });
+      if (rows[idx].scrollIntoView) rows[idx].scrollIntoView({ block: "nearest" });
+      e.preventDefault();
+    });
   }
 
   /* ---------------- onboarding ----------------
@@ -176,10 +219,22 @@
     ]);
   }
 
-  function jobsPanel(api) {
-    var host = C.el("div");
+  /* A repaint builds fresh hosts for Jobs and Scheduled. The new host takes
+     over the old host's panel first, so a refetch that fails leaves the rows
+     and their old as-of time on screen instead of dropping the panel. */
+  var lastHost = {};
+  function opsHost(name) {
+    var host = C.el("div"), prev = lastHost[name];
+    while (prev && prev.firstChild) host.appendChild(prev.firstChild);
+    lastHost[name] = host;
+    return host;
+  }
+
+  function jobsPanel(api, onRefresh) {
+    var host = opsHost("jobs");
     function load() {
       C.get("/api/jobs").then(function (d) {
+        var fetchedAt = Date.now();
         C.clear(host);
         var jobs = (d && d.jobs) || [];
         if (!jobs.length) return;              // never used here — say nothing
@@ -194,16 +249,19 @@
         host.appendChild(C.panel("Jobs", rows,
           C.el("span", { class: "chip" + (active.length ? " accent" : " zero"),
                          text: active.length ? active.length + " active" : "idle" }),
-          { icon: "queue", tone: active.length ? "info" : null, collapse: { id: "ov.jobs", open: true } }));
+          { icon: "queue", tone: active.length ? "info" : null, collapse: { id: "ov.jobs", open: true },
+            fresh: { asOf: fetchedAt, onRefresh: onRefresh } }));
       }).catch(function () { /* verbs plugin off, or a static export */ });
     }
     load();
     return host;
   }
 
-  function schedulesPanel() {
-    var host = C.el("div");
+  function schedulesPanel(onRefresh) {
+    var host = opsHost("schedules");
     C.get("/api/schedules").then(function (d) {
+      var fetchedAt = Date.now();
+      C.clear(host);
       var rows = (d && d.schedules) || [];
       if (!rows.length && !(d && d.error)) return;
       var box = C.el("div", { class: "rows" });
@@ -244,128 +302,146 @@
       host.appendChild(C.panel("Scheduled", box,
         C.el("span", { class: "chip" + (on ? " ok" : " zero"),
                        text: on ? on + " on" : "parked" }),
-        { icon: "clock", collapse: { id: "ov.schedules", open: true } }));
+        { icon: "clock", collapse: { id: "ov.schedules", open: true },
+          fresh: { asOf: fetchedAt, onRefresh: onRefresh } }));
     }).catch(function () { /* ops plugin off, or a static export */ });
     return host;
   }
 
+  /* Refresh = fetch first, repaint only on success. It must not go through
+     C.load, which blanks the page on an error: a failed refresh keeps the rows
+     and the old as-of time, so the panels age into STALE instead of vanishing. */
+  function refresh(host, api) {
+    return C.get("/api/overview").then(function (d) {
+      C.clear(host);
+      paint(host, d, api);
+    }, function (err) {
+      C.toast("Could not refresh: " + (err && err.message ? err.message : err), "err");
+    });
+  }
+
+  function paint(host, d, api) {
+    var grid = C.el("div", { class: "grid" });
+    /* The server's generated_at is the as-of time of every panel fed by
+       /api/overview. No Refresh button in a static export. */
+    var fresh = { asOf: d.generated_at, onRefresh: C.IS_STATIC ? null : function () { refresh(host, api); } };
+    host.appendChild(C.splitter.foldBar(host));
+    grid.appendChild(onboardingCard(api, function () { render(host, api); }));
+    var a = d.attention;
+
+    /* -- at a glance: one panel, tight tile grid -- */
+    grid.appendChild(C.panel("At a glance", C.stats([
+      C.stat(d.stats.open, "Open", { tone: "accent", onClick: function () { api.go("board:tickets"); } }),
+      C.stat(a.counts.blocked, "Blocked", {
+        tone: a.counts.blocked ? "danger" : null, sub: "critical items",
+      }),
+      C.stat(a.counts.stale, "Stale", {
+        tone: a.counts.stale ? "warn" : null, sub: d.stale_days + "d+ idle",
+      }),
+      C.stat(d.stats.tracker_open, "Items", { sub: "Q + B + T" }),
+      C.stat(d.stats.done, "Done", { tone: "ok" }),
+    ]), null, { icon: "layout", collapse: { id: "ov.glance", open: true }, fresh: fresh }));
+
+    /* -- needs you: only a person can clear these; above needs repair -- */
+    var counts = a.counts;
+    var youRows = a.needs_you || [];
+    var youKids = [
+      attnGroup(ofType(youRows, "approval"), "Approvals", function () {
+        return C.el("span", { class: "chip danger" }, [C.icon("alert"), "!"]);
+      }, api),
+      attnGroup(ofType(youRows, "question"), "Questions waiting", function () {
+        return C.el("span", { class: "chip warn" }, [C.icon("info"), "?"]);
+      }, api),
+      counts.needs_you > youRows.length ? moreRow(counts.needs_you - youRows.length, api) : null,
+    ].filter(Boolean);
+    var needsPanel = C.panel(
+        "Needs you",
+        youKids.length ? youKids
+                       : C.empty("Nothing is waiting on you", "No open questions or approvals.", "check"),
+        C.el("span", { class: "chip" + (counts.needs_you ? " warn" : " zero"), text: String(counts.needs_you) }),
+        { icon: "user", tone: counts.needs_you ? "warn" : null, collapse: { id: "ov.needsyou", open: true }, fresh: fresh }
+      );
+    rowNav(needsPanel);
+    grid.appendChild(C.el("div", { class: "span2" }, [needsPanel]));
+
+    /* -- needs repair: the widest panel, since its rows are sentences -- */
+    var fixRows = a.needs_repair || [];
+    var attnKids = [
+      attnGroup(ofType(fixRows, "blocked"), "Blocked by a critical item", function (r) {
+        return C.el("span", { class: "chip danger" }, [C.icon("alert"), String(r.blocking)]);
+      }, api),
+      attnGroup(ofType(fixRows, "stale"), "Stale (" + d.stale_days + "+ days)", function (r) {
+        return C.el("span", { class: "chip warn" }, [C.icon("clock"), C.fmtAgo(r.idle_days)]);
+      }, api),
+      attnGroup(ofType(fixRows, "unowned"), "Nobody owns these", function () {
+        return C.el("span", { class: "chip" }, [C.icon("user"), "—"]);
+      }, api),
+      attnGroup(ofType(fixRows, "answered"), "Answers not yet applied", function () {
+        return C.el("span", { class: "chip warn" }, [C.icon("info"), "answered, not applied"]);
+      }, api),
+      attnGroup(ofType(fixRows, "run"), "Runs that need a look", function (r) {
+        return C.el("span", { class: "chip danger", text: r.stage });
+      }, api),
+    ].filter(Boolean);
+    var attnPanel = C.panel(
+        "Needs repair",
+        attnKids.length ? attnKids
+                        : C.empty("Nothing needs repair",
+                                  "No blocked, stale or unowned work, answers waiting to be applied, or failed runs.", "check"),
+        C.el("span", { class: "chip" + (counts.needs_repair ? " warn" : " zero"), text: String(counts.needs_repair) }),
+        { icon: "alert", tone: counts.needs_repair ? "warn" : null, collapse: { id: "ov.attention", open: true }, fresh: fresh }
+      );
+    rowNav(attnPanel);
+    grid.appendChild(C.el("div", { class: "span2" }, [attnPanel]));
+
+    /* -- flow, one row per board -- */
+    var flowKids = [];
+    Object.keys(d.flow).forEach(function (kind) {
+      flowKids.push(C.el("div", {}, [
+        C.el("div", { class: "row", style: "margin-bottom:5px" }, [
+          C.el("h4", { text: kind, style: "margin:0" }),
+          C.el("span", { class: "grow" }),
+          C.el("button", {
+            class: "btn sm", onclick: function () { api.go("board:" + kind); },
+          }, ["Board", C.icon("chevRight")]),
+        ]),
+        C.stack(d.flow[kind].map(function (l) { return { label: l.label, count: l.count }; })),
+      ]));
+    });
+    grid.appendChild(C.panel("Flow", flowKids, null,
+      { icon: "columns", tone: "info", collapse: { id: "ov.flow", open: true }, fresh: fresh }));
+
+    /* -- recent -- */
+    var recent = C.el("div", { class: "rows" });
+    if (!d.recent.length) {
+      recent.appendChild(C.empty("Nothing yet", "Create a ticket to see it here.", "inbox"));
+    }
+    d.recent.forEach(function (r) {
+      recent.appendChild(C.el("div", {
+        class: "lrow clickable",
+        onclick: function () { api.go("board:" + r.kind); },
+      }, [
+        C.el("span", { class: "chip", text: r.kind === "tickets" ? "T" : r.kind[0].toUpperCase() }),
+        C.el("span", { class: "ltext" }, [
+          C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: r.id + " " }),
+          r.title,
+        ]),
+        r.owner ? C.el("span", { class: "chip" }, [r.owner]) : null,
+        C.el("span", { class: "muted", text: r.updated }),
+      ]));
+    });
+    grid.appendChild(C.panel("Recently touched", recent, null,
+      { icon: "clock", collapse: { id: "ov.recent", open: true }, fresh: fresh }));
+
+    grid.appendChild(jobsPanel(api, fresh.onRefresh));
+    grid.appendChild(schedulesPanel(fresh.onRefresh));
+
+    host.appendChild(grid);
+  }
+
   function render(host, api) {
-    C.load(host, C.get("/api/overview"), function (d) {
-      var grid = C.el("div", { class: "grid" });
-      host.appendChild(C.splitter.foldBar(host));
-      grid.appendChild(onboardingCard(api, function () { render(host, api); }));
-      var a = d.attention;
-
-      /* -- at a glance: one panel, tight tile grid -- */
-      grid.appendChild(C.panel("At a glance", C.stats([
-        C.stat(d.stats.open, "Open", { tone: "accent", onClick: function () { api.go("board:tickets"); } }),
-        C.stat(a.counts.blocked, "Blocked", {
-          tone: a.counts.blocked ? "danger" : null, sub: "critical items",
-        }),
-        C.stat(a.counts.stale, "Stale", {
-          tone: a.counts.stale ? "warn" : null, sub: d.stale_days + "d+ idle",
-        }),
-        C.stat(d.stats.tracker_open, "Items", { sub: "Q + B + T" }),
-        C.stat(d.stats.done, "Done", { tone: "ok" }),
-      ]), null, { icon: "layout", collapse: { id: "ov.glance", open: true } }));
-
-      /* -- attention: the widest panel, since its rows are sentences -- */
-      var attnKids = [
-        attnGroup(a.blocked, "Blocked by a critical item", function (r) {
-          return C.el("span", { class: "chip danger" }, [C.icon("alert"), String(r.blocking)]);
-        }, api),
-        attnGroup(a.stale, "Stale (" + d.stale_days + "+ days)", function (r) {
-          return C.el("span", { class: "chip warn" }, [C.icon("clock"), C.fmtAgo(r.idle_days)]);
-        }, api),
-        attnGroup(a.unowned, "Nobody owns these", function () {
-          return C.el("span", { class: "chip" }, [C.icon("user"), "—"]);
-        }, api),
-        attnGroup(a.questions || [], "Questions waiting", function () {
-          return C.el("span", { class: "chip warn" }, [C.icon("info"), "?"]);
-        }, api),
-        attnGroup(a.approvals || [], "Approvals", function () {
-          return C.el("span", { class: "chip danger" }, [C.icon("alert"), "!"]);
-        }, api),
-        attnGroup(a.runs || [], "Runs that need a look", function (r) {
-          return C.el("span", { class: "chip danger", text: r.stage });
-        }, api),
-      ].filter(Boolean);
-      var counts = a.counts;
-      var attnTotal = counts.blocked + counts.stale + counts.unowned
-        + (counts.questions || 0) + (counts.approvals || 0) + (counts.runs || 0);
-      var attnPanel = C.panel(
-          "Needs attention",
-          attnKids.length ? attnKids
-                          : C.empty("Nothing needs attention",
-                                    "No blocked work, questions, approvals, or failed runs.", "check"),
-          C.el("span", { class: "chip" + (attnTotal ? " warn" : " zero"), text: String(attnTotal) }),
-          { icon: "alert", tone: attnTotal ? "warn" : null, collapse: { id: "ov.attention", open: true } }
-        );
-      attnPanel.tabIndex = 0;
-      attnPanel.addEventListener("keydown", function (e) {
-        if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
-        /* The header is a fold control (Enter toggles it); it must fold without
-           also opening the highlighted row. A folded panel has no rows to open. */
-        if (e.target && e.target.closest && e.target.closest("header")) return;
-        if (attnPanel.classList.contains("collapsed")) return;
-        var rows = attnPanel.querySelectorAll(".lrow");
-        if (!rows.length) return;
-        var idx = 0;
-        rows.forEach(function (r, i) { if (r.classList.contains("kbd")) idx = i; });
-        if (e.key === "j" || e.key === "ArrowDown") idx = Math.min(rows.length - 1, idx + 1);
-        else if (e.key === "k" || e.key === "ArrowUp") idx = Math.max(0, idx - 1);
-        else if (e.key === "Enter") { rows[idx].click(); e.preventDefault(); return; }
-        else return;
-        rows.forEach(function (r, i) { r.classList.toggle("kbd", i === idx); });
-        if (rows[idx].scrollIntoView) rows[idx].scrollIntoView({ block: "nearest" });
-        e.preventDefault();
-      });
-      grid.appendChild(C.el("div", { class: "span2" }, [attnPanel]));
-
-      /* -- flow, one row per board -- */
-      var flowKids = [];
-      Object.keys(d.flow).forEach(function (kind) {
-        flowKids.push(C.el("div", {}, [
-          C.el("div", { class: "row", style: "margin-bottom:5px" }, [
-            C.el("h4", { text: kind, style: "margin:0" }),
-            C.el("span", { class: "grow" }),
-            C.el("button", {
-              class: "btn sm", onclick: function () { api.go("board:" + kind); },
-            }, ["Board", C.icon("chevRight")]),
-          ]),
-          C.stack(d.flow[kind].map(function (l) { return { label: l.label, count: l.count }; })),
-        ]));
-      });
-      grid.appendChild(C.panel("Flow", flowKids, null,
-        { icon: "columns", tone: "info", collapse: { id: "ov.flow", open: true } }));
-
-      /* -- recent -- */
-      var recent = C.el("div", { class: "rows" });
-      if (!d.recent.length) {
-        recent.appendChild(C.empty("Nothing yet", "Create a ticket to see it here.", "inbox"));
-      }
-      d.recent.forEach(function (r) {
-        recent.appendChild(C.el("div", {
-          class: "lrow clickable",
-          onclick: function () { api.go("board:" + r.kind); },
-        }, [
-          C.el("span", { class: "chip", text: r.kind === "tickets" ? "T" : r.kind[0].toUpperCase() }),
-          C.el("span", { class: "ltext" }, [
-            C.el("span", { class: "mono", style: "font-size:11px;color:var(--ink-3)", text: r.id + " " }),
-            r.title,
-          ]),
-          r.owner ? C.el("span", { class: "chip" }, [r.owner]) : null,
-          C.el("span", { class: "muted", text: r.updated }),
-        ]));
-      });
-      grid.appendChild(C.panel("Recently touched", recent, null,
-        { icon: "clock", collapse: { id: "ov.recent", open: true } }));
-
-      grid.appendChild(jobsPanel(api));
-      grid.appendChild(schedulesPanel());
-
-      host.appendChild(grid);
-    }, { skeletonRows: 5 });
+    C.load(host, C.get("/api/overview"), function (d) { paint(host, d, api); },
+      { skeletonRows: 5 });
   }
 
   C.tab("overview", { render: render });

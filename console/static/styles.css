@@ -487,6 +487,15 @@ main#view.flush { padding: 0; }
 }
 .panel > .body.flush { padding: 6px; }
 .panel > .body > .empty:only-child { padding: 18px 8px; }
+/* T-039 freshness. The as-of line is the last row of a body (never `.lrow`, so
+   j/k row navigation skips it); an empty state followed only by it keeps its
+   padding. It wraps freely so a narrow panel never scrolls sideways. */
+.panel > .body > .empty:first-child:nth-last-child(2) { padding: 18px 8px; }
+.panel > .body > .fresh-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  min-width: 0; font-size: 11px; color: var(--ink-3);
+}
+.fresh-row time { min-width: 0; overflow-wrap: anywhere; }
 
 /* Header icon chip — a tinted square so a panel is identifiable at a glance
    without reading its label. */
@@ -517,6 +526,11 @@ main#view.flush { padding: 0; }
   transition: transform .16s var(--ease);
 }
 .panel > header .chev svg.ico { width: 14px; height: 14px; }
+/* T-039: the STALE mark. A status region that always exists and only gains
+   text (and the chip look from `.chip.warn`) while stale; bold upper-case text
+   so it never relies on colour alone, and it stays when the panel is folded. */
+.panel > header .fresh-mark { flex: none; font-weight: 700; letter-spacing: .05em; }
+.panel > header .fresh-mark:empty { display: none; }
 .panel.collapsed > header { border-bottom: 0; }
 .panel.collapsed > header .chev { transform: rotate(-90deg); }
 .panel.collapsed > .body { display: none; }

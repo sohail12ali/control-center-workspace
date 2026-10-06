@@ -2,7 +2,7 @@
 id = "T-039"
 title = "Needs you panel and panel freshness: human-only list, timestamps, STALE marks"
 kind = "tickets"
-stage = "open"
+stage = "verify"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"

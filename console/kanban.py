@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import datetime  # noqa: E402
 
-from server import agent_backends, provider_overrides, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, kickoff as kickoff_mod, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
+from server import agent_backends, provider_overrides, agents, analytics, audit, boards, context, dotenv, export, harness_lint, jobs, kickoff as kickoff_mod, link_check, model_catalog, notify, overview, render, reset as reset_mod, schedules, telemetry, tickets, todos_agg, trackers, verbs, worktrees  # noqa: E402
 from server import worklog as worklog_mod  # noqa: E402
 from server import vault as vault_mod  # noqa: E402
 from server import stop_hook as stop_hook_mod  # noqa: E402
@@ -170,6 +170,23 @@ def cmd_vault_file(args, repo_root):
 
 def cmd_vault_graph(args, repo_root):
     print(json.dumps(vault_mod.build_graph(repo_root), indent=2))
+
+
+def cmd_vault_links(args, repo_root):
+    """Exit 0 no errors, 1 any error (or any warning with --strict), 2 could
+    not run. The report is ASCII, so a Windows console cannot choke on it."""
+    try:
+        findings, summary = link_check.check(repo_root, ticket=args.ticket)
+    except link_check.LinkCheckError as exc:
+        print("vault links: %s" % exc, file=sys.stderr)
+        sys.exit(2)
+    if args.json:
+        print(json.dumps(link_check.as_json(findings, summary), indent=2))
+    else:
+        print(link_check.format_report(findings, summary, show_all=args.all))
+    code = link_check.exit_code(summary, args.strict)
+    if code:
+        sys.exit(code)
 
 
 def cmd_verb_list(args, repo_root):
@@ -836,6 +853,13 @@ def build_parser():
 
     p = vault_sub.add_parser("graph")
     p.set_defaults(func=cmd_vault_graph)
+
+    p = vault_sub.add_parser("links", help="check wikilinks, Links blocks and the artifact map (read-only)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--strict", action="store_true", help="fail on warnings too")
+    p.add_argument("--all", action="store_true", help="list every warning, not 20 per code")
+    p.add_argument("--ticket", help="only this ticket's artifacts and map row")
+    p.set_defaults(func=cmd_vault_links)
 
     assistant_cmd = sub.add_parser(
         "assistant", help="the Assistant: say/session/memory/settings")

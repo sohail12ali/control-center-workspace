@@ -235,12 +235,16 @@ window.Console = (function () {
       ]);
       if (headExtra) append(head, headExtra);
     }
+    var live = opts.fresh ? freshBuild(opts.fresh) : null;
+    if (live && head) head.appendChild(live.mark);
     var body = el("div", { class: "body" + (opts.flush ? " flush" : "") });
     var note = opts.help && head ? helpNote(head, body, title) : null;
     append(body, Array.isArray(kids) ? kids : [kids]);
     if (note) note(opts.help);
+    if (live) body.appendChild(live.row);
     var section = el("section", { class: "panel" }, [head, body]);
     if (opts.collapse && head) collapsible(section, head, opts.collapse);
+    if (live) freshConnect(section, live);
     return section;
   }
 
@@ -319,6 +323,109 @@ window.Console = (function () {
     section.dataset.panelId = id;
     section._setOpen = function (next) { apply(next, true); };
     apply(isOpen, false);
+  }
+
+  /* ---------------- panel freshness (T-039) ----------------
+     Pure helpers first. Each is self-contained (no closure variables) so a
+     test can slice it out of this file by name and run it under node.
+
+     The threshold is one view preference, `staleAfterSecs` (a finite number
+     from 30 to 86400, else 300), read by the caller through `prefs`; a panel
+     may pass its own number in code and that wins. */
+  function freshParse(asOf) {
+    if (typeof asOf === "number") return asOf;
+    if (typeof asOf === "string" && asOf) return Date.parse(asOf);
+    return NaN;
+  }
+
+  /** { ageSecs, stale } for a panel as of `asOfMs`. Age never goes below 0
+   *  (clock skew); an unusable `asOfMs` is stale with no age. */
+  function freshState(asOfMs, nowMs, afterSecs) {
+    if (typeof asOfMs !== "number" || !isFinite(asOfMs)) return { ageSecs: null, stale: true };
+    var age = Math.max(0, Math.floor((nowMs - asOfMs) / 1000));
+    return { ageSecs: age, stale: age >= afterSecs };
+  }
+
+  function freshThreshold(pref, own) {
+    if (typeof own === "number" && isFinite(own) && own > 0) return own;
+    if (typeof pref === "number" && isFinite(pref) && pref >= 30 && pref <= 86400) return pref;
+    return 300;
+  }
+
+  function freshAge(ageSecs) {
+    if (typeof ageSecs !== "number" || !isFinite(ageSecs)) return "unknown";
+    if (ageSecs < 60) return "just now";
+    var mins = Math.floor(ageSecs / 60);
+    if (mins < 60) return mins + " min ago";
+    var hours = Math.floor(mins / 60);
+    if (hours < 48) return hours + " h ago";
+    return Math.floor(hours / 24) + " days ago";
+  }
+
+  /* `opts.fresh = { asOf, staleAfter, onRefresh }` on `panel`. A header mark
+     (the text STALE, in a status region that always exists and only gains
+     text on the change) and an as-of row at the bottom of the body. ONE
+     shared 30 s timer re-evaluates every connected fresh panel. It makes no
+     request, writes DOM text only when the string changed, and stops when no
+     fresh panel is connected. Deliberately not the app heartbeat: that stops
+     answering exactly when the data goes stale. */
+  var freshList = [];
+  var freshTimer = null;
+
+  function freshBuild(spec) {
+    var time = el("time");
+    var btn = spec.onRefresh && !IS_STATIC
+      ? el("button", { class: "btn sm", type: "button", text: "Refresh", hidden: true, onclick: spec.onRefresh })
+      : null;
+    return {
+      asOf: freshParse(spec.asOf), own: spec.staleAfter, text: null, stale: null, section: null,
+      mark: el("span", { class: "fresh-mark", role: "status" }),
+      time: time, btn: btn,
+      row: el("div", { class: "fresh-row" }, [time, btn]),
+    };
+  }
+
+  function freshPaint(e, nowMs, pref) {
+    var st = freshState(e.asOf, nowMs, freshThreshold(pref, e.own));
+    var known = isFinite(e.asOf);
+    var text = known ? "As of " + new Date(e.asOf).toLocaleString() + " · " + freshAge(st.ageSecs) : "As of unknown";
+    if (text !== e.text) {
+      e.text = text;
+      e.time.textContent = text;
+      if (known) e.time.setAttribute("datetime", new Date(e.asOf).toISOString());
+    }
+    if (st.stale !== e.stale) {
+      e.stale = st.stale;
+      e.mark.textContent = st.stale ? "STALE" : "";
+      e.mark.className = st.stale ? "chip warn fresh-mark" : "fresh-mark";
+      if (st.stale) e.mark.title = "This panel's data is out of date";
+      else e.mark.removeAttribute("title");
+      if (e.btn) e.btn.hidden = !st.stale;
+    }
+  }
+
+  function freshTick() {
+    freshList = freshList.filter(function (e) { return e.section.isConnected; });
+    if (!freshList.length) { freshStop(); return; }
+    var now = Date.now();
+    var pref = prefs.get("staleAfterSecs");
+    freshList.forEach(function (e) { freshPaint(e, now, pref); });
+  }
+
+  function freshStart() { if (freshTimer === null) freshTimer = setInterval(freshTick, 30000); }
+  function freshStop() { if (freshTimer !== null) { clearInterval(freshTimer); freshTimer = null; } }
+
+  function freshConnect(section, e) {
+    e.section = section;
+    freshPaint(e, Date.now(), prefs.get("staleAfterSecs"));
+    freshList.push(e);
+    freshStart();
+  }
+
+  /** Fresh panels still on screen; the timer's own list, pruned first. */
+  function freshCount() {
+    freshList = freshList.filter(function (e) { return e.section.isConnected; });
+    return freshList.length;
   }
 
   /* A collapsible block INSIDE a panel — same contract as `panel`'s collapse,
@@ -1307,6 +1414,7 @@ window.Console = (function () {
     holdReload: holdReload, reloadHeld: reloadHeld,
     get: get, post: post,
     el: el, append: append, clear: clear, icon: icon,
+    fresh: { count: freshCount }, freshState: freshState,
     panel: panel, group: group, empty: empty, errbox: errbox, skeleton: skeleton, chip: chip,
     stat: stat, stats: stats,
     bars: bars, stack: stack, catClass: catClass, catVar: catVar,

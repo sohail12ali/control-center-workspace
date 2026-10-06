@@ -1,4 +1,29 @@
 [meta]
 ticket = "T-039"
 tracker = "questions"
-updated = "2026-10-06T04:51:03Z"
+updated = "2026-10-06T07:56:33Z"
+seq = 2
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "Answered questions: Needs repair (default, D-3) or Needs you? An answered question has already been answered by a person; what remains is applying the answer to the artifact (questions skill, status model)."
+type = "scope"
+priority = "low"
+raised_by = "analyst"
+raised_on = "2026-10-06"
+affects = "FR-1"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q2"
+status = "open"
+text = "Nav badge: count Needs you only (default, D-5), or also show a second count for Needs repair? Today the badge sums every kind."
+type = "scope"
+priority = "low"
+raised_by = "analyst"
+raised_on = "2026-10-06"
+affects = "FR-6"
+answer = ""
+resolved_on = ""

@@ -265,9 +265,11 @@
 
   function refreshBadges() {
     var myRun = ++badgeRun;
-    var set = function (id, text, alert) {
+    var set = function (id, text, alert, label) {
       var b = document.querySelector('[data-badge-for="' + id + '"]');
       if (!b) return;
+      if (label && text) { b.title = label; b.setAttribute("aria-label", label); }
+      else { b.removeAttribute("title"); b.removeAttribute("aria-label"); }
       b.textContent = text ? String(text) : "";
       b.classList.toggle("alert", !!alert);
       b.style.display = text ? "" : "none";
@@ -287,9 +289,9 @@
       jobs.push(function () {
         return C.get("/api/overview").then(function (d) {
           var c = (d.attention && d.attention.counts) || {};
-          var n = (c.blocked || 0) + (c.stale || 0) + (c.unowned || 0)
-            + (c.questions || 0) + (c.approvals || 0) + (c.runs || 0);
-          set("overview", n || "", n > 0);
+          // Only what waits on a person; repair work lives on the panel chip.
+          var n = c.needs_you || 0;
+          set("overview", n || "", n > 0, n + (n === 1 ? " item needs you" : " items need you"));
         });
       });
     }

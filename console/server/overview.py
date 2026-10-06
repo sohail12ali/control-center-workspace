@@ -10,6 +10,8 @@ release-gap panel, both of which depended on project-specific
 infrastructure this template doesn't have.
 """
 
+from datetime import datetime, timezone
+
 from . import agent_approvals
 from . import analytics as analytics_mod
 from . import boards as boards_mod
@@ -19,7 +21,8 @@ from . import tickets as tickets_mod
 from . import trackers as trackers_mod
 
 _ATTN_RUNS = ("failed", "timed_out", "scheduled_retry")
-_PENDING_Q = ("open", "answered")
+_NEEDS_YOU_CAP = 50
+_REPAIR_CAP = 8
 
 
 def _stale_days(repo_root):
@@ -35,11 +38,15 @@ def _entry(ticket_id, title, kind, stage, **extra):
 
 def needs_attention(repo_root):
     """What a person should look at. The same payload feeds the Overview
-    panel and the sidebar badge: blocked, stale, and unowned tickets, plus
-    pending questions, live approval cards, and runs that failed or are
-    waiting to retry."""
+    panels and the sidebar badge, in two lists. needs_you is what only a
+    person can resolve: open questions and live approval cards (cap 50,
+    exact count). needs_repair is what the work or a run must fix: blocked,
+    stale and unowned tickets, answered-not-applied questions, and runs that
+    failed or are waiting to retry (cap 8 per group). The legacy per-kind
+    keys stay; `questions` is open-only and `answered` holds the rest.
+    Read-only: nothing here changes a tracker, run or approval."""
     stale_days = _stale_days(repo_root)
-    blocked, stale, unowned, questions = [], [], [], []
+    blocked, stale, unowned, questions, answered = [], [], [], [], []
 
     for kind in boards_mod.enabled_boards(repo_root):
         lanes = {l["id"]: l for l in boards_mod.lanes_for(kind, repo_root)}
@@ -60,14 +67,19 @@ def needs_attention(repo_root):
                 unowned.append(entry)
             if "questions" in show:
                 for item in trackers_mod.list_items(repo_root, card["id"], "questions"):
-                    if item.get("status") in _PENDING_Q:
-                        questions.append(_entry(
-                            card["id"], item.get("text") or item.get("id"), kind,
-                            item.get("status") or "open"))
+                    status = item.get("status")
+                    if status not in ("open", "answered"):
+                        continue
+                    row = _entry(
+                        card["id"], item.get("text") or item.get("id"), kind,
+                        status or "open", type="question" if status == "open" else "answered",
+                        ref=item.get("id") or "", priority=item.get("priority") or "medium")
+                    (questions if status == "open" else answered).append(row)
 
     approvals = []
     for card in agent_approvals.REGISTRY.pending_all():
-        approvals.append(_entry(card["chat"], card["tool"], "agents", "approval", href="agents"))
+        approvals.append(_entry(card["chat"], card["tool"], "agents", "approval",
+                                href="agents", type="approval"))
 
     runs = []
     try:
@@ -80,22 +92,34 @@ def needs_attention(repo_root):
                 "Run %s is %s" % (rec["id"], rec.get("state")),
                 "tickets" if ticket else "agents",
                 rec.get("state") or "",
-                href="board" if ticket else "agents"))
+                href="board" if ticket else "agents", type="run"))
     except OSError:
         runs = []
 
     blocked.sort(key=lambda e: -e["blocking"])
     stale.sort(key=lambda e: -(e["idle_days"] or 0))
+    questions.sort(key=lambda e: 0 if e["priority"] == "critical" else 1)  # stable
+    needs_you = (approvals + questions)[:_NEEDS_YOU_CAP]
+    groups = (("blocked", blocked), ("stale", stale), ("unowned", unowned),
+              ("answered", answered), ("run", runs))
+    needs_repair = [dict(e, type=t) if t in ("blocked", "stale", "unowned") else e
+                    for t, rows in groups for e in rows[:_REPAIR_CAP]]
     return {
-        "blocked": blocked[:8],
-        "stale": stale[:8],
-        "unowned": unowned[:8],
-        "questions": questions[:8],
-        "approvals": approvals[:8],
-        "runs": runs[:8],
+        "needs_you": needs_you,
+        "needs_repair": needs_repair,
+        "blocked": blocked[:_REPAIR_CAP],
+        "stale": stale[:_REPAIR_CAP],
+        "unowned": unowned[:_REPAIR_CAP],
+        "questions": questions[:_REPAIR_CAP],
+        "answered": answered[:_REPAIR_CAP],
+        "approvals": approvals[:_REPAIR_CAP],
+        "runs": runs[:_REPAIR_CAP],
         "counts": {
             "blocked": len(blocked), "stale": len(stale), "unowned": len(unowned),
-            "questions": len(questions), "approvals": len(approvals), "runs": len(runs),
+            "questions": len(questions), "answered": len(answered),
+            "approvals": len(approvals), "runs": len(runs),
+            "needs_you": len(approvals) + len(questions),
+            "needs_repair": sum(len(rows) for _, rows in groups),
         },
     }
 
@@ -137,8 +161,12 @@ def headline_stats(repo_root):
     }
 
 
-def full_overview(repo_root):
+def full_overview(repo_root, now=None):
+    """`now` (a datetime) is injectable for tests; `generated_at` is UTC,
+    same format as trackers._now_iso."""
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
+        "generated_at": stamp,
         "stats": headline_stats(repo_root),
         "attention": needs_attention(repo_root),
         "flow": analytics_mod.lane_funnel(repo_root),

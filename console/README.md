@@ -115,6 +115,8 @@ telemetry skills [--json]
 
 harness lint [--strict] [--json]
 
+vault links [--json] [--strict] [--all] [--ticket T]
+
 context TICKET [--json]
 
 verb list [--ticket T] [--json]
@@ -539,6 +541,30 @@ non-zero on errors; warnings need `--strict` to fail. Run in CI by
 which refuses a staged secret path and allows tickets. Opt in with
 `git config core.hooksPath .githooks`. CI runs `workspace check --secrets`.
 
+`vault links` (T-041) is the vault's link checker: `console/server/link_check.py`,
+read-only (it opens files for reading only and writes nothing, not even a cache),
+standard library only, same output for the same tree. It reads every ticket's
+`.md` artifacts and `artifact-map.md` and reports 20 finding codes in two levels.
+**ERROR** (12) is a broken signpost: `map-missing`, `links-missing`,
+`links-duplicate`, `links-malformed`, `links-dangling`, `map-dangling`,
+`map-unknown-ticket`, `map-missing-row`, `map-duplicate-row`, `map-status-drift`,
+`map-section-drift`, `map-title-drift`. **WARN** (8) is hygiene: `one-way-link`,
+`links-incomplete`, `links-not-last`, `body-dangling`, `link-form`,
+`ambiguous-basename`, `misplaced-artifact`, `map-row-format`. Exit codes: `0` no
+errors (and no warnings under `--strict`), `1` errors (or warnings under
+`--strict`), `2` usage or an unreadable tree. The text report lists errors first and
+caps warnings at 20 per code; `--all` lists every warning, `--json` prints
+`{summary, findings}`, `--ticket T` scopes to one ticket's artifacts and map row.
+The `link-check` verb runs the same check (`strict=true`, `ticket=T-NNN`; no
+confirmation needed) and returns `ok`, `summary` and `findings` rather than
+raising, so it is also an MCP tool and an agent tool. The `link-check-nightly`
+schedule in `config/schedules.toml` is **parked** (`enabled = false`): the vault
+has about 34 errors and 1,860 warnings today, so a nightly run would be red every
+night until the repair pass (T-041 todos TD-1, TD-2) is done. Like every schedule it
+fires only while the console is running at that time. It is not in CI. It is the
+automatic subset of `validate-artifacts` (dangling, missing block, one-way, map
+drift); requirement-to-task-to-code traceability stays manual.
+
 Prompt evals live in `console/evals/`. `python console/kanban.py evals replay`
 grades the committed fixtures and does not start a model. How to add a
 scenario, and what replay does not prove, is `console/evals/README.md`.
@@ -750,6 +776,33 @@ misrepresent; the exporter drops it and the frontend hides it.
 
 `GET /api/routes` reports what actually loaded — the first thing to check
 when a tab 404s. The Settings tab renders it.
+
+## Overview: Needs you, Needs repair, and panel freshness
+
+The Overview splits "what wants attention" in two (T-039). **Needs you** is what
+only a person can resolve: open questions and live approval cards (capped at 50
+rows, the count is exact). **Needs repair** is what the work or a run must fix:
+blocked, stale and unowned tickets, answered questions not yet applied, and runs
+that failed or wait to retry (up to 8 rows per group). Rows only navigate; nothing
+on either panel marks an item done, and an agent with console CLI access can still
+change a tracker status (see the T-039 decision log, D-15). The sidebar badge counts
+**Needs you** only, so a blocked ticket does not raise it; its tooltip and
+accessible label read "N items need you".
+
+`/api/overview` and `needs_attention` keep every legacy key (`blocked`, `stale`,
+`unowned`, `questions`, `approvals`, `runs`, `counts.*`) and add `needs_you`,
+`needs_repair`, `answered` (the answered-not-applied questions; `questions` is
+now open-only), `counts.needs_you`, `counts.needs_repair` and `generated_at`
+(UTC). Existing readers keep working.
+
+A panel built with `opts.fresh` shows when its data was read. When it is older
+than `staleAfterSecs` it gets a **STALE** mark in its header, and, if the page is
+live and the panel has a refetch, a **Refresh** button. `staleAfterSecs` is a view
+preference, 30 to 86400 seconds, default 300 and with no Settings control. One
+30 s timer only updates that mark; it never re-renders or fetches, so a page left
+open is never rewritten under you. Refresh refetches; if the fetch fails the
+panel keeps its rows and old time and a toast says so. The static export shows the
+as-of time and STALE but no Refresh button, since there is nothing to refetch.
 
 ## Static export
 

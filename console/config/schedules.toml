@@ -35,3 +35,16 @@ label = "Weekly skill usage report"
 expr = "0 10 * * 1"
 verb = "skill-usage"
 enabled = false
+
+# PARKED. The vault has about 34 errors and 1,800 warnings on day one (dangling
+# Links entries, stale artifact-map rows, one-way sibling links), so a nightly run
+# would be red every night for reasons nobody can fix in a night, and the first
+# new break would be lost in it. Repair first (T-041 todos TD-1, TD-2), then set
+# enabled = true. Read-only; a run with findings ends `done` with `ok: false` in
+# its result. Like every row here it fires only if the console is running at 02:30.
+[[schedule]]
+id = "link-check-nightly"
+label = "Nightly link check"
+expr = "30 2 * * *"
+verb = "link-check"
+enabled = false

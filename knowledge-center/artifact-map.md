@@ -5,7 +5,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 ## Active
 
 - [[T-015-summary]] — Make the Assistant fast, the tray honest, and the popup dismissible — Verify — Sohail Ali — 2026-09-10
-- [[T-019-summary]] — Make hands-free listening actually work — Open — Sohail Ali — 2026-09-16
+- [[T-019-summary]] — Make hands-free listening actually work — Verify — Sohail Ali — 2026-09-16
 - [[T-022-summary]] — Agent evals: golden-prompt checks for roles and skills — In Progress — Sohail Ali — 2026-10-01
 - [[T-023-summary]] — Agents that run themselves, safely (epic: Paperclip-grade agent execution) — Open — Sohail Ali — 2026-10-04
 - [[T-025-summary]] — Roles on Claude with a per-role permission policy and prompt bundle — Open — Sohail Ali — 2026-10-04
@@ -18,12 +18,12 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 - [[T-033-summary]] — Talk turn to turn: turn loop, hold-to-talk, mute, spoken summary, audio voice commands — Open — Sohail Ali — 2026-10-05
 - [[T-034-summary]] — Voice onboarding and health: wizard Voice step, doctor actions, tray device submenus — Open — Sohail Ali — 2026-10-05
 - [[T-035-summary]] — Voice opt-ins and spikes: cloud STT, language, echo-cancelled barge-in — Open — Sohail Ali — 2026-10-05
-- [[T-036-summary]] — App and browser in sync: UI version reload and server-side preferences — Open — Sohail Ali — 2026-10-05
-- [[T-037-summary]] — Resizable layout: draggable splitters, docked ticket panel, expandable sections — Open — Sohail Ali — 2026-10-05
+- [[T-036-summary]] — App and browser in sync: UI version reload and server-side preferences — Verify — Sohail Ali — 2026-10-05
+- [[T-037-summary]] — Resizable layout: draggable splitters, docked ticket panel, expandable sections — Verify — Sohail Ali — 2026-10-05
 - [[T-038-summary]] — Command Center: MAPS Agentic OS 3-column UI with 6-view Brain canvas — Open — Sohail Ali — 2026-10-06
-- [[T-039-summary]] — Needs you panel and panel freshness: human-only list, timestamps, STALE marks — Open — Sohail Ali — 2026-10-06
+- [[T-039-summary]] — Needs you panel and panel freshness: human-only list, timestamps, STALE marks — Verify — Sohail Ali — 2026-10-06
 - [[T-040-summary]] — Routines board and Run now: schedules with last-run status — Open — Sohail Ali — 2026-10-06
-- [[T-041-summary]] — Nightly link checker: flag artifact-map and Links entries that moved — Open — Sohail Ali — 2026-10-06
+- [[T-041-summary]] — Nightly link checker: flag artifact-map and Links entries that moved — Verify — Sohail Ali — 2026-10-06
 
 ## Blocked
 

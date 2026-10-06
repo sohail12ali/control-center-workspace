@@ -1,4 +1,31 @@
 [meta]
 ticket = "T-041"
 tracker = "todos"
-updated = "2026-10-06T04:51:32Z"
+updated = "2026-10-06T07:55:08Z"
+seq = 2
+
+[[items]]
+id = "TD-1"
+status = "open"
+text = "Repair pass before unparking: fix the ~30 error findings (dangling Links targets in CC-T004..6, T-004/T-017/T-031 effort-forecast, three dossiers; missing Links block T-016-critique-report; three stale artifact-map rows T-019/T-036/T-037) via fixer/progress-tracker"
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-06"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-2"
+status = "open"
+text = "Symmetrize _template/ Links lines so a fresh scaffold has no one-way pairs (core templates list 7 siblings, working-set templates list 10); prerequisite for making one-way an ERROR"
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-06"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""

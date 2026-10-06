@@ -1115,19 +1115,19 @@ def test_p12_every_lane_handle_carries_the_shared_width():
     assert re.search(r"(?<![\w.])mark\(e\)", refresh), "the dragged handle itself must still be refreshed"
 
 
-_OV_IDS = ["ov.glance", "ov.attention", "ov.flow", "ov.recent", "ov.jobs", "ov.schedules"]
+_OV_IDS = ["ov.glance", "ov.needsyou", "ov.attention", "ov.flow", "ov.recent", "ov.jobs", "ov.schedules"]
 _AS_IDS = ["as.talk", "as.runs", "as.tickets"]
 
 
 def test_p11_section_ids_unique_and_scoped():
-    """AC-12.1 final: the 18 ids each appear once in their own file and in no other script.
+    """AC-12.1 final (T-039: 19 with `ov.needsyou`): the 19 ids each appear once in their own file and in no other script.
 
     One flat `panelOpen` map: a reused id folds two sections together. The
     Getting-started card is not one of them (`ov.onboarding` stays absent).
     """
     own = {"overview.js": _OV_IDS, "assistant.js": _AS_IDS, "agents.js": _AG_IDS, "vault.js": _VAULT_IDS}
     every = [i for ids in own.values() for i in ids]
-    assert len(every) == 18 and len(set(every)) == 18
+    assert len(every) == 19 and len(set(every)) == 19
     pattern = "|".join(re.escape(i) for i in every)
     for name in sorted(os.listdir(STATIC)):
         if not name.endswith(".js"):
@@ -1144,18 +1144,24 @@ def test_p11_section_ids_unique_and_scoped():
 
 
 def test_p11_overview_enter_guard():
-    """AC-12.2 / D-14: Enter on the Needs-attention header folds without opening a row.
+    """AC-12.2 / D-14 / T-039 AC-5.1: Enter on an attention header folds without opening a row.
 
     The header toggles on Enter (core.js) and the keydown then bubbles to the
-    panel handler, which used to click the highlighted row on any Enter.
+    panel handler, which used to click the highlighted row on any Enter. One
+    shared `rowNav(panel)` now serves both attention panels (Needs you and
+    Needs repair), so the guards are pinned on it and both panels must call it.
     """
     js = _read("overview.js")
-    at = js.index('attnPanel.addEventListener("keydown"')
-    handler = js[at:js.index("grid.appendChild", at)]
+    at = js.index("function rowNav(panel)")
+    handler = js[at:js.index("\n  }\n", at)]
     click = handler.index("rows[idx].click()")
     guard = handler[:click]
     assert re.search(r"e\.target\.closest\(\s*[\"']header[\"']\s*\)", guard), "no header-target guard before the click"
-    assert re.search(r"attnPanel\.classList\.contains\(\s*[\"']collapsed[\"']\s*\)", guard), "no collapsed guard before the click"
+    assert re.search(r"panel\.classList\.contains\(\s*[\"']collapsed[\"']\s*\)", guard), "no collapsed guard before the click"
+    assert "attnPanel.addEventListener" not in js, "attnPanel has its own handler again"
+    for var in ("needsPanel", "attnPanel"):
+        assert re.search(r"rowNav\(\s*%s\s*\)" % var, js), "%s does not call rowNav" % var
+    assert len(re.findall(r"\browNav\(", js)) == 3, "rowNav is defined once and called by the two panels"
     assert "onboardingOpen" in js and "Open setup" in js and "hideOnboarding" in js, "the Getting-started card changed"
     assert "ov.onboarding" not in js
 

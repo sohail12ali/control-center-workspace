@@ -70,6 +70,12 @@ hint = "Frontmatter, dead .claude paths, orphan skills, stale roster counts"
 handler = "verb_handlers.harness_lint_verb"
 
 [[verb]]
+id = "link-check"
+label = "Link check"
+hint = "Dangling and one-way wikilinks, Links blocks, artifact-map drift. Read-only; pass strict=true to fail on warnings, ticket=T-NNN to scope."
+handler = "verb_handlers.link_check_verb"
+
+[[verb]]
 id = "evals-replay"
 label = "Eval replay"
 hint = "Replay committed eval fixtures. Read-only; does not spawn a model."
