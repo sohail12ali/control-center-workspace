@@ -765,3 +765,198 @@ class TestTalkReadyPreflight:
         assert assistant_config.resolve_backend(
             str(tmp_path), reg, report=skipped) == "openrouter"
         assert [b for b, _why in skipped] == ["ollama", "lm-studio"]
+
+
+# -- T-031: device settings and the "when does it apply" map -------------------
+
+_DEVICE_KEYS = ("input_device", "output_device")
+
+
+def _shipped():
+    import server.tomlio as tomlio
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return tomlio.load(os.path.join(root, "config", "assistant.toml"))["assistant"]
+
+
+class TestDeviceSettings:
+    """T-031 D-9. Which microphone and speaker, as a plain name. Shape is
+    checked here; whether the device exists is the shell's question."""
+
+    @pytest.mark.parametrize("key", _DEVICE_KEYS)
+    def test_the_default_is_the_system_default(self, tmp_path, key):
+        assert assistant_config.DEFAULTS[key] == ""
+        assert assistant_config.settings(str(tmp_path))[key] == ""
+
+    @pytest.mark.parametrize("key", _DEVICE_KEYS)
+    def test_a_name_round_trips_through_update(self, tmp_path, key):
+        merged = assistant_config.update(
+            str(tmp_path), {key: "Microphone (USB Audio Device)"})
+        assert merged[key] == "Microphone (USB Audio Device)"
+        assert assistant_config.settings(str(tmp_path))[key] == \
+            "Microphone (USB Audio Device)"
+
+    @pytest.mark.parametrize("key", _DEVICE_KEYS)
+    def test_a_name_is_stored_stripped(self, tmp_path, key):
+        assistant_config.update(str(tmp_path), {key: "  Speakers (Realtek)\t "})
+        assert assistant_config.settings(str(tmp_path))[key] == "Speakers (Realtek)"
+
+    @pytest.mark.parametrize("key", _DEVICE_KEYS)
+    def test_an_empty_name_puts_the_system_default_back(self, tmp_path, key):
+        assistant_config.update(str(tmp_path), {key: "Headset"})
+        assistant_config.update(str(tmp_path), {key: "   "})
+        assert assistant_config.settings(str(tmp_path))[key] == ""
+
+    @pytest.mark.parametrize("bad", ["a\x00b", "a\tb", "line1\nline2", "a\x7fb"])
+    def test_a_control_character_is_refused_and_nothing_is_stored(self, tmp_path, bad):
+        with pytest.raises(ValueError, match="control characters"):
+            assistant_config.update(str(tmp_path), {"input_device": bad})
+        override = tmp_path / "console" / ".cache" / "assistant" / "settings.json"
+        assert not override.exists()
+
+    def test_two_hundred_characters_are_accepted_and_two_hundred_one_are_not(self, tmp_path):
+        assistant_config.update(str(tmp_path), {"output_device": "x" * 200})
+        assert assistant_config.settings(str(tmp_path))["output_device"] == "x" * 200
+        with pytest.raises(ValueError, match="at most 200"):
+            assistant_config.update(str(tmp_path), {"output_device": "x" * 201})
+        assert assistant_config.settings(str(tmp_path))["output_device"] == "x" * 200
+
+    @pytest.mark.parametrize("value", [None, 5, ["Mic"], {"name": "Mic"}])
+    def test_a_value_that_is_not_text_is_refused(self, tmp_path, value):
+        # `str(None)` would have stored the device name "None".
+        with pytest.raises(ValueError, match="must be text"):
+            assistant_config.update(str(tmp_path), {"input_device": value})
+
+    def test_a_name_that_is_not_plugged_in_is_still_accepted(self, tmp_path):
+        # D-9: no existence check and no path rules - a path-looking or
+        # unplugged name is only a label the shell will fail to match.
+        assistant_config.update(str(tmp_path), {"input_device": "Mic / Line-in \\ 2"})
+        assert assistant_config.settings(
+            str(tmp_path))["input_device"] == "Mic / Line-in \\ 2"
+
+    def test_a_bad_device_in_a_mixed_patch_stores_nothing(self, tmp_path):
+        with pytest.raises(ValueError):
+            assistant_config.update(
+                str(tmp_path), {"reply_chars": 50, "input_device": "a\x00"})
+        assert assistant_config.settings(str(tmp_path))["reply_chars"] == 400
+
+    @pytest.mark.parametrize("key", ["input_devices", "device", "mic", "Input_Device"])
+    def test_a_near_miss_key_is_still_refused(self, tmp_path, key):
+        # AC-51: the new keys did not loosen the typo guard.
+        with pytest.raises(ValueError, match="not a writable setting"):
+            assistant_config.update(str(tmp_path), {key: "x"})
+
+    def test_both_keys_are_writable_and_the_set_grew_by_exactly_two(self):
+        assert set(_DEVICE_KEYS) <= assistant_config.WRITABLE
+        assert len(assistant_config.WRITABLE) == 26
+
+    @pytest.mark.parametrize("key", _DEVICE_KEYS)
+    def test_the_committed_file_ships_the_same_default(self, key):
+        assert _shipped()[key] == assistant_config.DEFAULTS[key] == ""
+
+    def test_an_override_file_with_no_device_keys_still_merges_to_the_default(self, tmp_path):
+        # AC-72, keys half: a settings.json written before T-031 has neither
+        # key, and the merged view must still carry both, empty.
+        d = tmp_path / "console" / ".cache" / "assistant"
+        d.mkdir(parents=True)
+        (d / "settings.json").write_text(
+            json.dumps({"reply_chars": 120, "stt_model": "tiny.en"}),
+            encoding="utf-8")
+        merged = assistant_config.settings(str(tmp_path))
+        assert merged["reply_chars"] == 120
+        assert merged["input_device"] == "" and merged["output_device"] == ""
+
+
+def _applies_problems(writable, applies):
+    """Every way `applies` fails to describe `writable` (AC-67)."""
+    problems = []
+    for key in sorted(writable):
+        entry = applies.get(key)
+        if not isinstance(entry, dict):
+            problems.append("%s has no APPLIES entry" % key)
+            continue
+        if entry.get("when") not in ("live", "restart", "next_chat"):
+            problems.append("%s has an invalid when: %r" % (key, entry.get("when")))
+        if not (isinstance(entry.get("note"), str) and entry["note"].strip()):
+            problems.append("%s has no note" % key)
+    for key in sorted(set(applies) - set(writable)):
+        problems.append("%s is classified but not writable" % key)
+    return problems
+
+
+class TestAppliesMap:
+    """T-031 D-8. One map says when each setting takes effect, so the page
+    renders its "(live)" / "(restart needed)" chips from data rather than from
+    a second list that can drift."""
+
+    def test_every_writable_key_has_a_valid_when_and_a_note(self):
+        assert _applies_problems(
+            assistant_config.WRITABLE, assistant_config.APPLIES) == []
+
+    def test_a_writable_key_with_no_entry_fails_the_same_check(self):
+        grown = set(assistant_config.WRITABLE) | {"a_new_setting"}
+        assert _applies_problems(grown, assistant_config.APPLIES) == [
+            "a_new_setting has no APPLIES entry"]
+
+    def test_a_stale_entry_for_a_removed_key_is_caught_too(self):
+        shrunk = set(assistant_config.WRITABLE) - {"mode"}
+        assert _applies_problems(shrunk, assistant_config.APPLIES) == [
+            "mode is classified but not writable"]
+
+    def test_a_bad_when_or_an_empty_note_is_caught(self):
+        broken = dict(assistant_config.APPLIES)
+        broken["speak"] = {"when": "sometimes", "note": "x"}
+        broken["reply_chars"] = {"when": "live", "note": "  "}
+        assert _applies_problems(assistant_config.WRITABLE, broken) == [
+            "reply_chars has no note", "speak has an invalid when: 'sometimes'"]
+
+    def test_the_classification_matches_decision_d8(self):
+        by_when = {}
+        for key, entry in assistant_config.APPLIES.items():
+            by_when.setdefault(entry["when"], set()).add(key)
+        assert by_when["live"] == {
+            "listen_max_seconds", "listen_silence_ms", "listen_first_pause_ms",
+            "stt_model", "speak", "speak_voice", "speak_rate_percent",
+            "tray_click_action", "reply_chars", "session_idle_minutes",
+            "ticket_prefix", "work_backend", "work_model", "backend_chain",
+            "input_device", "output_device"}
+        assert by_when["restart"] == {
+            "hands_free_require_wake", "hands_free_wake_word",
+            "hands_free_listen_while_speaking", "hands_free_max_minutes",
+            "wake_sensitivity", "listen_preroll_ms", "hud_dismiss_shortcut"}
+        assert by_when["next_chat"] == {"backend", "model", "mode"}
+
+    def test_the_model_note_warns_about_the_background_load(self):
+        # CR-39: a take in the first seconds can still use the previous model.
+        note = assistant_config.APPLIES["stt_model"]["note"]
+        assert "background" in note and "previous one" in note
+
+    def test_settings_get_returns_the_map(self, tmp_path):
+        from server.features import assistant_feature
+        answer = assistant_feature.call(str(tmp_path), "assistant.settings_get")
+        assert answer["applies"] == assistant_config.APPLIES
+        assert sorted(answer["writable"]) == sorted(assistant_config.WRITABLE)
+        assert answer["settings"]["input_device"] == ""
+        # JSON-safe, since it goes straight onto the wire.
+        assert json.loads(json.dumps(answer["applies"])) == answer["applies"]
+
+    def test_the_hands_free_restart_keys_are_really_read_by_fetch_policy(self):
+        """AC-70 (SHOULD). The map says these six are read once, when
+        hands-free arms. If a reader moved to per-take, or a key stopped being
+        read there, this notices; it scans source text, it does not run Rust."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        path = os.path.join(root, "desktop", "src-tauri", "src", "hands_free.rs")
+        if not os.path.isfile(path):
+            pytest.skip("desktop/src-tauri/src/hands_free.rs is not in this "
+                        "checkout, so AC-70 was NOT checked")
+        with open(path, "r", encoding="utf-8") as fh:
+            source = fh.read()
+        start = source.index("fn fetch_policy")
+        end = source.find("\npub fn ", start + 1)
+        body = source[start:end if end != -1 else len(source)]
+        restart_hands_free = {
+            key for key, entry in assistant_config.APPLIES.items()
+            if entry["when"] == "restart" and key != "hud_dismiss_shortcut"}
+        assert len(restart_hands_free) == 6
+        missing = sorted(k for k in restart_hands_free if '"%s"' % k not in body)
+        assert missing == [], "restart keys not read in fetch_policy: %s" % missing

@@ -49,6 +49,11 @@
     drafts: {},         // chat id -> half-typed message, kept across repaints
   };
 
+  // Drafts live off the DOM between repaints, so tell the automatic UI reload.
+  C.holdReload("agents.drafts", function () {
+    return Object.keys(st.drafts).some(function (id) { return String(st.drafts[id]).trim() !== ""; });
+  });
+
   /* ---------------- the two kinds of agent ----------------
 
      Not a grouping — a fork. A CLI backend spawns somebody else's agent and
@@ -131,6 +136,33 @@
     st.listShown = !!on;
     if (!NARROW()) C.prefs.set("chatListHidden", !st.listShown);
     applyShell();
+    // The list divider is not rendered while the list is folded: hide it now,
+    // or show it again when the reveal button restores the list.
+    C.splitter.reapplyAll();
+  }
+
+  /* The list | chat divider (T-037). Its fold IS this file's fold: it calls
+     setListShown, so the flag and the stored fold preference stay the ones
+     above and the splitter adds no state of its own. Its width lives in
+     layout.agents.list and reaches `.appshell` as --sp-list. Called once the
+     shell is in the document and listShown is current: the handle is hidden
+     or shown from it.
+     Inside `.appshell` the chat LIST is `.ap-rail` (the right-hand rail is
+     `.ct-rail`, attached in mountChat). */
+  function attachListSplitter(shell) {
+    C.splitter({
+      host: shell, owner: shell, pane: shell.querySelector(".ap-rail"), dir: 1,
+      cssVar: "list", key: "agents.list", label: "Resize the chat list",
+      min: 180, max: 480, flexPane: shell.querySelector(".ap-main"), flexMin: 320,
+      collapseGet: function () { return !st.listShown; },
+      collapseSet: function (off) {
+        setListShown(!off);
+        // The fold button and the handle are both gone now; keyboard focus
+        // goes to the one control left, the reveal button.
+        var reveal = document.getElementById("agReveal");
+        if (off && reveal) reveal.focus();
+      },
+    });
   }
 
   function backend(id) {
@@ -957,8 +989,23 @@
     var scroll = C.el("div", { class: "ct-scroll", id: "ctScroll" });
     var rail = C.el("aside", { class: "ct-rail", id: "ctRail" });
     var composer = C.el("div", { class: "ct-composer", id: "ctComposer" });
-    body.appendChild(C.el("div", { class: "ct-split" }, [scroll, rail]));
+    var split = C.el("div", { class: "ct-split" }, [scroll, rail]);
+    body.appendChild(split);
     body.appendChild(composer);
+
+    /* The transcript | rail divider (T-037). A child of `.ct-split`, which is
+       new with every chat, so it is attached here every time; never of
+       #ctRail, whose contents paintRail2 rebuilds on every `meta` event.
+       Folded, the rail leaves the grid (`.rail-off`) and the handle stays at
+       the container edge as the way back. */
+    C.splitter({
+      host: split, owner: split, pane: rail, dir: -1,
+      cssVar: "rail", key: "agents.rail", label: "Resize the side rail",
+      min: 200, max: 520, flexPane: scroll, flexMin: 320,
+      collapseKey: "agents.railOff", keepWhenCollapsed: true,
+      collapseGet: function () { return split.classList.contains("rail-off"); },
+      collapseSet: function (off) { split.classList.toggle("rail-off", off); },
+    });
 
     var store = Store.create(id);
     st.store = store;
@@ -1109,6 +1156,18 @@
     emitTray(meta.agent);
   }
 
+  /* One foldable rail section: a C.group that keeps the class `ct-panel`,
+     which the stacked layout (`.ct-rail > .ct-panel`, 900px and under) sizes
+     as a card in a sideways strip. The id is a literal at each call site and
+     never built from a title, which carries a count. C.group reads the
+     remembered open state when it is built, so the repaint on every `meta`
+     event rebuilds a folded section folded. */
+  function railSection(id, title, kids) {
+    var box = C.group(title, kids, { id: id });
+    box.classList.add("ct-panel");
+    return box;
+  }
+
   /* Budget pressure, for a chat whose loop this console is running.
 
      The old rail offered Plan / Todos / Files to every chat and, when a
@@ -1162,8 +1221,7 @@
         ? "Runs on this machine."
         : "This model is priced at zero in the provider's catalogue." }));
     }
-    return C.el("section", { class: "ct-panel" },
-      [C.el("h4", { text: "Console budget" })].concat(kids));
+    return railSection("ag.budget", "Console budget", kids);
   }
 
   function paintRail2(rail, store) {
@@ -1174,8 +1232,7 @@
     if (budget) rail.appendChild(budget);
 
     if (s.plan) {
-      rail.appendChild(C.el("section", { class: "ct-panel" }, [
-        C.el("h4", { text: "Plan" }),
+      rail.appendChild(railSection("ag.plan", "Plan", [
         C.el("div", { class: "ct-planbody" }, [window.ConsoleMarkdown.render(s.plan)]),
       ]));
     }
@@ -1189,9 +1246,7 @@
           C.el("span", { text: t.content || t.activeForm || "" }),
         ]));
       });
-      rail.appendChild(C.el("section", { class: "ct-panel" }, [
-        C.el("h4", { text: "Todos" }), list,
-      ]));
+      rail.appendChild(railSection("ag.todos", "Todos", [list]));
     }
 
     if (s.files.length) {
@@ -1202,9 +1257,8 @@
           C.el("span", { class: "ltext truncate", title: f.path, text: f.path }),
         ]));
       });
-      rail.appendChild(C.el("section", { class: "ct-panel" }, [
-        C.el("h4", { text: "Files touched (" + s.files.length + ")" }), fl,
-      ]));
+      rail.appendChild(railSection("ag.files",
+        "Files touched (" + s.files.length + ")", [fl]));
     }
 
     if (s.queued.length) {
@@ -1221,9 +1275,8 @@
             } }, [C.icon("x")]),
         ]));
       });
-      rail.appendChild(C.el("section", { class: "ct-panel" }, [
-        C.el("h4", { text: "Queued (" + s.queued.length + ")" }), q,
-      ]));
+      rail.appendChild(railSection("ag.queued",
+        "Queued (" + s.queued.length + ")", [q]));
     }
 
     if (!rail.childNodes.length) {
@@ -1497,6 +1550,8 @@
            on the chat rather than the list, a wide one restores your choice. */
         st.listShown = NARROW() ? false : !C.prefs.get("chatListHidden", false);
         applyShell();
+        // After listShown is current, so the divider starts hidden if folded.
+        attachListSplitter(document.getElementById("agShell"));
         if (st.mql) st.mql.onchange = null;
         st.mql = window.matchMedia("(max-width: 900px)");
         st.mql.onchange = function () {

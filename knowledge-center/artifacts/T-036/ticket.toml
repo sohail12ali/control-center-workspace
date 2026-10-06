@@ -1,0 +1,22 @@
+[ticket]
+id = "T-036"
+title = "App and browser in sync: UI version reload and server-side preferences"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-05"
+updated = "2026-10-05"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = "builder-t036"
+claimed_at = "2026-10-05T09:56:39Z"
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

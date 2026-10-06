@@ -1,0 +1,22 @@
+[ticket]
+id = "T-031"
+title = "Voice assets and devices: model manager, device pickers, mic test"
+kind = "tickets"
+stage = "in-progress"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-05"
+updated = "2026-10-05"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = "builder"
+claimed_at = "2026-10-05T09:52:07Z"
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

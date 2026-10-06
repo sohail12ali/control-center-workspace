@@ -123,6 +123,7 @@ covers the file logger (rotation, UTC timestamps).
 | `launch.ps1` | Windows terminal launcher (`--console` by default) |
 | `install-launcher.sh` | macOS `.app` skeleton / Linux `.desktop` file |
 | `get-piper.ps1` | fetches the neural voice into `tts/` (gitignored) |
+| `get-whisper.ps1` | fetches the `whisper.cpp` engine and a ggml model into `stt/` (gitignored); models and voices can also be downloaded from Settings (`console/config/voice-assets.toml`), the engines cannot |
 | `features.toml` | tray / hotkey / Settings feature registry (`knowledge-center/wiki/desktop-assistant.md`) |
 | `msvc-env.ps1` | Windows INCLUDE/LIB for incomplete VS installs |
 | `tests/` | pytest for the sidecar, PE subsystem, and the launcher script |
@@ -145,6 +146,26 @@ It lands in `desktop/stt/` (gitignored) and the shell finds it on the next
 listen. `GET /listen/state` on the bridge reports whether speech is available,
 which microphone is selected, and whether the engine is loaded.
 
+Bridge additions for the Settings voice controls (the routes need the bridge
+token; `/health` does not):
+
+- `GET /audio/devices` — input and output names, the OS defaults, and per
+  direction a verdict (`configured`, `resolved`, `match`, `fallback`,
+  `candidates`).
+- `POST /audio/test/mic` — starts the 2 s microphone test and answers at once
+  (`409` with a reason while a take or hands-free holds the microphone); the
+  result appears as `mic_test` in `/listen/state`.
+- `POST /audio/test/speaker` — plays a tone on the chosen output
+  (`503` if it cannot).
+- `POST /settings/refresh` — the console saved a setting; the shell re-reads it
+  on a thread of its own and answers `{"applying": true}` immediately.
+- `POST /speak` also takes optional `voice` and `rate_percent` (50-200); they
+  win over the saved settings for that utterance only and store nothing.
+- `GET /health` `caps` gains `loaded_model` (the model file the engine is
+  running now) and `speak_voice_in_use` (the installed voice the settings
+  resolve to, `null` when none); `GET /listen/state` gains `mic_test` and
+  `swap_error` (why the last model swap failed, empty when it did not).
+
 Reading replies aloud uses the OS synthesiser — nothing to install. Both
 capabilities are probed rather than assumed, so `/health` tells the truth
 about this machine.
@@ -154,7 +175,9 @@ Module layout, all under `src-tauri/src/`:
 | File | Role |
 |------|------|
 | `audio.rs` | microphone capture, downmix, resample to 16 kHz, VAD end-pointing |
-| `stt.rs` | spawns and talks to `whisper-server`; keeps the model warm |
+| `stt.rs` | spawns and talks to `whisper-server`; keeps the model warm; swaps the model without a restart |
+| `devices.rs` | which microphone and speaker, chosen by name (blank = system default); the one matcher, hot-plug refresh, fallback verdicts |
+| `voice_test.rs` | the Settings "Test microphone" (2 s, keeps only the peak level) and "Test speaker" (a short tone) |
 | `tts.rs` | reads a reply aloud: piper when installed, the OS synthesiser otherwise; `stop()` is barge-in |
 | `piper.rs` | the local neural voice — streams its PCM straight to the output device |
 | `speech_text.rs` | what a written reply sounds like: markdown out, ids said aloud |

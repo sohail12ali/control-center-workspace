@@ -269,3 +269,46 @@ class TestCalls:
         assert result["ok"] is True
         assert result["caps"]["ocr"] is False
         assert result["caps"]["capture"] is True
+
+
+class TestDeviceHelpersAndSpeakPayload:
+    """T-031 task 25: device helpers and the extended `speak` payload."""
+
+    def test_speak_payload_is_unchanged_without_voice_or_rate(self, repo):
+        _write_pointer(repo)
+        bridge = Bridge()
+        native_bridge.speak(repo, "hello", opener=bridge)
+        assert bridge.calls[-1]["body"] == {"text": "hello"}
+
+    def test_speak_adds_voice_and_rate_only_when_given(self, repo):
+        _write_pointer(repo)
+        bridge = Bridge()
+        native_bridge.speak(repo, "hi", voice="v", rate_percent=120, opener=bridge)
+        assert bridge.calls[-1]["body"] == {"text": "hi", "voice": "v",
+                                            "rate_percent": 120}
+        native_bridge.speak(repo, "hi", rate_percent=80, opener=bridge)
+        assert bridge.calls[-1]["body"] == {"text": "hi", "rate_percent": 80}
+
+    def test_audio_devices_is_a_short_get(self, repo):
+        _write_pointer(repo)
+        bridge = Bridge({"/audio/devices": {"inputs": ["A"]}})
+        result = native_bridge.audio_devices(repo, opener=bridge)
+        call = bridge.calls[-1]
+        assert (call["endpoint"], call["method"], call["timeout"]) == (
+            "/audio/devices", "GET", 2.0)
+        assert result["inputs"] == ["A"]
+
+    def test_mic_and_speaker_tests_are_short_posts(self, repo):
+        _write_pointer(repo)
+        bridge = Bridge()
+        native_bridge.mic_test(repo, opener=bridge)
+        native_bridge.speaker_test(repo, opener=bridge)
+        for call, endpoint in zip(bridge.calls[-2:],
+                                  ("/audio/test/mic", "/audio/test/speaker")):
+            assert (call["endpoint"], call["method"], call["timeout"]) == (
+                endpoint, "POST", 2.0)
+
+    def test_device_helpers_degrade_without_a_shell(self, repo):
+        for fn in (native_bridge.audio_devices, native_bridge.mic_test,
+                   native_bridge.speaker_test):
+            assert fn(repo) == {"ok": False, "reason": "shell not running"}

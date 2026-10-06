@@ -1,8 +1,10 @@
 /* Settings tab. Two kinds of control live here, and the page says which
    is which.
 
-   Appearance, tab visibility, and the "Stored in this browser" panel are
-   this browser only. `enabled = false` in console/config/plugins.toml is a
+   Appearance, tab visibility, and the "Saved preferences" panel are saved
+   preferences, shared through the server by the desktop app and every
+   browser tab. They change what is shown, never what the server offers.
+   `enabled = false` in console/config/plugins.toml is a
    committed, server-side decision that removes the routes for everyone who
    pulls the checkout. Conflating the two would let someone "turn off" the
    agents plugin by hiding its tab and believe the launch endpoint was gone.
@@ -88,8 +90,9 @@
     ], null, {
       icon: "layout",
       collapse: { id: "set.appearance", open: true },
-      help: "System follows your OS. A pinned choice overrides it, on this "
-            + "browser only — nobody else sees it and no server state changes.",
+      help: "System follows your OS. A pinned choice overrides it and is saved "
+            + "with your other preferences, so the desktop app and every browser "
+            + "tab show the same theme. It changes how the console looks, nothing else.",
     });
   }
 
@@ -142,15 +145,17 @@
     ], head, {
       icon: "columns",
       collapse: { id: "set.tabs", open: false },
-      help: ["Hide tabs you don't use. Stored in this browser (",
-             C.el("code", {}, ["localStorage"]),
-             "), applied immediately, and invisible to everyone else."],
+      help: "Hide tabs you don't use. The choice is saved with your other preferences, "
+            + "so the desktop app and every browser tab hide the same tabs, and it "
+            + "applies immediately. It only hides a tab from view; it does not turn "
+            + "the feature off.",
     });
   }
 
   /* Agent CLIs — which backends the composer offers.
 
-     Browser-local, like the tab switches: this hides a CLI from YOUR picker.
+     A saved preference, like the tab switches, shared by the app and every
+     browser tab: this hides a CLI from the shared picker.
      It does NOT remove it from the server, because that is a different
      decision made in a different place — `console/config/agents.toml` is
      committed and applies to everyone who pulls the checkout, and
@@ -262,9 +267,9 @@
       icon: "cpu",
       collapse: { id: "set.backends", open: false },
       help: ["Command-line agents — a binary on PATH that the console "
-             + "runs as a process. Which ones the New-chat picker offers you "
-             + "is stored in this browser; to change what the server offers "
-             + "everyone, edit ",
+             + "runs as a process. Which ones the New-chat picker offers is a "
+             + "saved preference, shared by the app and every browser tab; to "
+             + "change what the server offers everyone, edit ",
              C.el("code", {}, ["console/config/agents.toml"]),
              ". Hosted and local API models are in Model providers, not here."],
     });
@@ -609,8 +614,9 @@
     });
   }
 
-  /* Composer — how the message box behaves. Browser-local, like the switches
-     above: these are view preferences, not deployment decisions. */
+  /* Composer — how the message box behaves. Saved preferences shared by the
+     app and every browser tab, like the switches above: these are view
+     preferences, not deployment decisions. */
   function composer(repaint) {
     function toggle(key, dflt, label, hint) {
       var on = C.prefs.get(key, dflt);
@@ -962,11 +968,30 @@
       hands_free: "arm and disarm the microphone from the icon",
     };
 
-    function row(label, hint, control, iconName) {
+    /* When each setting takes effect, exactly as the server says it
+       (`applies` on GET /api/assistant/settings). Held here and set in load():
+       both repaints (load's second paint and save) pass objects that carry only
+       `settings` and `backends`, so reading it off `d` in paint would drop
+       every chip on the second paint. The page keeps no list of its own, only
+       the label for each kind of answer (AC-69). */
+    var applies = {};
+    var WHEN_LABEL = { live: "(live)", restart: "(restart needed)", next_chat: "(next chat)" };
+
+    // `key` is the setting a row edits. A row with none (a readout, the wake
+    // recorder) shows no chip, because there is nothing to say about when it
+    // takes effect.
+    function row(label, hint, control, iconName, key) {
+      var when = key ? applies[key] : null;
+      var chip = when && WHEN_LABEL[when.when]
+        ? C.el("span", {
+            class: "va-when va-when-" + when.when,
+            title: when.note || "", text: WHEN_LABEL[when.when],
+          })
+        : null;
       return C.el("div", { class: "setrow" }, [
         iconName ? C.icon(iconName) : null,
         C.el("div", { class: "settext" }, [
-          C.el("b", { text: label }), C.el("span", { text: hint }),
+          C.el("b", {}, [label, chip && " ", chip]), C.el("span", { text: hint }),
         ]),
         control,
       ]);
@@ -980,7 +1005,7 @@
       });
       return row(label, hint, C.el("label", { class: "switch" }, [
         input, C.el("span", { class: "track" }), C.el("span", { class: "knob" }),
-      ]), iconName);
+      ]), iconName, key);
     }
 
     function field(s, key, label, hint, type, iconName) {
@@ -992,7 +1017,7 @@
       input.addEventListener("change", function () {
         var patch = {}; patch[key] = input.value; save(patch);
       });
-      return row(label, hint, C.el("div", { class: "setctl" }, [input]), iconName);
+      return row(label, hint, C.el("div", { class: "setctl" }, [input]), iconName, key);
     }
 
     /* Record the wake word: say it three times, then build it.
@@ -1125,6 +1150,634 @@
         lines, "mic");
     }
 
+    /* The speech-model manager: what is installed, what could be, which one
+       is in use.
+
+       Every fact on a row (state, size, hint, licence, verified, in use) is
+       the server's, from GET /api/assistant/voice/assets. That route scans
+       desktop/stt and desktop/tts itself, so it answers with the desktop
+       shell stopped, and the page keeps no catalogue of its own.
+       `loadAssets()` is the one request: the pickers elsewhere on this page
+       reuse it instead of adding more. */
+    var assets = null;          // the last good answer
+    var assetsFetch = null;     // the request in flight, so callers share it
+    var assetTimer = null;
+    var assetNotes = {};        // row -> the sentence a refused action or a failed check left
+    var assetViews = [];        // pickers that follow the same answer: { sel, fill }
+    var ASSET_ACTIVE = { downloading: true, retrying: true, verifying: true };
+    var ASSET_STATE_KIND = {
+      installed: "ok", partial: "warn", paused: "warn", retrying: "warn",
+      downloading: "info", verifying: "info", failed: "danger",
+    };
+
+    // `fresh`: the caller just changed something, so an answer already on its
+    // way may predate it. Wait that one out and ask again.
+    function loadAssets(fresh) {
+      if (fresh && assetsFetch) {
+        return assetsFetch.then(null, function () {}).then(function () { return loadAssets(); });
+      }
+      if (!assetsFetch) {
+        assetsFetch = C.get("/api/assistant/voice/assets").then(function (d) {
+          assetsFetch = null; assets = d;
+          // The pickers on this page follow the one answer; a repaint leaves the
+          // old ones detached, so they are dropped here.
+          assetViews = assetViews.filter(function (v) { return v.sel.isConnected; });
+          assetViews.forEach(function (v) { v.fill(d); });
+          return d;
+        }, function (err) { assetsFetch = null; throw err; });
+      }
+      return assetsFetch;
+    }
+
+    // Binary units, like the sizes in the hints the catalogue carries.
+    function fmtBytes(n) {
+      n = Number(n) || 0;
+      if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GiB";
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + " MiB";
+      if (n >= 1024) return Math.round(n / 1024) + " KiB";
+      return n + " B";
+    }
+
+    function fmtLeft(s) {
+      if (s < 90) return s + " s";
+      if (s < 5400) return Math.round(s / 60) + " min";
+      return (s / 3600).toFixed(1) + " h";
+    }
+
+    function tip(node, text) { node.setAttribute("title", text); return node; }
+
+    function assetManager() {
+      var box = C.el("div", { class: "va-list" });
+      var parts = {};             // row -> { el, key, update } for what is on screen
+      var built = false;
+      var diskText = C.el("span", { class: "va-size" });
+      var diskRow = row("Free disk space",
+        "where models and voices are kept: desktop/stt and desktop/tts",
+        C.el("div", { class: "setctl" }, [diskText]), "file");
+      // The shell being stopped is a state, not a fault: the list is read from
+      // disk and is complete without it.
+      var shellNote = C.el("div", {
+        class: "va-note", hidden: true,
+        text: "The desktop shell is not running, so which model it has loaded "
+          + "is not shown. What is on disk is listed regardless.",
+      });
+      // A repaint replaces this list, so the old list's timer must not outlive
+      // it: one timer per panel.
+      clearTimeout(assetTimer);
+
+      function uid(a) { return a.kind + ":" + a.id; }
+
+      // The buttons post the id and nothing else: the server owns the
+      // catalogue, so there is no hash, URL or path for this page to send
+      // (delete also names the inventory file).
+      function act(a, action, extra) {
+        var body = { id: a.id };
+        if (extra) Object.keys(extra).forEach(function (k) { body[k] = extra[k]; });
+        delete assetNotes[uid(a)];
+        return C.post("/api/assistant/voice/assets/" + action, body).then(function (r) {
+          // A verify that finds different bytes answers 200 with ok:false: a
+          // result to show, not a fault.
+          if (r && r.ok === false && r.message) assetNotes[uid(a)] = r.message;
+        }, function (err) {
+          assetNotes[uid(a)] = err && err.status ? err.message
+            : "Could not reach the console: " + ((err && err.message) || err);
+        }).then(function () { poll(true); });
+      }
+
+      function btn(label, kind, onclick) {
+        return C.el("button", {
+          type: "button", class: "btn sm" + (kind ? " " + kind : ""),
+          onclick: onclick, text: label,
+        });
+      }
+
+      function actions(a) {
+        var name = a.label || a.id;
+        var out = [];
+        function go(action, extra) {
+          return function (e) { e.currentTarget.disabled = true; act(a, action, extra); };
+        }
+        if (a.state === "not_installed" || a.state === "partial" || a.state === "failed") {
+          out.push(tip(btn("Download", "primary", go("download")),
+            a.state === "not_installed" ? "download " + fmtBytes(a.size_bytes)
+              : "continue from what is already on disk"));
+        }
+        if (ASSET_ACTIVE[a.state]) out.push(btn("Pause", "", go("pause")));
+        if (a.state === "paused") out.push(btn("Resume", "primary", go("resume")));
+        if (ASSET_ACTIVE[a.state] || a.state === "paused") out.push(btn("Cancel", "", go("cancel")));
+        if (a.state === "installed" && !a.custom && !a.verified) {
+          out.push(tip(btn("Verify", "", go("verify")),
+            "check the file against the catalogue checksum"));
+        }
+        if (a.state === "installed" || a.state === "partial" || a.state === "failed") {
+          var why = a.loaded
+            ? "it is loaded in the speech engine; choose another model and wait for it to load first"
+            : (a.in_use ? "it is in use; choose another "
+                + (a.kind === "stt" ? "model" : "voice") + " first" : "");
+          var del = btn("Delete", "danger", function (e) {
+            var sure = window.confirm(a.state === "installed"
+              ? "Delete " + name + "?\n\nIt is removed from disk (" + fmtBytes(a.size) + ")."
+                + (a.custom ? " It is not in the catalogue, so it cannot be downloaded again from here."
+                            : " You can download it again later.")
+              : "Discard the partly downloaded " + name + "?");
+            if (!sure) return;
+            e.currentTarget.disabled = true;
+            act(a, "delete", { name: a.name });
+          });
+          out.push(del);
+          if (why) {
+            del.disabled = true;
+            out.push(C.el("span", { class: "va-reason", text: "Delete is off: " + why }));
+          }
+        }
+        return out;
+      }
+
+      // A real progress bar, so a screen reader hears "42%" and not nothing.
+      // It is updated in place: replacing the row every second would drop the
+      // focus and could eat a click that starts mid-redraw.
+      function progress(a) {
+        var fill = C.el("span", { class: "va-fill" });
+        var bar = C.el("div", {
+          class: "va-bar", role: "progressbar", "aria-valuemin": 0,
+          "aria-valuemax": 100, "aria-valuenow": 0,
+          "aria-label": "Download of " + (a.label || a.id),
+        }, [fill]);
+        var text = C.el("div", { class: "va-bar-text" });
+        function update(b) {
+          var total = Number(b.total) || Number(b.size_bytes) || 0;
+          var done = Math.max(0, Math.min(Number(b.done) || 0, total));
+          var pct = total ? Math.floor(100 * done / total) : 0;
+          var bits = [pct + "%"];
+          if (b.state === "paused") bits.push("paused");
+          else if (b.state === "retrying") bits.push("reconnecting");
+          else if (b.state === "verifying") bits.push("checking the checksum");
+          else {
+            if (b.speed_bps > 0) bits.push(fmtBytes(b.speed_bps) + "/s");
+            // Left out when the server has no estimate, never shown as 0.
+            if (b.eta_s !== null && b.eta_s !== undefined) bits.push(fmtLeft(b.eta_s) + " left");
+          }
+          var line = bits.join(" · ");
+          bar.setAttribute("aria-valuenow", String(pct));
+          bar.setAttribute("aria-valuetext", line);
+          fill.style.width = pct + "%";
+          text.textContent = line;
+        }
+        update(a);
+        return { el: C.el("div", { class: "va-progress" }, [bar, text]), update: update };
+      }
+
+      // What decides whether a row's markup must be rebuilt. Progress is not
+      // in it: that is updated in place.
+      function rowKey(a) {
+        return [a.state, a.size, a.verified, a.in_use, a.loaded, a.custom, a.error,
+          assetNotes[uid(a)] || ""].join("|");
+      }
+
+      function assetRow(a, key) {
+        var installed = a.state === "installed";
+        var size = a.state === "partial"
+          ? fmtBytes(a.size) + " of " + fmtBytes(a.size_bytes)
+          : fmtBytes(installed ? a.size : a.size_bytes);
+        var meter = ASSET_ACTIVE[a.state] || a.state === "paused" ? progress(a) : null;
+        // The server's own sentence: a refused action, a failed check, or why
+        // the download failed (disk full, upstream changed, checksum mismatch).
+        var problem = assetNotes[uid(a)] || (a.state === "failed" ? a.error : "");
+        var facts = [
+          C.chip(String(a.state).replace(/_/g, " "), ASSET_STATE_KIND[a.state]),
+          C.chip(a.kind === "stt" ? "model" : "voice"),
+          a.custom ? tip(C.chip("custom"), "a file placed by hand; not in the catalogue") : null,
+          C.el("span", { class: "va-size", text: size }),
+          installed
+            ? (a.verified
+                ? tip(C.chip("verified", "ok"), "checked against the catalogue checksum")
+                : tip(C.chip("not verified"), "present, but not checked against the catalogue checksum"))
+            : null,
+          a.in_use ? tip(C.chip("in use", "accent"), "the one the assistant uses now") : null,
+          a.loaded ? tip(C.chip("loaded", "info"), "loaded in the speech engine right now") : null,
+          a.license ? C.el("span", { class: "va-licence", text: "Licence: " + a.license }) : null,
+          meter ? meter.el : null,
+          C.el("div", { class: "va-actions" }, actions(a)),
+          problem ? C.el("div", { class: "va-error", role: "alert", text: problem }) : null,
+        ];
+        var r = row(a.label || a.id,
+          a.hint || "A file placed in desktop/" + (a.kind === "stt" ? "stt" : "tts")
+            + " by hand; it is not in the catalogue.",
+          C.el("div", { class: "setctl" }, facts), a.kind === "stt" ? "brain" : "speaker");
+        r.setAttribute("data-asset", a.id);
+        return { el: r, key: key, update: function (b) { if (meter) meter.update(b); } };
+      }
+
+      // Rows are kept and updated, not rebuilt: a row is replaced only when
+      // something its markup shows has changed, so a button under the pointer
+      // is not swapped out from under it by the next poll.
+      function draw(d) {
+        if (!built) {
+          C.clear(box);
+          box.appendChild(diskRow);
+          box.appendChild(shellNote);
+          parts = {};
+          built = true;
+        }
+        diskText.textContent = fmtBytes(d.free_bytes) + " free";
+        shellNote.hidden = !(d.shell && d.shell.reachable === false);
+        var list = (d.assets || []).slice().sort(function (x, y) {
+          return (x.kind === "stt" ? 0 : 1) - (y.kind === "stt" ? 0 : 1);
+        });
+        var seen = {};
+        list.forEach(function (a) {
+          var key = rowKey(a), have = parts[uid(a)];
+          seen[uid(a)] = true;
+          if (have && have.key === key) { have.update(a); return; }
+          var made = assetRow(a, key);
+          if (have) have.el.replaceWith(made.el);
+          parts[uid(a)] = made;
+        });
+        Object.keys(parts).forEach(function (id) {
+          if (!seen[id]) { parts[id].el.remove(); delete parts[id]; }
+        });
+        // Order them, moving only what is out of place.
+        var cursor = shellNote.nextSibling;
+        list.forEach(function (a) {
+          var el = parts[uid(a)].el;
+          if (el === cursor) cursor = cursor.nextSibling;
+          else box.insertBefore(el, cursor);
+        });
+      }
+
+      // A failed refresh keeps the rows already on screen (a hiccup mid
+      // download must not blank the list); only a first load has nothing to keep.
+      function failed(err) {
+        if (built) return;
+        C.clear(box);
+        box.appendChild(C.errbox(err));
+      }
+
+      function active(d) {
+        return ((d && d.assets) || []).some(function (a) { return ASSET_ACTIVE[a.state]; });
+      }
+
+      // One request a second, and only while a job is moving: an idle list
+      // asks for nothing. The chain ends by itself when the list leaves the
+      // page (a repaint, another tab), because it checks the node it draws into.
+      function poll(fresh) {
+        loadAssets(fresh).then(draw, failed).then(function () {
+          clearTimeout(assetTimer);
+          if (box.isConnected && active(assets)) assetTimer = setTimeout(poll, 1000);
+        });
+      }
+
+      if (assets) draw(assets); else box.appendChild(C.skeleton(3));
+      poll();
+      return box;
+    }
+
+    /* The Speech model row: a choice among the models that are installed, not
+       a name to type. It follows the same answer as the manager below, so a
+       download that finishes appears here without a second request.
+
+       A configured name that is not installed stays in the list, marked, so the
+       row never claims a model that is not there; the server still decides what
+       is valid (shape only), so saving goes through `save()` unchanged. */
+    function modelPicker(s) {
+      var configured = String(s.stt_model || "");
+      var sel = C.el("select", { "aria-label": "Speech model" });
+      var shown = null;
+
+      function fill(d) {
+        var installed = ((d && d.assets) || []).filter(function (a) {
+          return a.kind === "stt" && a.state === "installed";
+        });
+        var opts = installed.map(function (a) {
+          return [a.id, (a.label || a.id) + " · " + fmtBytes(a.size) + (a.in_use ? " · in use" : "")];
+        });
+        if (configured && !installed.some(function (a) { return a.id === configured; })) {
+          opts.unshift([configured, configured + " (not installed)"]);
+        }
+        // Rebuilt only when something changed: a poll must not close a list
+        // somebody has open.
+        var sig = JSON.stringify(opts);
+        if (sig === shown) return;
+        shown = sig;
+        C.clear(sel);
+        opts.forEach(function (o) {
+          var opt = C.el("option", { value: o[0], text: o[1] });
+          if (o[0] === configured) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.disabled = !opts.length;
+        if (!opts.length) {
+          sel.appendChild(C.el("option", { value: "", text: "no model installed — download one below" }));
+        }
+      }
+
+      sel.addEventListener("change", function () { save({ stt_model: sel.value }); });
+      // Until the list arrives, say what is configured and nothing more.
+      sel.appendChild(C.el("option", { value: configured, text: configured || "…" }));
+      sel.disabled = true;
+      assetViews.push({ sel: sel, fill: fill });
+      if (assets) fill(assets); else loadAssets().catch(function () {});
+      return row("Speech model",
+        "base.en is accurate on ticket ids; tiny.en is faster and worse at "
+        + "exactly those. Download more under Speech models and voices, below.",
+        C.el("div", { class: "setctl" }, [sel]), "brain", "stt_model");
+    }
+
+    /* The Voice and Speaking speed rows: a choice among the voices that are
+       installed and a slider, not a name and a number to type. The voice list
+       follows the same answer as the manager (`loadAssets()`), which is also
+       how the page learns what the shell is speaking with: `shell.speak_backend`.
+
+       Preview speaks the sample with what the controls show right now, saved or
+       not, and saves nothing. A slider saves on `change` (its release), not on
+       every `input`, because each save is a POST and an audit record. */
+    function voiceRows(s) {
+      var configured = String(s.speak_voice || "");
+      var sel = C.el("select", { "aria-label": "Voice" });
+      var rate = C.el("input", {
+        type: "range", min: "50", max: "200", step: "5", "aria-label": "Speaking speed",
+      });
+      var shownRate = C.el("span", { class: "va-size" });
+      var preview = C.el("button", { class: "btn", text: "Preview" });
+      var note = C.el("span", { class: "va-line" });
+      var shown = null;
+      var osVoice = false;
+      var whyShown = false;
+
+      var r0 = Number(s.speak_rate_percent);
+      rate.value = String(isFinite(r0) && r0 > 0 ? r0 : 100);
+      function showRate() { shownRate.textContent = rate.value + " %"; }
+      showRate();
+
+      function fill(d) {
+        var shell = (d && d.shell) || {};
+        osVoice = !!(shell.reachable && shell.speak_backend && shell.speak_backend !== "piper");
+        var installed = ((d && d.assets) || []).filter(function (a) {
+          return a.kind === "voice" && a.state === "installed";
+        });
+        var opts = [["", "Automatic - first installed"]];
+        if (configured && !installed.some(function (a) { return a.id === configured; })) {
+          opts.push([configured, configured + " (not installed)"]);
+        }
+        installed.forEach(function (a) {
+          opts.push([a.id, (a.label || a.id) + (a.in_use ? " · in use" : "")]);
+        });
+        var sig = JSON.stringify(opts);
+        if (sig !== shown) {
+          shown = sig;
+          C.clear(sel);
+          opts.forEach(function (o) {
+            var opt = C.el("option", { value: o[0], text: o[1] });
+            if (o[0] === configured) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        }
+        var why = osVoice
+          ? "the OS voice is speaking: voice, speed and device choices do not apply" : "";
+        [sel, rate, preview].forEach(function (c) {
+          c.disabled = osVoice;
+          if (why) c.setAttribute("title", why); else c.removeAttribute("title");
+        });
+        // The reason owns the line while it applies; a Preview sentence owns it otherwise.
+        if (osVoice) { note.textContent = why; whyShown = true; }
+        else if (whyShown) { note.textContent = ""; whyShown = false; }
+      }
+
+      rate.addEventListener("input", showRate);
+      rate.addEventListener("change", function () { save({ speak_rate_percent: Number(rate.value) }); });
+      sel.addEventListener("change", function () { save({ speak_voice: sel.value }); });
+      preview.addEventListener("click", function () {
+        note.textContent = "";
+        preview.disabled = true;
+        C.post("/api/assistant/voice/preview", { voice: sel.value, rate_percent: Number(rate.value) })
+          .then(function (r) {
+            note.textContent = r && r.ok === false
+              ? (r.reason || "the sample could not be spoken") : "speaking the sample";
+          })
+          .catch(function (e) { note.textContent = e.message; })
+          .then(function () { preview.disabled = osVoice; });
+      });
+
+      // Until the list arrives, say what is configured and nothing more.
+      sel.appendChild(C.el("option", { value: configured, text: configured || "Automatic - first installed" }));
+      sel.disabled = true;
+      assetViews.push({ sel: sel, fill: fill });
+      if (assets) fill(assets); else loadAssets().catch(function () {});
+
+      return [
+        row("Voice",
+          "a neural voice from desktop/tts; download more under Speech models "
+          + "and voices, below. Automatic uses the first one installed; with "
+          + "none, the OS voice speaks - that is the robotic one",
+          C.el("div", { class: "setctl" }, [sel, preview, note]), "speaker", "speak_voice"),
+        row("Speaking speed", "percent of the voice's natural pace, 50 to 200",
+          C.el("div", { class: "setctl" }, [rate, shownRate]), "speaker", "speak_rate_percent"),
+      ];
+    }
+
+    /* The Audio devices group: which microphone and speaker, chosen by NAME.
+
+       A name, not an index, because the order changes when something is
+       plugged in. The page lists what the shell sees and shows the shell's own
+       verdict on the saved name (`match`, `resolved`, `fallback`, `candidates`
+       under `input` and `output`); it never matches names itself, so the one
+       matcher stays in the shell (BR-6). Re-listed every 3 s, but only while
+       the group is on screen, and never while a dropdown is open under the
+       user's hand: a repaint would close it. */
+    var deviceAnswer = null;    // the last answer, so a repaint draws at once
+
+    function devicesPanel(s) {
+      var wrap = C.el("div", { class: "va-list" });
+      var timer = null;
+      var inflight = false;
+      var shown = null;
+      var refresh = C.el("button", { class: "btn", text: "Refresh" });
+      var status = C.el("span", { class: "va-line" });
+
+      function devRow(label, hint, key, dir, iconName) {
+        var sel = C.el("select", { "aria-label": label });
+        var note = C.el("span", { class: "va-line" });
+        sel.addEventListener("change", function () {
+          var patch = {}; patch[key] = sel.value; save(patch);
+        });
+        return {
+          dir: dir, key: key, sel: sel, note: note,
+          node: row(label, hint, C.el("div", { class: "setctl" }, [sel, note]), iconName, key),
+        };
+      }
+      var mic = devRow("Microphone",
+        "the input the assistant listens on. System default follows the "
+        + "operating system's choice", "input_device", "input", "mic");
+      var spk = devRow("Speaker",
+        "the output replies, previews and the test tone play on",
+        "output_device", "output", "speaker");
+
+      function fillRow(r, d) {
+        var cfg = String(((d.configured || {})[r.dir] !== undefined
+          ? d.configured[r.dir] : s[r.key]) || "");
+        var names = (r.dir === "input" ? d.inputs : d.outputs) || [];
+        var def = (r.dir === "input" ? d.default_input : d.default_output) || "";
+        var v = d[r.dir] || {};
+        // The shell's verdict is for the name the shell has applied; a name
+        // saved a moment ago may not be there yet, and then it says so.
+        var current = v.configured === cfg;
+        var opts = [["", "System default" + (def ? " (" + def + ")" : "")]];
+        if (cfg && names.indexOf(cfg) < 0) {
+          opts.push([cfg, cfg + (current && v.fallback ? " (not connected)"
+            : current && v.resolved ? " (matches " + v.resolved + ")" : "")]);
+        }
+        names.forEach(function (n) { opts.push([n, n]); });
+        C.clear(r.sel);
+        opts.forEach(function (o) {
+          var opt = C.el("option", { value: o[0], text: o[1] });
+          if (o[0] === cfg) opt.selected = true;
+          r.sel.appendChild(opt);
+        });
+        r.sel.disabled = false;
+        r.sel.removeAttribute("title");
+        if (!cfg) r.note.textContent = "";
+        else if (!current) r.note.textContent = "the app has not applied this choice yet";
+        else if (v.fallback) {
+          var several = (v.candidates || []).length > 1;
+          r.note.textContent = (several ? "several devices match: " + v.candidates.join(", ") + " - " : "")
+            + (v.resolved ? "using " + v.resolved + " instead" : "no device is available");
+        } else r.note.textContent = v.resolved ? "in use: " + v.resolved : "";
+      }
+
+      function unavailable(r, why) {
+        var cfg = String(s[r.key] || "");
+        C.clear(r.sel);
+        r.sel.appendChild(C.el("option", { value: cfg, text: cfg || "System default" }));
+        r.sel.disabled = true;
+        r.sel.setAttribute("title", why);
+        r.note.textContent = why;
+      }
+
+      function draw(d, force) {
+        deviceAnswer = d;
+        var sig = JSON.stringify(d);
+        if (sig === shown && !force) return;                   // unchanged: nothing to repaint
+        if (document.activeElement === mic.sel || document.activeElement === spk.sel) return;
+        shown = sig;
+        if (!d || d.ok === false) {
+          var why = (d && d.reason) || "the desktop shell is not running";
+          unavailable(mic, why); unavailable(spk, why);
+          status.textContent = "";
+          return;
+        }
+        fillRow(mic, d); fillRow(spk, d);
+        status.textContent = (d.inputs || []).length + " microphones, "
+          + (d.outputs || []).length + " speakers";
+      }
+
+      function poll(force) {
+        if (inflight) return;
+        inflight = true;
+        C.get("/api/assistant/voice/devices").then(function (d) { return d; }, function (e) {
+          return { ok: false, reason: String(e && e.message || e) };
+        }).then(function (d) { inflight = false; draw(d, force); });
+      }
+      refresh.addEventListener("click", function () { poll(true); });
+
+      var observer = new IntersectionObserver(function (entries) {
+        var visible = entries.some(function (e) { return e.isIntersecting; });
+        if (visible && !timer) { poll(); timer = setInterval(function () {
+          if (!wrap.isConnected) { clearInterval(timer); timer = null; return; }
+          poll();
+        }, 3000); }
+        if (!visible && timer) { clearInterval(timer); timer = null; }
+      });
+
+      /* Test microphone / Test speaker. The shell does the work (open the
+         resolved device, listen for 2 s, play a tone) and answers at once; the
+         microphone test is then followed by polling the voice state, a script
+         cannot hear, so for the speaker the page only says what was played and
+         where. The shell's refusals (a take or hands-free is using the
+         microphone; no device resolves) arrive as sentences and are shown as
+         they are. */
+      function peakBar() {
+        var fill = C.el("span", { class: "va-fill" });
+        var el = C.el("span", {
+          class: "va-bar va-meter", role: "meter", "aria-label": "Microphone test level",
+          "aria-valuemin": "0", "aria-valuemax": "1", "aria-valuenow": "0",
+        }, [fill]);
+        return {
+          el: el,
+          set: function (v) {
+            var n = Math.max(0, Math.min(1, Number(v) || 0));
+            fill.style.width = Math.round(n * 100) + "%";
+            el.setAttribute("aria-valuenow", n.toFixed(2));
+            return n;
+          },
+        };
+      }
+      var level = peakBar();
+      var micInfo = C.el("span", { class: "va-size" });
+      var micBtn = C.el("button", { class: "btn", text: "Test microphone" });
+      var micNote = C.el("span", { class: "va-line" });
+      var spkBtn = C.el("button", { class: "btn", text: "Test speaker" });
+      var spkNote = C.el("span", { class: "va-line" });
+      function busy(on) { micBtn.disabled = on; spkBtn.disabled = on; }
+      function micDone(text) { busy(false); micNote.textContent = text; }
+
+      // About every 250 ms, for at most 4 s (the shell's test listens for 2 s).
+      function watchMic(t0) {
+        C.get("/api/assistant/voice").then(function (v) {
+          var t = v && v.mic_test;
+          if (!v || v.ok === false || !t) {
+            micDone((v && v.reason) || "the desktop shell did not report the test");
+            return;
+          }
+          var n = level.set(t.peak);
+          micInfo.textContent = "peak " + n.toFixed(2) + (t.device ? " - " + t.device : "");
+          if (t.error) { micDone(t.error); return; }
+          if (t.running && Date.now() - t0 < 4000) {
+            setTimeout(function () { watchMic(t0); }, 250);
+            return;
+          }
+          micDone(t.running ? "the test is still running; the level above is what it has heard so far"
+            : n < 0.01 ? "nothing was heard: check the microphone above, and that it is not muted"
+            : "the level above is the loudest it measured");
+        }, function (e) { micDone(e.message); });
+      }
+      micBtn.addEventListener("click", function () {
+        busy(true); micNote.textContent = ""; micInfo.textContent = ""; level.set(0);
+        C.post("/api/assistant/voice/test/mic", {}).then(function (r) {
+          if (!r || r.ok === false) { micDone((r && r.reason) || "the microphone test could not start"); return; }
+          watchMic(Date.now());
+        }, function (e) { micDone(e.message); });
+      });
+      spkBtn.addEventListener("click", function () {
+        busy(true); spkNote.textContent = "";
+        C.post("/api/assistant/voice/test/speaker", {}).then(function (r) {
+          if (!r || r.ok === false) {
+            busy(false);
+            spkNote.textContent = (r && r.reason) || "the test tone could not be played";
+            return;
+          }
+          spkNote.textContent = "playing a short tone" + (r.device ? " on " + r.device : "")
+            + ". If you heard nothing, check the output device above.";
+          setTimeout(function () { busy(false); }, 1500);
+        }, function (e) { busy(false); spkNote.textContent = e.message; });
+      });
+
+      wrap.appendChild(mic.node);
+      wrap.appendChild(spk.node);
+      wrap.appendChild(row("Test microphone",
+        "listens for 2 seconds on the device above and shows how loud it was",
+        C.el("div", { class: "setctl" }, [micBtn, level.el, micInfo, micNote]), "mic"));
+      wrap.appendChild(row("Test speaker",
+        "plays a short tone on the speaker above. This page cannot hear it, "
+        + "so it says what was played and on which device",
+        C.el("div", { class: "setctl" }, [spkBtn, spkNote]), "speaker"));
+      wrap.appendChild(row("Devices", "re-listed every 3 seconds while this group is open",
+        C.el("div", { class: "setctl" }, [refresh, status]), "refresh"));
+      observer.observe(wrap);
+      if (deviceAnswer) draw(deviceAnswer, true);
+      else { unavailable(mic, "reading the device list"); unavailable(spk, "reading the device list"); }
+      return wrap;
+    }
+
     function choice(s, key, label, hint, options, iconName) {
       var sel = C.el("select", { "aria-label": label });
       options.forEach(function (o) {
@@ -1135,7 +1788,7 @@
       sel.addEventListener("change", function () {
         var patch = {}; patch[key] = sel.value; save(patch);
       });
-      return row(label, hint, C.el("div", { class: "setctl" }, [sel]), iconName);
+      return row(label, hint, C.el("div", { class: "setctl" }, [sel]), iconName, key);
     }
 
 
@@ -1335,14 +1988,11 @@
                 : "pick a provider to choose a model";
         }
 
-        wrap.appendChild(C.el("div", { class: "setrow" }, [
-            C.icon(opts.icon),
-            C.el("div", { class: "settext" }, [
-                C.el("b", { text: opts.label }),
-                C.el("span", { text: opts.hint }),
-            ]),
+        // The role's chip is its backend's: backend and model of one role are
+        // always classed together.
+        wrap.appendChild(row(opts.label, opts.hint,
             C.el("div", { class: "setctl" }, [kindSel, providerSel, models, note]),
-        ]));
+            opts.icon, opts.backendKey));
         return wrap;
     }
 
@@ -1386,13 +2036,7 @@
         toggle(s, "speak", "Speak replies",
           "read finished replies aloud — the same switch as Mute replies in "
           + "the tray menu, which writes this one", "speaker"),
-        field(s, "speak_voice", "Voice",
-          "a neural voice from desktop/tts (fetch one with "
-          + "desktop/get-piper.ps1). Blank uses whichever is installed; with "
-          + "none, the OS voice speaks — that is the robotic one",
-          "text", "speaker"),
-        field(s, "speak_rate_percent", "Speaking speed",
-          "percent of the voice's natural pace, 50 to 200", "number", "speaker"),
+        voiceRows(s),
         field(s, "reply_chars", "Spoken length",
           "characters read aloud; the full text always stays in the chat",
           "number", "speaker"),
@@ -1409,10 +2053,7 @@
           "milliseconds allowed before you have said much — hands-free only, "
           + "so a pause right after the wake word is thinking, not finishing",
           "number", "clock"),
-        field(s, "stt_model", "Speech model",
-          "base.en is accurate on ticket ids; tiny.en is faster and worse at "
-          + "exactly those. Fetch one with desktop/get-whisper.ps1 -Model",
-          "text", "brain"),
+        modelPicker(s),
         choice(s, "tray_click_action", "Tray icon click",
           CLICK_HINT[s.tray_click_action] || CLICK_HINT.listen,
           CLICK_ACTIONS, "mic"),
@@ -1420,6 +2061,15 @@
         id: "set.assistant.listening", open: false, icon: "mic",
         help: "One spoken take: it records until you stop talking, or until "
               + "the cap. Transcription happens on this machine.",
+      }));
+
+      body.appendChild(C.group("Speech models and voices", [assetManager()], {
+        id: "set.assistant.assets", open: false, icon: "brain",
+        help: "Speech models turn your voice into text; voices speak the "
+              + "replies. The list and its checksums are committed in "
+              + "console/config/voice-assets.toml, and a download is only "
+              + "installed after its checksum matches. Each voice shows its "
+              + "licence: some are not for commercial use.",
       }));
 
       body.appendChild(C.group("Hands-free", [
@@ -1451,6 +2101,13 @@
               + "listens for the wake word, and nothing is transcribed or "
               + "sent anywhere until it fires — so leaving the mic on means "
               + "the room is heard locally and forgotten.",
+      }));
+
+      body.appendChild(C.group("Audio devices", [devicesPanel(s)], {
+        id: "set.assistant.devices", open: false, icon: "mic",
+        help: "Which microphone listens and which speaker speaks, by name. "
+              + "A name that is not connected falls back to the system "
+              + "default, and this page says which device is in use then.",
       }));
 
       body.appendChild(C.group("Voice diagnostics", [voicePanel()], {
@@ -1524,6 +2181,7 @@
           // first paint draws the pickers empty and the second fills them.
           // Passing `d` unchanged to both was the bug that left every fresh
           // page load showing "Auto" no matter what was pinned.
+          applies = d.applies || {};
           paint(d);
           loadInstalled().then(function () {
             paint({ settings: d.settings, backends: installed });
@@ -1649,18 +2307,97 @@
     return box;
   }
 
+  /* Name and console title. Same two files the setup wizard writes, so a
+     change here and a change in the wizard cannot diverge. */
+  function identity() {
+    var body = C.el("div", {}, [C.skeleton(2)]);
+
+    function paint(snap) {
+      var ws = (snap && snap.workspace) || {};
+      var name = C.el("input", {
+        type: "text", "aria-label": "Your name", value: ws.name || "",
+      });
+      var title = C.el("input", {
+        type: "text", "aria-label": "Console name", value: ws.title || "",
+        placeholder: ws.committed_title || "Delivery Console",
+      });
+      var save = C.el("button", { class: "btn sm", type: "button" }, ["Save"]);
+      save.addEventListener("click", function () {
+        var next = name.value.trim();
+        if (!next) { C.toast("Your name is required", "err"); return; }
+        save.disabled = true;
+        C.post("/api/onboarding/setup", {
+          step: "workspace",
+          name: next,
+          title: title.value.trim(),
+          slug: next === (ws.name || "") ? (ws.slug || "") : "",
+        }).then(function (fresh) {
+          save.disabled = false;
+          var ws = (fresh && fresh.workspace) || {};
+          var shown = ws.title || ws.committed_title || "Delivery Console";
+          if (window.ConsoleApp && window.ConsoleApp.setTitle) window.ConsoleApp.setTitle(shown);
+          C.toast("Workspace saved", "ok");
+          paint(fresh);
+        }, function (err) {
+          save.disabled = false;
+          C.toast(err.message || "Could not save", "err");
+        });
+      });
+      C.clear(body);
+      body.appendChild(C.el("div", { class: "setrow" }, [
+        C.icon("user"),
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: "Your name" }),
+          C.el("span", { text: "Line 1 of author.local — work logs use it" }),
+        ]),
+        C.el("div", { class: "setctl" }, [name]),
+      ]));
+      body.appendChild(C.el("div", { class: "setrow" }, [
+        C.icon("info"),
+        C.el("div", { class: "settext" }, [
+          C.el("b", { text: "Console name" }),
+          C.el("span", { text: "Header title for this machine. Blank keeps the committed name." }),
+        ]),
+        C.el("div", { class: "setctl" }, [title]),
+      ]));
+      body.appendChild(C.el("div", { class: "row" }, [save]));
+    }
+
+    if (C.IS_STATIC) {
+      C.clear(body).appendChild(C.el("div", { class: "muted", text: "A static export cannot change this." }));
+    } else {
+      C.get("/api/onboarding/setup").then(paint, function (err) {
+        C.clear(body).appendChild(C.errbox(err));
+      });
+    }
+    return C.panel("Workspace identity", [body], null, {
+      icon: "user",
+      collapse: { id: "set.identity", open: false },
+      help: ["The setup wizard writes these too. The name is ",
+             C.el("code", {}, ["knowledge-center/logs/author.local"]),
+             ". The console name is a per-machine override, not ",
+             C.el("code", {}, ["console.toml"]),
+             ", so saving it does not rewrite that file's comments."],
+    });
+  }
+
+  /* Saved preferences. Read through C.prefs, never the browser's own storage:
+     in server mode the shared copy on the server is the truth and this page's
+     keys were moved there at boot, so reading them directly shows nothing.
+     Each sentence is one string so the wording can be checked as written. */
   function storage(repaint) {
-    var keys = [];
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (k && k.indexOf("console.") === 0) keys.push(k);
-      }
-    } catch (e) { /* private mode: nothing stored, nothing to clear */ }
+    var server = C.prefs.mode() === "server";
+    var all = C.prefs.all();
+    var keys = Object.keys(all).sort();
+    var MODE_SERVER = "Shared by the desktop app and every browser tab on this machine. Kept on the server in console/.cache/prefs.json; not committed.";
+    var MODE_LOCAL = "Stored in this browser only.";
+    var RESET_ASK = "Reset every saved preference for the app and all browser tabs? Tickets, chats and other data are not touched.";
+    var RESET_HINT_SERVER = "Also clears the shared copy on the server, so the app and every open tab return to defaults.";
+    var RESET_HINT_LOCAL = "Clears this browser's saved preferences.";
 
     /* The Getting-started card tells people Settings can bring it back, so
        there is an explicit control rather than making them work out that
-       clearing a localStorage key is the way. */
+       deleting a saved preference is the way. */
     var restore = C.prefs.get("hideOnboarding", false)
       ? C.el("div", { class: "setrow" }, [
           C.icon("info"),
@@ -1679,39 +2416,92 @@
         ])
       : null;
 
-    return C.panel("Stored in this browser", [
+    var again = C.el("div", { class: "setrow" }, [
+      C.icon("sliders"),
+      C.el("div", { class: "settext" }, [
+        C.el("b", { text: "Setup wizard" }),
+        C.el("span", { text: "Name, providers, editor files, and default models" }),
+      ]),
+      C.el("button", {
+        class: "btn sm", type: "button",
+        onclick: function () {
+          if (window.ConsoleOnboarding) window.ConsoleOnboarding.open();
+        },
+      }, ["Run setup again"]),
+    ]);
+
+    /* Reset reaches the app and every open tab now, not only this page, so it is
+       asked first. A refusal from the server changes nothing, so the list is left
+       as it is and the error is shown rather than success. */
+    var reset = C.el("button", {
+      class: "btn sm danger",
+      onclick: function () {
+        if (!window.confirm(RESET_ASK)) return;
+        reset.disabled = true;
+        C.prefs.reset().then(function () {
+          window.ConsoleApp.applyTheme("system");
+          window.ConsoleApp.rebuildNav();
+          C.toast("Preferences reset", "ok");
+          repaint();
+        }, function (err) {
+          reset.disabled = false;
+          C.toast("Could not reset preferences: " + (err && err.message ? err.message : err), "err");
+        });
+      },
+    }, ["Reset all preferences"]);
+
+    return C.panel("Saved preferences", [
+      again,
       restore,
+      C.el("div", { class: "muted", text: server ? MODE_SERVER : MODE_LOCAL }),
       keys.length
-        ? C.el("div", { class: "rows" }, keys.sort().map(function (k) {
+        ? C.el("div", { class: "rows" }, keys.map(function (k) {
             return C.el("div", { class: "lrow" }, [
               C.el("span", { class: "mono", style: "font-size:11.5px", text: k }),
               C.el("span", { class: "ltext muted truncate", style: "font-size:11.5px",
-                text: (function () { try { return localStorage.getItem(k); } catch (e) { return "?"; } })() }),
+                text: JSON.stringify(all[k]) }),
             ]);
           }))
-        : C.el("div", { class: "muted", text: "Nothing stored yet — every setting is still at its default." }),
+        : C.el("div", { class: "muted", text: "Nothing saved yet — every setting is still at its default." }),
       keys.length
         ? C.el("div", { class: "row", style: "margin-top:9px" }, [
-            C.el("button", {
-              class: "btn sm danger",
-              onclick: function () {
-                keys.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } });
-                window.ConsoleApp.applyTheme("system");
-                window.ConsoleApp.rebuildNav();
-                C.toast("Preferences reset", "ok");
-                repaint();
-              },
-            }, ["Reset all preferences"]),
-            C.el("span", { class: "muted", text: "Affects this browser only. No server data is touched." }),
+            reset,
+            C.el("span", { class: "muted", text: server ? RESET_HINT_SERVER : RESET_HINT_LOCAL }),
           ])
         : null,
     ], null, {
       icon: "folder",
       collapse: { id: "set.storage", open: false },
-      help: ["Every key this console has written to your browser's ",
-             C.el("code", {}, ["localStorage"]),
-             ", verbatim. Nothing here leaves this machine, and resetting it "
-             + "touches no server state — it puts the page back to defaults."],
+      help: [(server ? "Every saved preference, verbatim, as the server holds it. "
+                     : "Every saved preference this page holds, verbatim. ")
+             + "Resetting puts the console back to defaults; tickets, chats and other data are not touched."],
+    });
+  }
+
+  /* Reset layout: put pane sizes and fold states back to their defaults and
+     nothing else. Exactly three saved preferences are removed; theme, hidden
+     tabs and every other key stay. The splitters re-read storage, then the
+     active tab is drawn again so folds and sizes show at once (the page
+     returns to the top, which is accepted). */
+  function layoutPanel() {
+    var reset = C.el("button", {
+      class: "btn sm", type: "button",
+      onclick: function () {
+        C.prefs.del("layout");
+        C.prefs.del("panelOpen");
+        C.prefs.del("chatListHidden");
+        if (C.splitter) C.splitter.reapplyAll();
+        window.ConsoleApp.go("settings");
+        C.toast("Layout reset to defaults", "ok");
+      },
+    }, ["Reset layout"]);
+
+    return C.panel("Layout", [
+      C.el("div", { class: "muted", text: "Pane sizes, folded sections and the Agents chat list go back to their defaults. Theme, hidden tabs and other settings are kept." }),
+      C.el("div", { class: "row", style: "margin-top:9px" }, [reset]),
+    ], null, {
+      icon: "sliders",
+      collapse: { id: "set.layout", open: false },
     });
   }
 
@@ -1881,7 +2671,9 @@
         kids.push(machine());
         kids.push(workspace());
       }
+      kids.push(identity());
       kids.push(storage(paint));
+      kids.push(layoutPanel());
       if (!C.IS_STATIC) kids.push(diagnostics());
 
       // One grid for everything now that the tall panels fold: storage and

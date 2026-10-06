@@ -1,8 +1,8 @@
 [meta]
 ticket = "_shared"
 tracker = "todos"
-updated = "2026-10-05T02:38:14Z"
-seq = 1
+updated = "2026-10-05T03:30:53Z"
+seq = 4
 
 [[items]]
 id = "TD-1"
@@ -10,6 +10,45 @@ status = "open"
 text = "Assistant talk prompt carries no current date/time: asked 'What day is it today?' (2026-10-05, openrouter nemotron-3.5-lightning) it called run_command 'date +%A', raising a gated approval card for a trivial question (chat 092430b581c1). Add today's date + local time to the prompt_build orientation section so the talk model never shells out for it."
 type = "task"
 priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-05"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-2"
+status = "open"
+text = "After T-022 evals exist, trim the skills whose description exceeds 300 chars (20 of 39 at 2026-10-01), then raise description-too-long from WARN to ERROR (moved from T-021 TD-1 at close, 2026-10-05)"
+type = "task"
+priority = "medium"
+captured_by = "agent"
+captured_on = "2026-10-05"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-3"
+status = "open"
+text = "Add a named-responder field to blocked tickets (owner and action as data, not derived from a question) (moved from T-021 TD-2 at close, 2026-10-05)"
+type = "task"
+priority = "low"
+captured_by = "agent"
+captured_on = "2026-10-05"
+due = ""
+context = ""
+done_on = ""
+drop_reason = ""
+
+[[items]]
+id = "TD-4"
+status = "open"
+text = "Audit (advisory, never block) a board-UI drag of a ticket to done when close-check would have blocked it (moved from T-021 TD-3 at close, 2026-10-05)"
+type = "task"
+priority = "low"
 captured_by = "agent"
 captured_on = "2026-10-05"
 due = ""

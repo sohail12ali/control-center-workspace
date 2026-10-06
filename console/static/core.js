@@ -23,6 +23,28 @@ window.Console = (function () {
   function tabImpl(id) { return _tabs[id]; }
   function tabIds() { return Object.keys(_tabs); }
 
+  /* ---------------- reload holds ----------------
+     The automatic UI-version reload (app.js) can see text in the DOM, but not a
+     draft a tab keeps in a module variable and repaints from. Such a module
+     registers a hold, in the same register-yourself style as `tab` above. It
+     lives here and not on ConsoleApp because tab scripts load before app.js
+     creates ConsoleApp: a top-level ConsoleApp.holdReload() would throw and
+     abort the tab module. Keyed by id, so registering twice replaces. */
+  var _holds = {};
+
+  /** fn() returns true while the module holds unsaved state. */
+  function holdReload(id, fn) { _holds[id] = fn; }
+
+  /** True when any hold says so. A hold that throws counts as not holding: a
+   *  broken module must not pin the page forever, and the DOM rules in app.js
+   *  still protect typed text. A truthy return counts, so a hold that forgets
+   *  to coerce to a boolean errs on the side of keeping the user's text. */
+  function reloadHeld() {
+    return Object.keys(_holds).some(function (id) {
+      try { return !!_holds[id](); } catch (e) { return false; }
+    });
+  }
+
   /* ---------------- fetch ----------------
      A static export is read from `window.__CONSOLE_DATA__`, a plain script
      the exported index.html loads, NOT from data/*.json over fetch(). That
@@ -148,7 +170,9 @@ window.Console = (function () {
     }).then(function (res) {
       setOnline(true);
       return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok) throw new Error(data.error || res.status + " " + res.statusText);
+        // `status` lets a caller tell a rejected request (400: do not retry) from a
+        // network failure (retry); the prefs write-through needs that distinction.
+        if (!res.ok) throw Object.assign(new Error(data.error || res.status + " " + res.statusText), { status: res.status });
         return data;
       });
     }, function (err) {
@@ -253,9 +277,9 @@ window.Console = (function () {
 
   /* Open/closed, remembered per id across reloads.
 
-     One localStorage object rather than a key per panel: the Settings page
-     lists every `console.*` key it stores, and ten near-identical rows there
-     would be noise about the mechanism rather than about the settings. */
+     One preference object rather than a key per panel: the Settings page
+     lists every saved preference, and ten near-identical rows there would be
+     noise about the mechanism rather than about the settings. */
   function collapsible(section, head, spec) {
     var id = spec.id;
     var open = prefs.get("panelOpen", {});
@@ -441,21 +465,548 @@ window.Console = (function () {
 
   function todayISO() { return new Date().toISOString().slice(0, 10); }
 
-  /* ---------------- preferences (browser-local) ---------------- */
+  /* ---------------- preferences ----------------
+     View state (theme, hidden tabs, panel layout) shared by the desktop app
+     and every browser tab. They are different origins with separate
+     localStorage, so a theme chosen in one never reached the other (T-036).
+     One synchronous interface over two stores:
+
+       server  reads and writes a private in-memory map that hydrate() fills
+               from /api/prefs; a write reaches the server a moment later, in
+               one batch. Callers keep their old synchronous get/set/del.
+       local   exactly the old behaviour against localStorage["console.*"]. A
+               static export is always local, and a page falls back to it when
+               /api/prefs is missing, fails or is slow, so an older server, a
+               stopped one or a disabled plugin never blanks the UI.
+
+     The map is empty until hydrate() settles, so nothing may read a
+     preference while a script is being evaluated; callers read at render time. */
+
+  /* A hung /api/prefs must not hold first paint: the shared request timeout is
+     15 s, far too long to stare at a skeleton. After this the page proceeds as
+     if the server were unreachable and a late answer arrives through onChange. */
+  var HYDRATE_BOUND_MS = 3000;
+
+  /* The server's limits (prefs_store.py: KEY_PATTERN, MAX_VALUE_BYTES). Mirrored
+     so a key or value it would refuse is never sent. Change them together. */
+  var PREF_KEY_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+  var PREF_MAX_BYTES = 32768;
+
+  /* Writes are coalesced: a drag or a keystroke calls set() many times a second
+     and the server needs the last value once, so the page waits this long after
+     the latest write before sending. */
+  var FLUSH_MS = 250;
+
+  /* A keepalive request (the only kind that survives the page going away) has a
+     body budget of 64 KiB in the Fetch standard. This leaves headroom under it. */
+  var KEEPALIVE_MAX_BYTES = 60000;
+
+  /* Kill switch for server mode; hydrate() falls back to local mode on its own
+     whenever the server cannot answer. */
+  var SERVER_PREFS = true;
+
+  var prefMode = "local";      // "server" once /api/prefs has answered
+  var prefMap = {};            // server mode: the one copy of every value
+  var prefRev = null;          // server mode: the rev the map reflects
+  var prefImportOpen = true;   // the server's say-so; the migration reads it
+  var prefListeners = [];
+  var prefHydrating = null;    // the attempt in flight, shared by a second hydrate()
+  var prefUndecided = true;    // no attempt has settled yet: writes are remembered
+  var prefTouched = {};        // key -> {del, val}: writes made while undecided
+  var prefQueue = {};          // key -> {del, val}: changes the server has not been sent
+  var prefSending = [];        // batches on the wire; a batch is a prefQueue snapshot
+  var prefTimer = null;        // the pending debounce
+  var prefWarned = {};         // key -> true: one toast per key per page lifetime
+
+  function prefOwn(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
+
+  /* Through JSON rather than a structural copy: what is held must be what would
+     be sent, and a value JSON cannot carry (undefined, a function) shows up
+     here as undefined instead of failing later. */
+  function prefRound(val) {
+    var text = JSON.stringify(val);
+    return text === undefined ? undefined : JSON.parse(text);
+  }
+
+  /* Text of a JSON value with object keys sorted, the same equality the server
+     applies (canonical JSON), so {a:1,b:2} and {b:2,a:1} are one value. */
+  function prefCanon(val) {
+    if (val === null || typeof val !== "object") return JSON.stringify(val);
+    if (Array.isArray(val)) return "[" + val.map(prefCanon).join(",") + "]";
+    return "{" + Object.keys(val).sort().map(function (k) {
+      return JSON.stringify(k) + ":" + prefCanon(val[k]);
+    }).join(",") + "}";
+  }
+
+  /* Every readable console.* entry. An entry that does not parse is not one we
+     wrote, so it is left out rather than reported as a preference. */
+  function prefLocalEntries() {
+    var out = {};
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var name = localStorage.key(i);
+        if (!name || name.indexOf("console.") !== 0) continue;
+        try { out[name.slice(8)] = JSON.parse(localStorage.getItem(name)); } catch (e) { /* skip */ }
+      }
+    } catch (e) { /* storage blocked */ }
+    return out;
+  }
+
+  function prefAll() {
+    return prefMode === "server" ? prefRound(prefMap) : prefLocalEntries();
+  }
+
+  /* Key names whose value differs between two maps, sorted. */
+  function prefDiff(a, b) {
+    var seen = {};
+    Object.keys(a).forEach(function (k) { seen[k] = true; });
+    Object.keys(b).forEach(function (k) { seen[k] = true; });
+    return Object.keys(seen).sort().filter(function (k) {
+      return prefOwn(a, k) !== prefOwn(b, k) || prefCanon(a[k]) !== prefCanon(b[k]);
+    });
+  }
+
+  function prefNotify(changed) {
+    if (!changed.length) return;
+    prefListeners.slice().forEach(function (fn) {
+      try { fn(changed.slice()); } catch (e) { /* a bad listener must not break hydration */ }
+    });
+  }
+
+  /* Until the first attempt settles the page cannot know which store wins, so a
+     write is made locally (it must survive if the server never answers) and also
+     remembered, to be laid over the server's map if it does. Without that a
+     choice made in the first seconds would be overwritten by the hydrate. */
+  function prefRemember(key, val, removed) {
+    if (!prefUndecided || !SERVER_PREFS || IS_STATIC) return;
+    var v;
+    try { v = removed ? undefined : prefRound(val); } catch (e) { return; }
+    prefTouched[key] = v === undefined ? { del: true } : { del: false, val: v };
+  }
+
+  function prefUsable(res) {
+    return !!res && typeof res === "object" && typeof res.rev === "number" &&
+      !!res.prefs && typeof res.prefs === "object" && !Array.isArray(res.prefs);
+  }
+
+  /* `late` is an answer that arrived after the bound: the page already painted
+     from local values, so the keys that differ are announced. An answer inside
+     the bound is simply what the first render reads. */
+  function prefAdopt(res, late) {
+    var before = late ? prefAll() : null;
+    prefMap = prefRound(res.prefs);
+    prefRev = res.rev;
+    prefImportOpen = res.import_open !== false;
+    prefUndecided = false;
+    prefMode = "server";
+    // What the person chose while the page could not tell which store wins is
+    // now an ordinary write: laid over the server's map and queued, so it is
+    // sent (and wins over the server's older value). The local copy goes, or
+    // the migration would find it later and take it for an old, conflicting
+    // value from a previous session.
+    var touched = prefTouched;
+    prefTouched = {};
+    Object.keys(touched).forEach(function (k) {
+      try { localStorage.removeItem("console." + k); } catch (e) { /* ignore */ }
+      prefStage(k, touched[k].val, touched[k].del);
+    });
+    if (late) prefNotify(prefDiff(before, prefMap));
+  }
+
+  /* Never rejects, and resolves with the mode the page ended in. A 404, an
+     error or an unusable reply all mean the same thing here (stay local), and
+     none of them is worth a toast: this is the normal state of an older server. */
+  function prefHydrate() {
+    if (!SERVER_PREFS || IS_STATIC) return Promise.resolve("local");
+    if (prefMode === "server") return Promise.resolve("server");
+    if (prefHydrating) return prefHydrating;
+    var bounded = false;
+    prefUndecided = true;
+    prefHydrating = new Promise(function (resolve) {
+      var timer = setTimeout(function () { bounded = true; resolve(prefMode); }, HYDRATE_BOUND_MS);
+      get("/api/prefs").then(function (res) {
+        if (!prefUsable(res)) throw new Error("unusable reply from /api/prefs");
+        prefAdopt(res, bounded);
+        // The migration is part of hydration, under the same bound: a browser
+        // holding theme=dark against an empty server must paint dark on this
+        // first load, not default and then correct itself (CR-29).
+        return prefMigrate(function () { return bounded; });
+      }).catch(function () {
+        if (prefMode !== "server") { prefTouched = {}; prefUndecided = false; }
+      }).then(function () {
+        clearTimeout(timer);
+        prefHydrating = null;
+        resolve(prefMode);
+      });
+    });
+    return prefHydrating;
+  }
+
+  /* ---- write-through (server mode) ----
+     set/del change the map at once and queue a delta; the server hears about it
+     after FLUSH_MS of quiet, one request for everything queued. Deltas, not the
+     whole map, so two clients editing different keys never overwrite each other
+     (the same key is last writer wins). */
+
+  /* UTF-8 length of a string: the unit the server's cap is written in. Counted
+     by hand because TextEncoder is not in every context this file loads in. */
+  function prefBytes(text) {
+    var n = 0;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      n += c < 0x80 ? 1 : (c < 0x800 || (c >= 0xD800 && c <= 0xDFFF)) ? 2 : 3;
+    }
+    return n;
+  }
+
+  /* Why the server would refuse this key or value, or "". */
+  function prefProblem(key, v) {
+    if (typeof key !== "string" || !PREF_KEY_RE.test(key)) {
+      return "the name must start with a letter and then use up to 63 letters, digits, '.', '_' or '-'";
+    }
+    if (v !== undefined) {
+      var size = prefBytes(JSON.stringify(v));
+      if (size > PREF_MAX_BYTES) return "its value is " + size + " bytes and the limit is " + PREF_MAX_BYTES;
+    }
+    return "";
+  }
+
+  function prefSay(sentence, kind) {
+    try { toast(sentence, kind); } catch (e) { /* no DOM to show it in */ }
+  }
+
+  /* The one write path in server mode (and for what was remembered while
+     undecided). A key or value the server would refuse stays in memory for this
+     page and is never queued, so it cannot turn into a 400 that drops its
+     neighbours' batch. */
+  function prefStage(key, val, removed) {
+    var v;
+    try { v = removed ? undefined : prefRound(val); } catch (e) { return; }
+    var problem = prefProblem(key, v);
+    if (problem) {
+      if (v === undefined) delete prefMap[key]; else prefMap[key] = v;
+      delete prefQueue[key];
+      if (v !== undefined && !prefWarned[key]) {
+        prefWarned[key] = true;
+        prefSay("Preference \"" + key + "\" is kept for this window only: " + problem + ".", "err");
+      }
+      return;
+    }
+    if (v === undefined) {
+      if (!prefOwn(prefMap, key)) return;
+      delete prefMap[key];
+      prefQueue[key] = { del: true };
+    } else {
+      // Equal to what the map already holds: nothing to tell the server.
+      if (prefOwn(prefMap, key) && prefCanon(prefMap[key]) === prefCanon(v)) return;
+      prefMap[key] = v;
+      prefQueue[key] = { del: false, val: v };
+    }
+    prefSchedule();
+  }
+
+  function prefPending() { return prefSending.length > 0 || Object.keys(prefQueue).length > 0; }
+
+  function prefSchedule() {
+    if (prefTimer) clearTimeout(prefTimer);
+    prefTimer = setTimeout(function () { prefTimer = null; prefFlush(); }, FLUSH_MS);
+  }
+
+  function prefBody(batch) {
+    var set = {}, del = [], body = {};
+    Object.keys(batch).forEach(function (k) {
+      if (batch[k].del) del.push(k); else set[k] = batch[k].val;
+    });
+    if (Object.keys(set).length) body.set = set;
+    if (del.length) body.del = del;
+    return body;
+  }
+
+  /* A page that is going away needs `keepalive` for its request to outlive it,
+     and post() cannot send that, so this repeats its few lines. It does not touch
+     the connection pill: a page being hidden is not evidence about the server. */
+  function prefTransport(body, keepalive) {
+    if (!keepalive) return post("/api/prefs", body);
+    return fetch("/api/prefs", {
+      method: "POST",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", "X-Console-Request": "1" },
+      body: JSON.stringify(body),
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw Object.assign(new Error(data.error || res.status + " " + res.statusText), { status: res.status });
+        return data;
+      });
+    });
+  }
+
+  /* Resolves whatever happens; the outcome is handled here, not by the caller. */
+  function prefSend(batch, keepalive) {
+    prefSending.push(batch);
+    var epoch = prefEpoch;
+    var leave = function () { prefSending.splice(prefSending.indexOf(batch), 1); };
+    return prefTransport(prefBody(batch), keepalive).then(function (res) {
+      leave();
+      // Adopt the server's rev only when this write followed the rev the page
+      // knew (D-21). Otherwise another client wrote in between, `res.rev`
+      // already includes that write, and believing it would hide it: keep the
+      // older rev and the next heartbeat's mismatch pulls the other client's
+      // change.
+      if (res && typeof res.rev === "number" && res.prev === prefRev) prefRev = res.rev;
+      // Entries written while this request was out were left queued.
+      if (!prefTimer && Object.keys(prefQueue).length) prefSchedule();
+    }, function (err) {
+      leave();
+      if (err && err.status === 400) {
+        // The server read it and refused it; sending it again cannot succeed.
+        prefSay("Preferences were not saved: " + (err.message || "the server refused them") + ".", "err");
+        return;
+      }
+      // A Reset began while this was out: what it carried is what was cleared.
+      if (epoch !== prefEpoch) return;
+      // Unreachable or failing: keep every delta for the next attempt (the next
+      // set, the connection coming back, the heartbeat). A key written again
+      // meanwhile keeps its newer value.
+      Object.keys(batch).forEach(function (k) {
+        if (!prefOwn(prefQueue, k)) prefQueue[k] = batch[k];
+      });
+    });
+  }
+
+  /* Send what is queued now. One request at a time keeps the writes in order;
+     whatever is queued when it ends is sent after it. Never rejects. */
+  function prefFlush() {
+    if (prefTimer) { clearTimeout(prefTimer); prefTimer = null; }
+    if (IS_STATIC || prefMode !== "server" || prefSending.length) return Promise.resolve();
+    if (!Object.keys(prefQueue).length) return Promise.resolve();
+    var batch = prefQueue;
+    prefQueue = {};
+    return prefSend(batch, false);
+  }
+
+  /* The page is being hidden or closed: the debounce may never fire, so send
+     now. A batch already on the wire may be cancelled by the unload, so it is
+     sent again (a set is idempotent). Small enough, one keepalive request; else
+     one per key; a single value too large for keepalive goes without it. */
+  function prefFlushOnHide() {
+    if (IS_STATIC || prefMode !== "server") return;
+    if (prefTimer) { clearTimeout(prefTimer); prefTimer = null; }
+    var batch = {};
+    prefSending.forEach(function (b) {
+      Object.keys(b).forEach(function (k) { batch[k] = b[k]; });
+    });
+    Object.keys(prefQueue).forEach(function (k) { batch[k] = prefQueue[k]; });
+    prefQueue = {};
+    var keys = Object.keys(batch);
+    if (!keys.length) return;
+    if (prefBytes(JSON.stringify(prefBody(batch))) <= KEEPALIVE_MAX_BYTES) { prefSend(batch, true); return; }
+    keys.forEach(function (k) {
+      var one = {};
+      one[k] = batch[k];
+      prefSend(one, prefBytes(JSON.stringify(prefBody(one))) <= KEEPALIVE_MAX_BYTES);
+    });
+  }
+
+  /* ---- migration, Reset, refresh ----
+     The three ways the page replaces what it holds with what the server holds.
+     Each lays the changes it has not sent yet back on top (prefOverlay), so a
+     write made while one of them is in flight is not lost. */
+
+  var PREF_CLOSED_SENTENCE = "Old settings in this browser were discarded because preferences were reset.";
+
+  /* A reset makes every batch already on the wire stale: if one fails later it
+     must not be retried, or it would bring back what the person just cleared. */
+  var prefEpoch = 0;
+
+  /* Unsent local changes laid over a map the server sent. */
+  function prefOverlay(map, batches) {
+    batches.forEach(function (b) {
+      Object.keys(b).forEach(function (k) {
+        if (b[k].del) delete map[k]; else map[k] = b[k].val;
+      });
+    });
+    return map;
+  }
+
+  /* Make the server's map the page's own. `announce` is for a page that may
+     already have read the old one: the keys that differ go to the listeners. */
+  function prefReplace(res, announce) {
+    var before = announce ? prefAll() : null;
+    prefMap = prefOverlay(prefRound(res.prefs), prefSending.concat([prefQueue]));
+    prefRev = res.rev;
+    if (announce) prefNotify(prefDiff(before, prefMap));
+  }
+
+  function prefLocalDrop(keys) {
+    keys.forEach(function (k) {
+      try { localStorage.removeItem("console." + k); } catch (e) { /* ignore */ }
+    });
+  }
+
+  /* Every console.* entry, whatever it holds (a Reset clears all of them). */
+  function prefLocalClear() {
+    var names = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var name = localStorage.key(i);
+        if (name && name.indexOf("console.") === 0) names.push(name.slice(8));
+      }
+    } catch (e) { /* storage blocked */ }
+    prefLocalDrop(names);
+  }
+
+  /* What the old C.prefs could have written: "console." plus a valid key. An
+     entry that does not parse is dropped without a word (BR-16). */
+  function prefLegacy() {
+    var out = { values: {}, names: [] };
+    var dead = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var name = localStorage.key(i);
+        if (!name || name.indexOf("console.") !== 0) continue;
+        var key = name.slice(8);
+        if (!PREF_KEY_RE.test(key)) continue;
+        try { out.values[key] = JSON.parse(localStorage.getItem(name)); out.names.push(key); } catch (e) { dead.push(key); }
+      }
+    } catch (e) { /* storage blocked */ }
+    prefLocalDrop(dead);
+    return out;
+  }
+
+  function prefShort(val) {
+    var text = JSON.stringify(val);
+    return text.length > 40 ? text.slice(0, 40) + "…" : text;
+  }
+
+  /* One-time move of this browser's old localStorage values onto the server:
+     per key, never overwriting what the server already holds (BR-3). Local
+     copies are deleted only after the server acknowledges, so a lost reply
+     leaves them for the next boot and the import is idempotent. Never rejects.
+     `isLate()` says whether the page has already painted without these values. */
+  function prefMigrate(isLate) {
+    var legacy = prefLegacy();
+    if (!legacy.names.length) return Promise.resolve();
+    if (!prefImportOpen) {
+      // A Reset closed the window: a stale browser must not bring back what
+      // the person cleared.
+      prefLocalDrop(legacy.names);
+      prefSay(PREF_CLOSED_SENTENCE, "");
+      return Promise.resolve();
+    }
+    return post("/api/prefs/import", { values: legacy.values }).then(function (res) {
+      if (!prefUsable(res)) throw new Error("unusable reply from /api/prefs/import");
+      prefReplace(res, isLate());
+      if (res.closed) {
+        prefImportOpen = false;
+        prefLocalDrop(legacy.names);
+        prefSay(PREF_CLOSED_SENTENCE, "");
+        return;
+      }
+      var done = (res.imported || []).concat(res.skipped || []);
+      (res.skipped || []).forEach(function (key) {
+        prefSay("Preference \"" + key + "\" already had a shared value, so this browser's " +
+          prefShort(legacy.values[key]) + " was not used.", "");
+      });
+      (res.rejected || []).forEach(function (r) {
+        done.push(r.key);
+        prefSay("Preference \"" + r.key + "\" could not be moved to the shared copy: " + r.reason + ".", "err");
+      });
+      prefLocalDrop(done);
+    }).catch(function () { /* keys stay; the next boot tries again */ });
+  }
+
+  /* Clear every preference everywhere: the shared copy, this page's map and the
+     old localStorage keys. Whatever was queued is discarded first, so a flush
+     cannot write back what is being cleared. Rejects with an Error the caller
+     can show; the discarded changes are then put back. */
+  function prefReset() {
+    prefEpoch++;
+    if (prefTimer) { clearTimeout(prefTimer); prefTimer = null; }
+    var dropped = prefQueue;
+    prefQueue = {};
+    prefTouched = {};
+    if (prefMode !== "server") {
+      prefLocalClear();
+      return Promise.resolve();
+    }
+    return post("/api/prefs/reset", {}).then(function (res) {
+      var before = prefAll();
+      // Only what was written after reset() was called survives it.
+      prefMap = prefOverlay({}, [prefQueue]);
+      if (res && typeof res.rev === "number") prefRev = res.rev;
+      prefImportOpen = false;
+      prefLocalClear();
+      prefNotify(prefDiff(before, prefMap));
+    }, function (err) {
+      Object.keys(dropped).forEach(function (k) {
+        if (!prefOwn(prefQueue, k)) prefQueue[k] = dropped[k];
+      });
+      if (Object.keys(prefQueue).length) prefSchedule();
+      throw err;
+    });
+  }
+
+  /* Pull the shared copy now. Not while this page has changes the server has
+     not seen: replacing the map would undo them. Never rejects. */
+  function prefRefresh() {
+    if (prefMode !== "server" || prefPending()) return Promise.resolve();
+    return get("/api/prefs").then(function (res) {
+      if (!prefUsable(res)) return;
+      prefReplace(res, true);
+      prefImportOpen = res.import_open !== false;
+    }).catch(function () { /* the heartbeat asks again; the pill reports an outage */ });
+  }
+
   var prefs = {
     get: function (key, fallback) {
+      if (prefMode === "server") return prefOwn(prefMap, key) ? prefRound(prefMap[key]) : fallback;
       try {
         var raw = localStorage.getItem("console." + key);
         return raw === null ? fallback : JSON.parse(raw);
       } catch (e) { return fallback; }
     },
     set: function (key, val) {
+      // Server mode holds `val` as its JSON round trip so a caller mutating it
+      // afterwards cannot change what is stored behind its back. A value JSON
+      // cannot carry (a cycle) is dropped, as the local store's try/catch drops it.
+      if (prefMode === "server") { prefStage(key, val, false); return; }
       try { localStorage.setItem("console." + key, JSON.stringify(val)); } catch (e) { /* private mode */ }
+      prefRemember(key, val, false);
     },
     del: function (key) {
+      if (prefMode === "server") { prefStage(key, null, true); return; }
       try { localStorage.removeItem("console." + key); } catch (e) { /* ignore */ }
+      prefRemember(key, null, true);
     },
+    hydrate: prefHydrate,
+    all: prefAll,
+    keys: function () { return Object.keys(prefAll()); },
+    mode: function () { return prefMode; },
+    rev: function () { return prefMode === "server" ? prefRev : null; },
+    onChange: function (fn) {
+      prefListeners.push(fn);
+      return function () {
+        prefListeners = prefListeners.filter(function (f) { return f !== fn; });
+      };
+    },
+    pending: prefPending,
+    flush: prefFlush,
+    refresh: prefRefresh,
+    reset: prefReset,
   };
+
+  /* Retry points for a failed write that need no caller: the connection coming
+     back, and the page being hidden or closed (the debounce cannot be trusted to
+     fire then). Registered once, here, and inert in a static export. The beacon
+     API is deliberately not used: it cannot carry the X-Console-Request header
+     the server requires, so every beacon would be refused. */
+  onConnection(function (online) { if (online) prefFlush(); });
+  if (!IS_STATIC) {
+    window.addEventListener("pagehide", prefFlushOnHide);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") prefFlushOnHide();
+    });
+  }
 
   /* One glyph per status. Colour comes from a single --status-hue, chosen by
      the status class in the stylesheet, so a new status is a map entry plus
@@ -753,6 +1304,7 @@ window.Console = (function () {
     score: score,
     filterPicker: filterPicker,
     tab: tab, tabImpl: tabImpl, tabIds: tabIds,
+    holdReload: holdReload, reloadHeld: reloadHeld,
     get: get, post: post,
     el: el, append: append, clear: clear, icon: icon,
     panel: panel, group: group, empty: empty, errbox: errbox, skeleton: skeleton, chip: chip,

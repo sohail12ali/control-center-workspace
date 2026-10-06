@@ -29,11 +29,14 @@
 (function (C) {
   "use strict";
 
+  /* The ids are keys of the shared `panelOpen` preference (core.js), so they are
+     literals and unique across the whole console: one card, one entry. `open`
+     is the default for a card with no stored state. */
   var CARDS = [
-    { id: "filters", icon: "filter", label: "Filters", open: true },
-    { id: "display", icon: "layout", label: "Display", open: false },
-    { id: "forces", icon: "sliders", label: "Forces", open: false },
-    { id: "navigator", icon: "folder", label: "Navigator", open: true, grow: true },
+    { id: "vault.filters", icon: "filter", label: "Filters", open: true },
+    { id: "vault.display", icon: "layout", label: "Display", open: false },
+    { id: "vault.forces", icon: "sliders", label: "Forces", open: false },
+    { id: "vault.navigator", icon: "folder", label: "Navigator", open: true, grow: true },
   ];
 
   var st = {
@@ -46,7 +49,6 @@
     filters: { q: "", isolate: false, nonMd: false, orphans: true, depth: 0 },
     display: { labels: true, sizeByLinks: true, arrows: false },
     forces: { link: 62, charge: 620, center: 1.0 },
-    openCards: {},
     viewerPath: null,
   };
 
@@ -230,7 +232,16 @@
   }
 
   /* ---------------- drawing ---------------- */
+
+  /* True while a pane divider is being dragged (T-037, set and cleared by
+     paneDragStart/paneDragEnd below). The ResizeObserver would otherwise
+     reallocate both canvases on every frame of the drag, so resize() waits:
+     the canvases keep their last pixel size (resize() writes it inline) until
+     the release, which runs it once. */
+  var paneDragging = false;
+
   function resize() {
+    if (paneDragging) return;
     var stage = document.getElementById("vaultStage");
     if (!stage || !st.base) return;
     var r = stage.getBoundingClientRect();
@@ -487,12 +498,70 @@
     if (openFile) openViewer(id);
   }
 
+  /* ---------------- pane dividers (T-037) ----------------
+     Two handles, both children of `.vault`, never of `.vault-stage` (it clips
+     and owns the canvas mouse handlers). Each writes --sp-side / --sp-viewer on
+     `.vault`; the stylesheet reads them only on a wide window. The width is
+     remembered in `layout.vault`, and the stage never gets narrower than 200px.
+
+     While either one is dragged resize() waits (paneDragging, above) and runs
+     once on release: one canvas reallocation per gesture, not one per frame. */
+  var viewerSplit = null;      // the viewer's handle while a file is open
+
+  function paneDragStart() { paneDragging = true; }
+
+  function paneDragEnd() {
+    paneDragging = false;
+    resize();
+  }
+
+  /* The sidebar's. Folded (drag it below 100px, or Enter on it) it leaves the
+     grid as `.side-off` and the handle stays at the left edge as the way back,
+     so this is attached whether or not it is folded. */
+  function attachSideSplitter(wrap) {
+    C.splitter({
+      host: wrap, owner: wrap, pane: document.getElementById("vaultSide"), dir: 1,
+      cssVar: "side", key: "vault.side", label: "Resize the sidebar",
+      min: 200, max: 480, flexPane: document.getElementById("vaultStage"), flexMin: 200,
+      collapseKey: "vault.sideOff", keepWhenCollapsed: true,
+      collapseGet: function () { return wrap.classList.contains("side-off"); },
+      collapseSet: function (off) { wrap.classList.toggle("side-off", off); },
+      onDragStart: paneDragStart, onDragEnd: paneDragEnd,
+    });
+  }
+
+  /* The viewer's exists only while a file is open (`.has-viewer`). Opening
+     another file keeps the one handle. Its sibling is re-applied right after:
+     a wide viewer may leave the stage under its minimum, and the sidebar gives
+     back what is short. */
+  function attachViewerSplitter(wrap) {
+    if (viewerSplit && viewerSplit.isConnected) return;
+    viewerSplit = C.splitter({
+      host: wrap, owner: wrap, pane: document.getElementById("vaultViewer"), dir: -1,
+      cssVar: "viewer", key: "vault.viewer", label: "Resize the file viewer",
+      min: 280, max: 720, flexPane: document.getElementById("vaultStage"), flexMin: 200,
+      onDragStart: paneDragStart, onDragEnd: paneDragEnd,
+    });
+    C.splitter.reapplyAll();
+  }
+
+  /* Closing the viewer removes its handle. Nothing tells the splitter that a
+     handle left, and a removed one never gets its own end-of-gesture event, so
+     reapplyAll() follows: it forgets the entry and ends a drag still open on it. */
+  function detachViewerSplitter() {
+    var h = viewerSplit;
+    viewerSplit = null;
+    if (h && h.parentNode) h.parentNode.removeChild(h);
+    C.splitter.reapplyAll();
+  }
+
   function openViewer(path) {
     st.viewerPath = path;
     var wrap = document.getElementById("vaultWrap");
     var viewer = document.getElementById("vaultViewer");
     if (!viewer) return;
     wrap.classList.add("has-viewer");
+    attachViewerSplitter(wrap);
     C.clear(viewer).appendChild(C.skeleton(4));
     C.get("/api/vault/file?path=" + encodeURIComponent(path)).then(function (d) {
       C.clear(viewer);
@@ -503,6 +572,7 @@
           class: "btn sm iconly", "aria-label": "Close file", title: "Close",
           onclick: function () {
             wrap.classList.remove("has-viewer");
+            detachViewerSplitter();
             st.viewerPath = null;
             setTimeout(resize, 60);
           },
@@ -519,13 +589,36 @@
   }
 
   /* ---------------- sidebar cards ---------------- */
+
+  /* A card's open state is one entry in the `panelOpen` preference, the map
+     core.js's collapsible() keeps for every foldable section, read and written
+     the same way: an own key wins, otherwise the card's default. The cards keep
+     their own markup (collapsible() is private to core.js). Read on every
+     build, so a fold survives a tab switch and a reload. A stored value that is
+     not a plain object is ignored. */
+  function panelMap() {
+    var map = C.prefs.get("panelOpen", {});
+    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
+  }
+
+  function cardOpen(def) {
+    var map = panelMap();
+    return Object.prototype.hasOwnProperty.call(map, def.id) ? !!map[def.id] : def.open !== false;
+  }
+
+  function setCardOpen(def, on) {
+    var map = panelMap();
+    map[def.id] = !!on;
+    C.prefs.set("panelOpen", map);
+  }
+
   function card(def, body) {
-    var open = st.openCards[def.id] !== undefined ? st.openCards[def.id] : def.open;
+    var open = cardOpen(def);
     var chev = C.el("span", { class: "chev" }, [C.icon("chevDown")]);
     var head = C.el("button", {
       class: "vault-card-h", "aria-expanded": String(open),
       onclick: function () {
-        st.openCards[def.id] = !(st.openCards[def.id] !== undefined ? st.openCards[def.id] : def.open);
+        setCardOpen(def, !cardOpen(def));
         paintSidebar();
         setTimeout(resize, 60);
       },
@@ -708,6 +801,10 @@
     watchTheme();
     paintSidebar();
     wireStage();
+    // Before the first resize(): the stored sidebar width and fold are on
+    // screen by then, and attaching ends any drag the previous build left open.
+    viewerSplit = null;
+    attachSideSplitter(document.getElementById("vaultWrap"));
     resize();
 
     C.get("/api/vault/graph").then(function (g) {

@@ -30,7 +30,7 @@
     todos: "Every open todo across every ticket, plus general ones, in one filterable list.",
     vault: "Wikilink graph and read-only file browser over knowledge-center/.",
     about: "This page.",
-    settings: "Theme and per-tab visibility, stored in this browser only.",
+    settings: "Theme and per-tab visibility: saved preferences, shared by the app and every browser.",
   };
 
   /* Section spacing lives in CSS (`.prose section`), not here — an inline
@@ -155,8 +155,8 @@
         "This list is the server's own manifest, so it shows exactly what this checkout loaded. A tab is missing "
         + "here when its plugin row is ", C.el("code", {}, ["enabled = false"]), " in ",
         C.el("code", {}, ["console/config/plugins.toml"]),
-        " — that switch is committed and applies to everyone. The Settings tab's switches are different: they hide "
-        + "a tab in your browser only.",
+        " — that switch is committed and applies to everyone. The Settings tab's switches are different: they are "
+        + "saved preferences, shared by the app and every browser, and they only hide a tab from view.",
       ]),
       C.IS_STATIC
         ? C.el("p", { class: "muted" }, [

@@ -32,6 +32,16 @@ import re
 
 DEFAULT_NAME = ".env"
 
+#: Names the setup wizard may write. Anything else — a Telegram token, a
+#: custom provider's variable, a name someone typed — is refused. The list
+#: is the same one `.env.example` documents for model providers, so the
+#: wizard cannot become a general secret store.
+KEY_ALLOWLIST = frozenset({
+    "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "LMSTUDIO_API_KEY",
+})
+
 #: `KEY=value`, tolerating a leading `export` and surrounding whitespace.
 _LINE_RE = re.compile(r"""
     ^\s*
@@ -108,6 +118,112 @@ def load(repo_root, name=DEFAULT_NAME, override=False):
         os.environ[key] = value
         applied.append(key)
     return sorted(applied)
+
+
+def _assignment_suffix(rest):
+    """A trailing `` # comment`` on an unquoted value, kept when the line is
+    rewritten. Quoted values keep their ``#`` inside the quotes, so they
+    have no separate suffix to preserve."""
+    if len(rest) >= 2 and rest[0] in ("'", '"') and rest.rstrip().endswith(rest[0]):
+        return ""
+    at = rest.find(" #")
+    if at == -1:
+        return ""
+    return rest[at:]
+
+
+def _render_value(value):
+    """Write a value the parser will read back as the same string.
+
+    A bare token stays bare. Anything with a space, a hash, or a quote is
+    double-quoted, so an inline comment on the way in is not eaten on the
+    way out and a value is never split into a second assignment.
+    """
+    if value == "" or re.fullmatch(r"[A-Za-z0-9_./:@+-]+", value):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return '"%s"' % escaped
+
+
+def set_keys(repo_root, updates, name=DEFAULT_NAME):
+    """Set allowlisted names in `.env`, preserving every other line.
+
+    Returns ``{"written", "applied"}`` — names only, never values. ``written``
+    is what changed on disk. ``applied`` is the subset loaded into this
+    process. A name already present in the environment is left alone: a shell
+    export wins over the file, same rule as ``load``.
+
+    Raises ValueError before touching the file when a name is not allowlisted
+    or a value is not a single-line string. The message names the variable,
+    never the value.
+    """
+    if not isinstance(updates, dict) or not updates:
+        raise ValueError("no keys given")
+    unknown = sorted(set(updates) - KEY_ALLOWLIST)
+    if unknown:
+        raise ValueError(
+            "not an environment key this setup can write: %s" % ", ".join(unknown))
+
+    cleaned = {}
+    for key, value in updates.items():
+        if not isinstance(value, str):
+            raise ValueError("%s must be a string" % key)
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("%s must be a single line" % key)
+        cleaned[key] = value
+
+    path = path_for(repo_root, name)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+
+    # Match the raw line, not a stripped one, so a leading `export` and the
+    # indentation around it survive the rewrite.
+    assign = re.compile(
+        r"^(?P<prefix>\s*(?:export\s+)?)(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<rest>.*)$"
+    )
+    seen = set()
+    new_lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        match = None if (not stripped or stripped.startswith("#")) else assign.match(line)
+        if match and match.group("name") in cleaned:
+            key = match.group("name")
+            seen.add(key)
+            new_lines.append(
+                "%s%s=%s%s" % (
+                    match.group("prefix"), key, _render_value(cleaned[key]),
+                    _assignment_suffix(match.group("rest")),
+                )
+            )
+        else:
+            new_lines.append(line)
+    for key in sorted(cleaned):
+        if key not in seen:
+            new_lines.append("%s=%s" % (key, _render_value(cleaned[key])))
+
+    body = "\n".join(new_lines)
+    if not text or text.endswith("\n") or text.endswith("\r"):
+        body += "\n"
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(body)
+    os.replace(tmp, path)
+
+    applied = []
+    for key in sorted(cleaned):
+        # Already set deliberately — including by an earlier load() of this
+        # same file. Replacing it here would make the value in the shell
+        # disagree with the value in use, which is the failure load() exists
+        # to prevent. The file still has the new value for the next start.
+        if os.environ.get(key):
+            continue
+        os.environ[key] = cleaned[key]
+        applied.append(key)
+    return {"written": sorted(cleaned), "applied": applied}
 
 
 def describe(repo_root, name=DEFAULT_NAME):

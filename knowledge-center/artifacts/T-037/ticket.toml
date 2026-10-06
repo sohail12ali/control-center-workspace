@@ -1,0 +1,22 @@
+[ticket]
+id = "T-037"
+title = "Resizable layout: draggable splitters, docked ticket panel, expandable sections"
+kind = "tickets"
+stage = "verify"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-05"
+updated = "2026-10-06"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

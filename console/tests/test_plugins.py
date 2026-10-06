@@ -221,7 +221,22 @@ class TestAssistantRoutes:
             ("GET", "assistant.voice_state"),
             ("POST", "assistant.wake_sample"),
             ("POST", "assistant.wake_train"),
-            ("POST", "assistant.wake_forget")}
+            ("POST", "assistant.wake_forget"),
+            # T-031: the speech-model manager. The console downloads, verifies
+            # and deletes what the shell reads from desktop/stt and desktop/tts;
+            # a request names a catalog id and nothing else.
+            ("GET", "assistant.voice_assets"),
+            ("POST", "assistant.voice_asset_download"),
+            ("POST", "assistant.voice_asset_pause"),
+            ("POST", "assistant.voice_asset_resume"),
+            ("POST", "assistant.voice_asset_cancel"),
+            ("POST", "assistant.voice_asset_delete"),
+            ("POST", "assistant.voice_asset_verify"),
+            # T-031: devices, the mic/speaker tests and the voice preview.
+            ("GET", "assistant.voice_devices"),
+            ("POST", "assistant.voice_test_mic"),
+            ("POST", "assistant.voice_test_speaker"),
+            ("POST", "assistant.voice_preview")}
 
 
 class TestPaletteAssets:

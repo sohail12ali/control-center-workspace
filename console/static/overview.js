@@ -119,6 +119,12 @@
         C.el("div", { class: "row" }, [
           C.el("span", { class: "chip" + (r.complete ? " ok" : " warn"),
             text: r.done + "/" + r.total }),
+          C.el("button", {
+            class: "btn sm", type: "button",
+            onclick: function () {
+              if (window.ConsoleOnboarding) window.ConsoleOnboarding.open();
+            },
+          }, ["Open setup"]),
           toggle, dismiss,
         ]),
         { icon: r.complete ? "check" : "info", tone: r.complete ? "ok" : "warn" }
@@ -188,7 +194,7 @@
         host.appendChild(C.panel("Jobs", rows,
           C.el("span", { class: "chip" + (active.length ? " accent" : " zero"),
                          text: active.length ? active.length + " active" : "idle" }),
-          { icon: "queue", tone: active.length ? "info" : null }));
+          { icon: "queue", tone: active.length ? "info" : null, collapse: { id: "ov.jobs", open: true } }));
       }).catch(function () { /* verbs plugin off, or a static export */ });
     }
     load();
@@ -238,7 +244,7 @@
       host.appendChild(C.panel("Scheduled", box,
         C.el("span", { class: "chip" + (on ? " ok" : " zero"),
                        text: on ? on + " on" : "parked" }),
-        { icon: "clock" }));
+        { icon: "clock", collapse: { id: "ov.schedules", open: true } }));
     }).catch(function () { /* ops plugin off, or a static export */ });
     return host;
   }
@@ -246,6 +252,7 @@
   function render(host, api) {
     C.load(host, C.get("/api/overview"), function (d) {
       var grid = C.el("div", { class: "grid" });
+      host.appendChild(C.splitter.foldBar(host));
       grid.appendChild(onboardingCard(api, function () { render(host, api); }));
       var a = d.attention;
 
@@ -260,7 +267,7 @@
         }),
         C.stat(d.stats.tracker_open, "Items", { sub: "Q + B + T" }),
         C.stat(d.stats.done, "Done", { tone: "ok" }),
-      ]), null, { icon: "layout" }));
+      ]), null, { icon: "layout", collapse: { id: "ov.glance", open: true } }));
 
       /* -- attention: the widest panel, since its rows are sentences -- */
       var attnKids = [
@@ -292,11 +299,15 @@
                           : C.empty("Nothing needs attention",
                                     "No blocked work, questions, approvals, or failed runs.", "check"),
           C.el("span", { class: "chip" + (attnTotal ? " warn" : " zero"), text: String(attnTotal) }),
-          { icon: "alert", tone: attnTotal ? "warn" : null }
+          { icon: "alert", tone: attnTotal ? "warn" : null, collapse: { id: "ov.attention", open: true } }
         );
       attnPanel.tabIndex = 0;
       attnPanel.addEventListener("keydown", function (e) {
         if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+        /* The header is a fold control (Enter toggles it); it must fold without
+           also opening the highlighted row. A folded panel has no rows to open. */
+        if (e.target && e.target.closest && e.target.closest("header")) return;
+        if (attnPanel.classList.contains("collapsed")) return;
         var rows = attnPanel.querySelectorAll(".lrow");
         if (!rows.length) return;
         var idx = 0;
@@ -325,7 +336,8 @@
           C.stack(d.flow[kind].map(function (l) { return { label: l.label, count: l.count }; })),
         ]));
       });
-      grid.appendChild(C.panel("Flow", flowKids, null, { icon: "columns", tone: "info" }));
+      grid.appendChild(C.panel("Flow", flowKids, null,
+        { icon: "columns", tone: "info", collapse: { id: "ov.flow", open: true } }));
 
       /* -- recent -- */
       var recent = C.el("div", { class: "rows" });
@@ -346,7 +358,8 @@
           C.el("span", { class: "muted", text: r.updated }),
         ]));
       });
-      grid.appendChild(C.panel("Recently touched", recent, null, { icon: "clock" }));
+      grid.appendChild(C.panel("Recently touched", recent, null,
+        { icon: "clock", collapse: { id: "ov.recent", open: true } }));
 
       grid.appendChild(jobsPanel(api));
       grid.appendChild(schedulesPanel());

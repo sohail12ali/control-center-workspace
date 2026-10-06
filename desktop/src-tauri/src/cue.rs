@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 /// Cues off entirely — set when replies are muted. A tone is a reply of a
 /// sort, and someone who has asked for silence means this too.
@@ -80,15 +80,27 @@ pub fn play(cue: Cue) {
 }
 
 fn blow(cue: Cue) -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("no output device")?;
+    // The device the output setting names, else the system default.
+    let device = crate::devices::resolve_output()?.device;
     let config = device
         .default_output_config()
         .map_err(|e| e.to_string())?;
-    let rate = config.sample_rate().0 as f32;
-    let channels = config.channels() as usize;
+    let samples = render(cue.notes(), config.sample_rate().0 as f32);
+    play_buffer(&device, config, samples)
+}
 
-    let samples = Arc::new(render(cue.notes(), rate));
+/// Play `samples` (mono, at the config's rate) on `device` and hold the stream
+/// until they are out. Shared by the cues and the speaker test, so there is one
+/// way a tone reaches a speaker. Ignores the reply-mute switch: that is
+/// `play`'s business, and the speaker test must be audible regardless.
+pub fn play_buffer(
+    device: &cpal::Device,
+    config: cpal::SupportedStreamConfig,
+    samples: Vec<f32>,
+) -> Result<(), String> {
+    let rate = config.sample_rate().0 as u64;
+    let channels = config.channels() as usize;
+    let samples = Arc::new(samples);
     let cursor = Arc::new(Mutex::new(0usize));
     let total = samples.len();
     let feed = samples.clone();
@@ -125,7 +137,7 @@ fn blow(cue: Cue) -> Result<(), String> {
     // Hold the stream open for the length of the sound plus a little, then
     // drop it. Keeping an output device open for a 130ms beep would be rude
     // to whatever else wants it.
-    let ms: u64 = cue.notes().iter().map(|(_, d)| *d).sum();
+    let ms = total as u64 * 1000 / rate.max(1);
     std::thread::sleep(Duration::from_millis(ms + 90));
     Ok(())
 }
@@ -135,7 +147,7 @@ fn blow(cue: Cue) -> Result<(), String> {
 /// The fade is not decoration: a sine that starts or stops at a non-zero
 /// sample is a step, and a step is a click. 3ms of ramp is inaudible and
 /// removes it.
-fn render(notes: &[(f32, u64)], rate: f32) -> Vec<f32> {
+pub fn render(notes: &[(f32, u64)], rate: f32) -> Vec<f32> {
     let fade = (rate * 0.003) as usize;
     let mut out = Vec::new();
     for (freq, ms) in notes {

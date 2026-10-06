@@ -27,6 +27,22 @@ from server.paths import RepoRootError, find_repo_root  # noqa: E402
 from evals import runner as evals_runner  # noqa: E402
 
 
+def _utf8_output():
+    """Pin stdout/stderr to UTF-8 so no verb can die on its own output.
+
+    Ticket text carries arrows and em dashes, and a redirected or piped stream
+    on Windows defaults to the ANSI code page (cp1252), which has no `→` — so
+    `context` raised UnicodeEncodeError for anyone not running in UTF-8 mode.
+    UTF-8 is also what the readers of this output (agents, the desktop shell)
+    decode; `errors="replace"` keeps a stray lone surrogate from killing a verb.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass  # swapped for a non-text stream in-process, or already closed
+
+
 def _die(msg):
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -1070,6 +1086,7 @@ def build_parser():
 
 
 def main(argv=None):
+    _utf8_output()  # before argparse too: `--help` prints to stdout
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

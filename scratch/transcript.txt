@@ -1,0 +1,405 @@
+0.0s: What you see here is my business and my
+2.0s: second brain. Every file of it in
+4.0s: motion. There are hundreds of files and
+6.3s: it's live, not just a mock-up. Every dot
+8.9s: actually represents a real file, the
+10.7s: routines underneath it run this morning
+12.8s: while I was asleep, and nothing on this
+15.0s: screen is actually stored here. It's a
+16.9s: single subscription, two machines, and a
+19.1s: couple of dollars a month on top of
+21.0s: that. Here's how it works and how to
+22.9s: build yours. Just a bit of context
+25.0s: first, I'm Paf, I have over 10 years in
+27.8s: data analytics and business development,
+30.0s: and I run Automation Orbit where I build
+31.9s: AI systems for small teams and
+33.7s: businesses. What you just saw was
+35.4s: version one of my own operating system,
+37.7s: and version two is already on paper. If
+40.1s: you would like to see the next versions
+41.9s: and how this one actually evolves,
+43.6s: becomes better, please subscribe. Let's
+45.6s: have a look at the dashboard first, view
+47.5s: by view, so you see what it does. So,
+49.9s: let me actually show you what I mean.
+51.6s: So, this is the dashboard and it's on
+53.4s: whether my laptop is up and running or
+55.4s: not. So, the center part of it is the
+57.5s: brain. The hexagon in the middle is
+59.6s: Cloud .md file. That's the top file that
+62.5s: tells Cloud where everything lives, and
+64.7s: around it there are rings such as
+66.4s: skills, memory, routines, and
+69.0s: applications. Every dot represents one
+71.7s: real file in my workspace, a node, a
+74.8s: skill, a routine, and rings are my areas
+78.5s: of interest, such as business, clients,
+81.5s: career, etc. We can make it full screen,
+84.2s: and there are six different views of the
+86.4s: same files. So, the default one is
+89.0s: rings, the one we are looking at right
+90.8s: now. Also, there is circle,
+93.5s: areas, links, which is the one I use
+96.3s: most, because you can see which skill
+98.8s: touches which files, and which routine
+101.2s: writes what. We have timeline, which
+104.2s: helps me to track every routine and
+106.8s: every file change by day. And of course,
+109.1s: the 3D orbit, which is a cool 3D
+111.5s: animation of all the files and
+113.3s: relationships between them. Let's go to
+115.1s: links.
+116.4s: Let's select business only. And you can
+118.6s: see that everything becomes dimmer and
+121.0s: just the business files, routines, and
+123.5s: skills get selected and highlighted. We
+126.3s: also have search functionality, which is
+128.0s: super cool. So, let's type studio, for
+130.4s: example.
+132.5s: And there is a skill from my last video,
+134.7s: the one which replaces my image and
+136.7s: video subscriptions. Let's press on
+139.2s: open.
+141.1s: And the actual file is right here. Well,
+142.9s: there is no need to use finder or a
+145.1s: terminal. That's the whole point of the
+146.9s: map. You can find and open any file
+149.5s: about your work in just a couple of
+151.4s: clicks. Let's get back to the main
+152.8s: dashboard. So, on the left-hand side, we
+154.7s: have today, the next 14 days, and the
+158.3s: business pulse at the bottom. Every one
+160.5s: of them is written by a routine and
+162.4s: automated schedule task. And on the
+164.8s: right-hand side, we have needs path
+167.1s: section. That's the only list in the
+169.7s: whole system that waits for a human. And
+172.0s: that's the rule I set. So, a plot never
+174.4s: marks a task done. Only I tick it. Below
+177.7s: it, we have the routines board that runs
+179.7s: today and their status. As you can see,
+182.0s: everything is in green, which is cool.
+184.2s: And the whole page, actually, what you
+185.5s: see here is just a window. So, nothing
+188.1s: on it is stored here. So, it's all read
+190.6s: from the files only.
+192.5s: And now, let's have a look at what's
+193.8s: actually behind the page because the
+195.6s: dashboard was the last thing I built. I
+197.8s: came up with a framework and I call it
+199.9s: maps. Essentially, it has four layers
+202.5s: and it stands for memory, agent, pulse,
+205.7s: and screen. Memory is one map of
+208.3s: everything I work on. Bot can find any
+210.2s: facts without me pointing at it. Agent,
+213.1s: which essentially is the same cloud code
+215.8s: on two machines, my laptop and a box
+218.7s: that never sleeps on a VPS, which is um
+221.8s: virtual private server on Hostinger.
+224.0s: Then there is pulse, the routines that
+225.9s: run when I'm not at my desk, or meaning
+228.2s: while my laptop is shut down or asleep.
+230.8s: And screen, which essentially is the
+232.5s: dashboard we just played with, which
+234.5s: shows and never stores the data it
+236.3s: shows. Let's have a look at them in
+237.9s: exactly that order, because that's the
+240.2s: order I built them. So, there are three
+241.8s: questions to ask about your own setup
+244.1s: before we start. First of all, can
+246.0s: Claude code actually find any fact in
+248.2s: just two hops, like without you pointing
+250.8s: at the file? Then, does anything in your
+253.2s: setup run while your laptop is closed?
+256.0s: And does your dashboard only shows
+257.6s: things, or it actually has actually
+260.2s: became where the truth lives. By the
+262.6s: way, for each of the four layers,
+264.2s: there's a ready-made prompt in the free
+266.4s: guide link in the description. You just
+268.6s: paste it into Claude code, and it walks
+270.6s: you through building that layer. So,
+272.5s: let's talk about the memory first. And
+275.2s: by memory, I don't mean a chat history.
+277.6s: What I mean here is whether Claude can
+279.3s: actually find the right files without me
+281.6s: being involved. Level one is a
+283.6s: essentially where most of us start, and
+286.4s: it's just a pile of folders. Claude can
+288.7s: read like 20 files to answer one simple
+292.0s: question. And level two is a signpost
+295.0s: files instead of folders. This is the
+296.8s: idea I picked up from a fellow YouTube
+298.6s: creator, J E, in his Agnostic OS video a
+302.0s: few weeks ago. So, please check it out
+304.0s: his channel. He's brilliant. And uh
+306.2s: level three is essentially a generated
+308.6s: map. This is where mine sits. Well, and
+310.9s: if you're starting from nothing, don't
+312.8s: just write the map yourself. Have Claude
+315.5s: or any other LLM, such as Astra 6,
+318.5s: interview you for say 20 minutes, one
+321.2s: question at a time. So, we just need to
+323.0s: provide uh some details on your
+325.5s: business, what your business does, what
+327.6s: do you do week on week, who do you work
+330.2s: with, where do your files live, and it
+332.7s: writes the first draft on the map from
+335.2s: from your answers. Actually, I'm going
+336.8s: to provide the interview prompt for you
+338.9s: in the description below, so it'll be
+341.0s: easier for you to set up. As you
+342.5s: remember, at the very core of our system
+344.7s: lives Claude.md file. This is the file.
+348.0s: And uh it's a very short file, just 40
+350.6s: lines, and it holds no facts at all. It
+353.4s: only says where things live, one line
+355.8s: per area of my work, like business,
+358.6s: career, clients, etc. Each of these
+361.6s: lines points to the right file for that
+364.0s: area, and that file points to the real
+366.6s: documents. From the top file,
+368.1s: essentially just two steps away to any
+370.1s: documents about my work. And that's what
+372.2s: you just saw with the um Studio skill
+375.0s: example I showed a minute ago, where I
+377.2s: could search and fly to an open file in
+379.8s: just a couple of clicks. And this is how
+382.1s: cloud.md file actually looks for me
+384.2s: right now. As you can see, very basic,
+386.3s: so there are areas of interest, there is
+388.7s: rules and model routing, and some
+391.0s: pointers. Just 40 lines of it, and some
+393.6s: description about who I am, what I do.
+395.9s: It's really short, as you can tell. I've
+398.3s: set up two simple rules here to follow.
+400.6s: So, the first one is every fact has
+402.8s: exactly one home, so nothing gets
+405.1s: written twice. And the second one is a
+407.3s: small check that runs nightly and flags
+410.7s: any signpost that points to a file that
+413.0s: has moved. So, the map can't go stale.
+416.0s: Now, let's move to the agent, and this
+418.2s: is where mine is a bit unusual. At least
+420.6s: I haven't seen anyone else doing it yet.
+422.8s: It's the same cloud code subscription
+424.3s: you already have, or OpenAI
+426.1s: subscription, but running on two
+427.9s: machines. One on your own laptop or PC,
+431.2s: it doesn't really matter, and one on the
+433.0s: small computer I rent in the cloud. In
+435.3s: this case, it's Hostinger VPS. VPS
+438.1s: stands for virtual private server.
+440.0s: Essentially, what it is, it's a small
+441.6s: computer which lives on a cloud, and it
+443.8s: never sleeps. Both machines hold a copy
+446.0s: of the same folder, and it syncs itself
+448.5s: every 5 minutes in both directions.
+451.4s: Whichever cloud it's running on, it has
+453.1s: the same map and the same skills with
+455.5s: that the phone. So, I send the voice
+457.2s: note to a chatbot on the server, and
+460.2s: what happens next, it turns my voice
+462.7s: into text, like works out what I'm
+465.2s: asking for, and then Claude answers to
+467.7s: me in the same chat in Telegram. Okay,
+470.0s: let's demonstrate it now and see how it
+471.9s: works in practice. Let's send a voice
+474.7s: message to our chatbot. What's on today?
+478.2s: So we can see it's listening. It's going
+480.4s: to transcribe our message into text,
+482.9s: send it to Claude, and Claude comes back
+484.8s: with his response. It worked exactly as
+487.3s: we expected. So there are two things
+489.0s: that really matter here because this
+490.6s: server works while I'm asleep, as we
+492.2s: already learned, and nobody's watching
+494.2s: it. First of all, it's really great from
+495.8s: the privacy perspective because it's
+497.6s: locked away from the public internet. I
+499.4s: use a free tool called Tailscale, which
+501.6s: puts my laptop, my phone, and the server
+504.1s: on their own private network. There is
+505.9s: no public address anyone can even knock
+508.0s: on. Only my own devices can see it. And
+510.4s: second is that Claude on that server is
+513.3s: quite limited, and it's done on purpose.
+515.3s: There is just one settings file which
+517.1s: blocks every tool that could send,
+519.6s: share, or delete anything. It can write
+521.5s: an email for me, for example, but it
+523.2s: cannot send one. So I tried to talk it
+525.1s: into sending one, and it refused. And
+527.6s: that's the expected behavior, of course.
+529.4s: The worst it can do is to actually leave
+531.1s: me a draft. On the ladder, we have level
+533.5s: one, where Claude code lives on your own
+535.4s: laptop or PC. Level two adds the box
+539.0s: that never sleeps. And level three is
+541.1s: the same folder living on both.
+543.4s: Quick word about today's sponsor, which
+545.3s: is me. I run Automation Orbit, and one
+548.0s: of the things we build for businesses is
+550.0s: an AI Search Visibility Audit. A check
+553.0s: of how visible your business is in AI
+555.5s: Search. Customers ask ChatGPT,
+557.7s: Perplexity, Gemini, or Claude before
+560.4s: they ask Google now. And the audit shows
+562.8s: whether you come up in those answers or
+564.7s: not, and what to fix so you do. So we
+567.2s: run it on a number of clients already,
+568.9s: and the first thing we did, we run it on
+571.1s: our own website, which scored 47. We
+573.8s: fixed the issues the same day, and
+575.8s: re-audited at 62. So if you want that
+578.2s: for your business, the link in the
+579.7s: description. Right, back to the video.
+582.1s: So, where are we right now? Okay, Claude
+584.0s: has a map and it's leaves on two
+585.7s: machines, but my first plan was to run
+588.0s: Hermes on that server, the open-source
+590.0s: agent, and there are plenty of YouTube
+591.8s: videos on how to set it up, but
+593.8s: Anthropic's rules don't let you use your
+595.8s: own Claude subscription through someone
+597.6s: else's app or harness. What you can do
+600.1s: though is to run Claude code itself on a
+602.3s: server, sign in with your own account.
+604.4s: That's exactly what I do and costs me
+606.8s: nothing extra. If you are using OpenAI,
+608.7s: for example, their terms might be
+610.2s: different, so they might allow you to
+612.2s: use third-party agents like Hermes. Just
+615.3s: check it out before you make this
+616.8s: decision. Let's have a quick look at the
+618.8s: routines now. So, I have this file,
+620.5s: which is routines.yaml,
+622.8s: and it's essentially a list all the
+624.8s: routines I have, their purpose, when
+627.2s: they are scheduled, and which machine
+629.4s: going to run them. A scheduler on each
+631.5s: machine actually checks that list every
+633.6s: 5 minutes and runs whatever is due.
+636.4s: Every run leaves a record, which is what
+638.2s: the board on the dashboard reads, and
+640.2s: there is a cap, so everything that keeps
+641.8s: failing for some reason can't burn
+643.7s: through the whole month overnight. Now,
+645.6s: let's have a quick look at the skills
+647.2s: deck.
+648.8s: The cleanup skill, which I use quite a
+650.6s: lot, frees up the memory on my Mac and
+653.1s: closes the leftover processes that slow
+655.8s: it down. Brain build rebuilds the brain
+658.4s: you saw in the center every night, and
+661.0s: vault lint checks my notes for broken
+663.8s: ones. Talking about routines, and the
+665.8s: one I use the most is the morning
+667.8s: digest. It lands in my calendar before
+669.9s: I'm awake, and it's a summary of what
+672.8s: has happened overnight, what is due
+674.6s: today, and who is waiting on me. This
+676.8s: really helps me to self-organize and
+678.8s: prepare for the working day. On the
+680.4s: ladder, level one is running things by
+682.5s: hand, level two is scheduled tasks on
+685.0s: your laptop, which stop working the
+687.0s: moment you close it, and level three is
+689.1s: fully automated scheduled tasks, which
+691.4s: run without you.
+693.5s: Last layer, the screen, and here's the
+695.5s: rule I'd keep even if you never built a
+697.4s: dashboard before. Show, but don't store.
+700.1s: Every panel on this page is read from a
+702.2s: file. That's something else already
+704.4s: created or wrote. All the panels on the
+706.5s: left-hand side are built on my laptop
+709.4s: because that's where my tracker leaves,
+711.9s: and the routines board on the right-hand
+713.8s: side actually are on the server side
+716.0s: because that's where the routines run.
+717.9s: The brain is rebuilt every night from my
+720.0s: notes. So, the page itself stores
+721.5s: nothing. It's only shows, and that's why
+723.7s: it's safe to look at from my phone on a
+725.5s: holiday, for example. If a dashboard
+727.3s: died tomorrow, I'd lose nothing. Every
+729.4s: fact sits in a file I own. Only a letter
+732.4s: level one is just a pretty graph you
+734.3s: just look at. Level two is the panels
+737.0s: that read your files, and level three is
+739.5s: what you see here, a fully functional
+741.4s: dashboard you can press buttons on, and
+743.8s: things start happening on the right
+745.5s: machine. And if you want similar views
+747.7s: like rings, links, the 3D orbit, I've
+750.6s: attached the prompt for those here, so
+752.9s: it's going to be in card five in the
+754.7s: guide.
+755.9s: I wanted to show you that the maps
+757.5s: framework actually works, and that's why
+759.8s: I decided to measure it. So, it's not
+761.5s: just me saying it works. I asked the
+763.4s: same question twice, "Which words am I
+765.5s: not allowed to use in a LinkedIn post,
+767.7s: and where is that written down?" What
+769.3s: I'm asking here, I'm asking Claude
+771.2s: actually to find the real file of mine
+773.3s: which contains a list of banned words
+775.4s: that make a post sound like an AI slop.
+778.2s: On the left-hand side, we have a fresh
+780.0s: Claude session in my workspace with no
+782.1s: map, and on the right-hand side, we have
+784.0s: the same question, but this time Claude
+785.8s: starts from the map. Both found the
+787.6s: right file, but look at the time. So,
+790.1s: without the map, it spent 1 minute and 2
+792.7s: seconds, while with the map, it spent
+795.3s: just 30 seconds, half of the time. Then,
+798.1s: I type context on both, which shows how
+800.6s: many tokens have been spent on that
+802.9s: question. Look at the message line. So,
+804.8s: that's the reading and writing for this
+807.0s: one question. On left-hand side, we have
+809.2s: 28,000 tokens used and on the right-hand
+812.0s: side, just 17,000 tokens, about 40%
+814.9s: less. I ran each side twice and the
+817.1s: second time the gap in reading was
+819.0s: smaller, but the map was still about
+821.1s: twice as fast. This confirms that the
+823.4s: map isn't a tidiness thing, it's the
+825.7s: difference between Claude searching my
+827.3s: whole workspace and going straight to
+829.4s: the right file. When you don't have a
+831.2s: maps enabled, you essentially pay for
+833.4s: that twice in money and waiting.
+836.3s: I was away for 10 days in August. My
+838.4s: laptop was closed, but I had everything
+840.6s: I needed on my mobile. All the routines
+842.5s: kept running, the digest landed every
+844.5s: morning, and when I got back, I didn't
+846.7s: have to rebuild a single thing in my
+848.8s: hat. That's what an operating system is
+851.2s: for. It isn't a graph or a pretty
+853.6s: dashboard. Honestly, that's just 20% of
+856.0s: it. It's a place that remembers your
+858.0s: business, runs while you're away, and
+860.3s: only asks you when a human is needed.
+862.7s: And the coolest part, it leaves in plain
+864.6s: files, the files you own, that can be
+867.2s: read by any LLM model like Claude,
+869.9s: OpenAI models, or a cheaper open-source
+872.7s: one like Deep Seek, for example. If you
+874.7s: decide to build your own thing from this
+876.6s: video, I'd highly suggest to start from
+879.0s: map first, and then the screen can wait.
+881.9s: So, if you want to build your own
+883.2s: version, the guide is in the description
+885.4s: and it's free. Next, I'm planning to
+887.1s: cover version two with more
+888.7s: functionality in it. If you enjoyed the
+890.3s: video, please smash like button,
+892.2s: subscribe to the channel, it's going to
+893.5s: help me a lot, and I'll see you in the
+895.3s: next one.

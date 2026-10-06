@@ -64,6 +64,56 @@ pub fn configure(repo_root: &std::path::Path, voice: &str, rate: f32) {
     *RATE.lock().unwrap_or_else(|e| e.into_inner()) = rate;
 }
 
+/// The voice the SETTINGS name, as last applied. Separate from `VOICE`, which a
+/// Preview overrides for one utterance: `/health` reports this one.
+static CHOSEN: Mutex<String> = Mutex::new(String::new());
+
+pub fn choose(voice: &str) {
+    *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = voice.to_string();
+}
+
+pub fn chosen_voice() -> String {
+    CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// What `configure` last stored: voice name and speed factor. For tests of the
+/// route that calls it.
+#[cfg(test)]
+pub fn configured() -> (String, f32) {
+    (
+        VOICE.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        *RATE.lock().unwrap_or_else(|e| e.into_inner()),
+    )
+}
+
+/// The voice and speed for one `/speak`: what the request names, else what the
+/// settings say.
+///
+/// A non-blank `voice` and a numeric `rate_percent` in the body win, which is
+/// how Preview lets you hear a choice before saving it; anything absent comes
+/// from `speak_voice` / `speak_rate_percent` (100 when unset). The speed is
+/// clamped to 50-200 per cent and returned as the factor `configure` takes.
+///
+/// Pure, and it stores nothing (BR-13): a preview is not a setting. A voice that
+/// is not installed is passed through untouched; falling back to one that is
+/// belongs to `piper::voice`, so there is one rule for it.
+pub fn speak_params(settings: &serde_json::Value, body: &serde_json::Value) -> (String, f32) {
+    let voice = body
+        .get("voice")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::console_settings::str_at(settings, "speak_voice", ""));
+    let percent = body
+        .get("rate_percent")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or_else(|| {
+            crate::console_settings::u64_at(settings, "speak_rate_percent", 100) as f64
+        });
+    (voice, (percent.clamp(50.0, 200.0) / 100.0) as f32)
+}
+
 fn root() -> Option<std::path::PathBuf> {
     ROOT.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -314,5 +364,94 @@ mod tests {
         assert!(stop(), "an utterance in flight should be killable");
         assert!(finished());
         eprintln!("tts: backend={} spoke {} chars then stopped", backend_name(), n);
+    }
+
+    // -- per-request voice and speed (T-031 FR-15, AC-47) ------------------
+
+    use serde_json::json;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    #[test]
+    fn a_voice_and_speed_in_the_request_win_over_the_settings() {
+        let settings = json!({"speak_voice": "from-settings", "speak_rate_percent": 90});
+        let (voice, rate) = speak_params(&settings, &json!({"voice": " en_US-ryan-medium ", "rate_percent": 140}));
+        assert_eq!(voice, "en_US-ryan-medium");
+        assert!(close(rate, 1.4), "{rate}");
+        // Each wins on its own.
+        let (voice, rate) = speak_params(&settings, &json!({"voice": "only-voice"}));
+        assert_eq!((voice.as_str(), close(rate, 0.9)), ("only-voice", true));
+        let (voice, rate) = speak_params(&settings, &json!({"rate_percent": 160}));
+        assert_eq!((voice.as_str(), close(rate, 1.6)), ("from-settings", true));
+    }
+
+    #[test]
+    fn what_the_request_leaves_out_comes_from_the_settings() {
+        let settings = json!({"speak_voice": " from-settings ", "speak_rate_percent": 75});
+        for body in [json!({}), json!({"text": "hi"}), json!({"voice": "   "}), json!({"rate_percent": "fast"})] {
+            let (voice, rate) = speak_params(&settings, &body);
+            assert_eq!(voice, "from-settings", "{body}");
+            assert!(close(rate, 0.75), "{body} -> {rate}");
+        }
+    }
+
+    #[test]
+    fn with_neither_it_is_automatic_at_normal_speed() {
+        for settings in [serde_json::Value::Null, json!({})] {
+            let (voice, rate) = speak_params(&settings, &json!({}));
+            assert_eq!(voice, "");
+            assert!(close(rate, 1.0), "{rate}");
+        }
+    }
+
+    #[test]
+    fn the_speed_is_kept_between_half_and_double() {
+        for (asked, want) in [(10.0, 0.5), (50.0, 0.5), (100.0, 1.0), (200.0, 2.0), (500.0, 2.0), (-30.0, 0.5)] {
+            let (_, rate) = speak_params(&json!({}), &json!({"rate_percent": asked}));
+            assert!(close(rate, want), "{asked} -> {rate}");
+        }
+        // A setting outside the range is held to it too.
+        let (_, rate) = speak_params(&json!({"speak_rate_percent": 900}), &json!({}));
+        assert!(close(rate, 2.0), "{rate}");
+    }
+
+    #[test]
+    fn an_unknown_voice_falls_back_exactly_as_the_piper_lookup_does() {
+        // Two fake voices on disk: asking for one that is not there is passed
+        // through untouched and lands on the first sorted installed voice.
+        let root = std::env::temp_dir().join(format!("t031-tts-fallback-{}", std::process::id()));
+        let dir = root.join("desktop/tts");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["z-last.onnx", "a-first.onnx"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let (voice, _) = speak_params(&json!({}), &json!({"voice": "not-installed"}));
+        assert_eq!(voice, "not-installed", "the lookup, not the resolver, owns the fallback");
+        let spoken = crate::piper::voice(&root, &voice).expect("a voice is installed");
+        assert_eq!(spoken.file_name().unwrap(), "a-first.onnx");
+        assert_eq!(crate::piper::voice_in_use(&root, &voice).as_deref(), Some("a-first"));
+        // An installed one is used as named.
+        let (voice, _) = speak_params(&json!({}), &json!({"voice": "z-last"}));
+        assert_eq!(crate::piper::voice(&root, &voice).unwrap().file_name().unwrap(), "z-last.onnx");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolving_the_parameters_saves_nothing() {
+        // BR-13: a preview is not a setting. `speak_params` has no way to
+        // store anything; this pins it against `configure` creeping in.
+        let production = include_str!("tts.rs").split("mod tests {").next().unwrap();
+        let body = production
+            .split("pub fn speak_params")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn root()").next())
+            .expect("speak_params is in the file");
+        for storing in ["configure(", "VOICE", "RATE", ".lock()"] {
+            assert!(!body.contains(storing), "speak_params touches {storing}");
+        }
     }
 }

@@ -100,4 +100,4 @@ Get-ChildItem -Path $dest | ForEach-Object {
 }
 Write-Host ''
 Write-Host 'The shell finds these on its next launch. Check with:'
-Write-Host '  python console/kanban.py verb run desktop-listen-state'
+Write-Host '  Settings > Assistant > Voice diagnostics (shows the speech engine and the loaded model)'

@@ -15,35 +15,121 @@
      One drawer for the whole app, owned here rather than by each tab, so
      Escape/scrim/back-button behaviour is identical everywhere. */
   var drawer = (function () {
-    var scrim = null, panel = null, lastFocus = null;
+    var scrim = null, panel = null, lastFocus = null, handle = null, modeBound = false;
+    var docked = false;
+
+    /* The one place that decides docked or modal. T-037 D-1 / Q1: above 900px
+       the dock REPLACES the overlay (accepted default, pending user
+       confirmation); an opt-in toggle later is a one-expression change here. */
+    function dockMode() { return window.matchMedia(C.splitter.WIDE).matches; }
 
     function close() {
       if (!panel) return;
       [scrim, panel].forEach(function (n) { if (n && n.parentNode) n.parentNode.removeChild(n); });
-      scrim = panel = null;
+      scrim = panel = handle = null;
+      docked = false;
+      document.getElementById("app").classList.remove("has-dock");
+      /* a removed handle never notices itself: let the registry end any drag */
+      C.splitter.reapplyAll();
       document.removeEventListener("keydown", onKey);
       if (lastFocus && lastFocus.isConnected) lastFocus.focus();
     }
 
-    function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); close(); } }
+    /* T-037 D-10: modal = Esc anywhere closes (as before). Docked = the panel
+       sits beside live content, so Esc closes it only from inside the panel; Esc
+       in the board search, on a card or in the topbar is left alone, not even
+       stopped. An Esc in a drawer field still reverts the field (board.js) and
+       reaches here, so it closes too. */
+    function onKey(e) {
+      if (e.key !== "Escape") return;
+      if (docked && !(panel && panel.contains(e.target))) return;
+      e.stopPropagation();
+      close();
+    }
+
+    /* Put the open panel in its mode: docked = a grid child of #app, no scrim,
+       role complementary, resize handle; modal = on <body> with scrim, role
+       dialog + aria-modal. The same node is moved, never rebuilt, so the body
+       and any half-typed field survive a live switch. Moving a node blurs its
+       focused descendant, so focus is saved and put back. */
+    function mount(isDocked) {
+      var app = document.getElementById("app"), f = document.activeElement;
+      var had = !!f && panel.contains(f);
+      if (handle && handle.parentNode) handle.parentNode.removeChild(handle);
+      handle = null;
+      if (scrim && scrim.parentNode) scrim.parentNode.removeChild(scrim);
+      scrim = null;
+      docked = isDocked;
+      app.classList.toggle("has-dock", isDocked);
+      if (isDocked) {
+        panel.setAttribute("role", "complementary");
+        panel.removeAttribute("aria-modal");
+        app.appendChild(panel);
+        handle = C.splitter({
+          host: panel, pane: panel, owner: app, dir: -1, cssVar: "dock", key: "dock.w",
+          min: 320, max: 720, flexPane: function () { return document.getElementById("view"); },
+          flexMin: 360, label: "Resize ticket panel",
+        });
+      } else {
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        scrim = C.el("button", { class: "scrim", "aria-label": "Close panel", onclick: close });
+        document.body.appendChild(scrim);
+        document.body.appendChild(panel);
+      }
+      C.splitter.reapplyAll();
+      if (had && f.isConnected) f.focus();
+    }
+
+    function titleNodes(title, subtitle) {
+      return [
+        C.el("h2", { text: title }),
+        subtitle ? C.el("div", { class: "muted", text: subtitle }) : null,
+      ];
+    }
+
+    /* Repeat open() while a panel is up (an edit re-opens the ticket to refresh
+       it): same aside, same width, same restore target, no slide-in replay.
+       Only the title and the body change, and the body is a NEW node: the old
+       one is left detached, so a slow response from an earlier call can only
+       write into an orphan and never over newer content (T-037 D-9). Focus
+       that sat in the replaced body goes to Close, as a refresh always ended. */
+    function refresh(title, subtitle) {
+      var old = panel.querySelector(".dbody"), f = document.activeElement;
+      var had = !!f && old.contains(f);
+      var body = C.el("div", { class: "dbody" });
+      var head = C.clear(panel.querySelector(".dtitle"));
+      titleNodes(title, subtitle).forEach(function (n) { if (n) head.appendChild(n); });
+      panel.setAttribute("aria-label", title);
+      panel.replaceChild(body, old);
+      if (had) panel.querySelector("button").focus();
+      return body;
+    }
 
     function open(title, subtitle) {
-      close();
+      if (panel) return refresh(title, subtitle);
       lastFocus = document.activeElement;
-      scrim = C.el("button", { class: "scrim", "aria-label": "Close panel", onclick: close });
       var body = C.el("div", { class: "dbody" });
-      panel = C.el("aside", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": title }, [
+      panel = C.el("aside", { class: "drawer", "aria-label": title }, [
         C.el("header", {}, [
-          C.el("div", { class: "dtitle" }, [
-            C.el("h2", { text: title }),
-            subtitle ? C.el("div", { class: "muted", text: subtitle }) : null,
-          ]),
+          C.el("div", { class: "dtitle" }, titleNodes(title, subtitle)),
           C.el("button", { class: "btn sm iconly", "aria-label": "Close", onclick: close }, [C.icon("x")]),
         ]),
         body,
       ]);
-      document.body.appendChild(scrim);
-      document.body.appendChild(panel);
+      mount(dockMode());
+      if (!modeBound) {
+        modeBound = true;
+        var mq = window.matchMedia(C.splitter.WIDE);
+        /* F-8: the media-query change event alone was not enough (a browser
+           resize flipped the CSS but left the aside docked in JS), so a window
+           resize re-checks the same dockMode(). Re-mount only on a real flip. */
+        var sync = function () {
+          if (panel && docked !== dockMode()) mount(dockMode());
+        };
+        if (mq.addEventListener) mq.addEventListener("change", sync);
+        window.addEventListener("resize", sync);
+      }
       document.addEventListener("keydown", onKey);
       panel.querySelector("button").focus();
       return body;
@@ -71,9 +157,14 @@
   }
 
   /* ---------------- nav ---------------- */
+  // What hiddenTabs held the last time the nav was built, as JSON text: a change
+  // picked up from the shared preferences rebuilds the nav only if it differs.
+  var navHidden = null;
+
   function buildNav() {
     var nav = C.clear(document.getElementById("tabs"));
     var hidden = C.prefs.get("hiddenTabs", []);
+    navHidden = JSON.stringify(hidden);
     visibleTabs().forEach(function (t) {
       var btn = C.el("button", {
         class: "tab", role: "tab", id: "tab-" + t.id,
@@ -92,17 +183,23 @@
       nav.appendChild(btn);
     });
     // Keyboard: arrows move between tabs, matching the tablist role we claim.
-    nav.addEventListener("keydown", function (e) {
-      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-      var ids = visibleTabs().map(function (t) { return t.id; });
-      var i = ids.indexOf(state.active);
-      if (i < 0) return;
-      var next = ids[(i + (e.key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length];
-      go(next);
-      var b = nav.querySelector('[data-tab="' + next + '"]');
-      if (b) b.focus();
-      e.preventDefault();
-    });
+    // C.clear returns this same #tabs node every time, so a listener added on
+    // each rebuild would stack and one arrow key would move several tabs. A
+    // marker on the node keeps it to one, however often the nav is rebuilt.
+    if (!nav.hasAttribute("data-keys-bound")) {
+      nav.setAttribute("data-keys-bound", "1");
+      nav.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        var ids = visibleTabs().map(function (t) { return t.id; });
+        var i = ids.indexOf(state.active);
+        if (i < 0) return;
+        var next = ids[(i + (e.key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length];
+        go(next);
+        var b = nav.querySelector('[data-tab="' + next + '"]');
+        if (b) b.focus();
+        e.preventDefault();
+      });
+    }
   }
 
   function visibleTabs() {
@@ -267,12 +364,258 @@
     if (C.IS_STATIC) { markConnection(false, "snapshot"); return; }
     C.onConnection(function (online) { markConnection(online); });
     if (heartbeat) clearInterval(heartbeat);
-    heartbeat = setInterval(function () {
-      // Cheapest endpoint that proves the server is answering. Failures are
-      // swallowed here: core.js has already flipped the pill, and a toast per
-      // failed heartbeat would be noise on a server that is simply stopped.
-      C.get("/api/config").catch(function () {});
-    }, HEARTBEAT_MS);
+    heartbeat = setInterval(probe, HEARTBEAT_MS);
+    watchVersion();
+  }
+
+  /* ---------------- shared preferences ----------------
+     The heartbeat already fetches /api/config, which carries the preferences'
+     revision, so keeping this page in step with the app and every other browser
+     costs no extra request unless something actually changed. */
+
+  /* A beat that arrives while this page has changes the server has not seen
+     retries them (their send may have failed) and does not pull: pulling would
+     replace the map and undo them. Otherwise a different revision means another
+     client wrote, so pull. Compared with !== only: a revision is an identity,
+     not an ordering, and a server whose file was reset can go down as well as
+     up. An absent prefs_rev (an older server, or the plugin switched off) means
+     nothing to compare. */
+  function onHeartbeat(cfg) {
+    checkVersion(cfg);    // first: the pending-writes return below must not skip it
+    maybeReload(cfg);     // same reason, and every trigger arrives here through probe()
+    if (C.prefs.pending()) { C.prefs.flush(); return; }
+    if (cfg && cfg.prefs_rev !== undefined && cfg.prefs_rev !== C.prefs.rev()) C.prefs.refresh();
+  }
+
+  /* What a pickup changes on screen. Only the two preferences with a global
+     visual effect are applied; every other key takes effect the next time its
+     tab renders. Never go(): the active tab keeps what the person typed into it,
+     even if it was just hidden. The nav is rebuilt only when hiddenTabs really
+     differs, because each rebuild replaces every tab button. */
+  function bindPrefs() {
+    C.prefs.onChange(function (changed) {
+      if (changed.indexOf("theme") !== -1) applyTheme(C.prefs.get("theme", "system"));
+      if (changed.indexOf("hiddenTabs") !== -1 &&
+          JSON.stringify(C.prefs.get("hiddenTabs", [])) !== navHidden) buildNav();
+    });
+  }
+
+  /* ---------------- new UI version ----------------
+     The server stamps the files it serves as `ui_version` in /api/config. A page
+     keeps the stamp it booted with and compares every later answer, so the check
+     adds no request and no timer of its own: the heartbeat already asks. A
+     differing stamp shows a notice and sets `versionPending`, which the rules for
+     reloading by itself (below) use. Nothing here runs in a static export. */
+
+  // A usable stamp is a non-empty string; anything else counts as absent.
+  function versionOf(cfg) {
+    return cfg && typeof cfg.ui_version === "string" ? cfg.ui_version : "";
+  }
+
+  /* Whether the server now serves a different UI than this page booted with. The
+     boot stamp is read from state.cfg (set once at boot), not copied.
+       - No stamp in the answer says nothing: a server that lost the field, or
+         never had it, must not move anybody (present then absent is ignored,
+         absent both times is nothing).
+       - A page that booted WITHOUT a stamp met a server that had not restarted
+         yet, so it runs on local preferences; the first stamp it ever sees counts
+         as a change, which is what moves it onto the new server. */
+  var versionPending = false;
+
+  function checkVersion(cfg) {
+    if (C.IS_STATIC || !state.cfg) return;
+    var now = versionOf(cfg);
+    if (!now) return;
+    var boot = versionOf(state.cfg);
+    if (!boot) versionPending = true;       // absent, then present
+    else versionPending = now !== boot;     // present, and different
+    showNotice(versionPending);
+  }
+
+  /* The same request the heartbeat makes, asked out of turn when a reason to
+     look appears. Cheapest endpoint that proves the server is answering. Failures
+     are swallowed: core.js has already flipped the pill, and a toast per failed
+     check would be noise on a server that is simply stopped. */
+  function probe() {
+    return C.get("/api/config").then(onHeartbeat).catch(function () {});
+  }
+
+  /* Look again when the connection comes back or the window becomes visible, not
+     only on the next beat. Registered once: watchConnection runs a second time
+     when boot fails after it ran. */
+  var versionWatched = false;
+
+  function watchVersion() {
+    if (versionWatched) return;
+    versionWatched = true;
+    watchActivity();
+    C.onConnection(function (online) { if (online) probe(); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) probe(); });
+  }
+
+  /* The notice is persistent and non-modal on purpose, and not a toast: a toast
+     fades in seconds and the reload may be a minute away. */
+  var NOTICE_TEXT = {
+    ready: "A new version of the console is ready. It reloads when you pause.",
+    busy: "A new version of the console is ready. Unsaved text will be lost if you reload now; it reloads by itself when you are done.",
+    paused: "A new version of the console is ready. Automatic reload is paused after several reloads in a row; use Reload now when you are ready.",
+  };
+  var notice = null, noticeText = null;
+
+  function buildNotice() {
+    noticeText = C.el("span");
+    notice = C.el("div", { class: "ui-notice", role: "status" }, [
+      noticeText,
+      C.el("button", { class: "btn sm", type: "button", text: "Reload now", onclick: reloadNow }),
+    ]);
+    document.body.appendChild(notice);
+    // Text goes in once the element is in the page: a screen reader announces a
+    // change inside a status region, not the region's first paint.
+    setNoticeText("ready");
+  }
+
+  function showNotice(show) {
+    if (!show) { if (notice) notice.hidden = true; return; }
+    if (!notice) buildNotice();
+    notice.hidden = false;
+  }
+
+  /* mode: "ready" | "busy" | "paused". Written only when it differs, because
+     rewriting identical text would make the status region announce it again on
+     every beat. */
+  function setNoticeText(mode) {
+    if (!noticeText) return;
+    var text = NOTICE_TEXT[mode] || NOTICE_TEXT.ready;
+    if (noticeText.textContent !== text) noticeText.textContent = text;
+  }
+
+  /* Reload now is the person's own decision (D-20): it never waits for the busy
+     rules and never counts against the limit on automatic reloads. */
+  function reloadNow() { window.location.reload(); }
+
+  /* ---- reloading by itself, only when it cannot cost anyone their work ----
+     The heartbeat is the only clock: "idle" is a timestamp compared at each beat,
+     not a timer, so a reload lands within one beat (15 s) of the page becoming
+     free. */
+  var IDLE_MS = 30000;
+  var lastActive = Date.now();
+  var typedInto = new WeakSet();
+
+  /* Capture phase, so a handler that stops propagation cannot hide the person.
+     pointermove is left out on purpose: a mouse resting on a jittery desk, or a
+     pointer parked over the window, would keep the page "active" forever. */
+  function watchActivity() {
+    ["keydown", "pointerdown", "wheel", "touchstart"].forEach(function (type) {
+      document.addEventListener(type, function () { lastActive = Date.now(); }, true);
+    });
+    /* Only a real keystroke or paste marks a field as typed-in. Code that fills
+       a field (Settings sets .value on render) fires no trusted event, so those
+       fields stay "not typed". */
+    document.addEventListener("input", function (e) {
+      if (e.isTrusted && e.target && typeof e.target === "object") typedInto.add(e.target);
+    }, true);
+  }
+
+  function isTextField(el) {
+    if (!el || !el.tagName) return false;
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "INPUT") return /^(text|search|url|email|tel|password|number)$/.test(el.type || "text");
+    return !!el.isContentEditable;
+  }
+
+  function hasText(el) {
+    var text = (el.tagName === "TEXTAREA" || el.tagName === "INPUT") ? el.value : el.textContent;
+    return String(text || "").trim() !== "";
+  }
+
+  /* Text a reload would throw away. Deliberately not "value !== defaultValue":
+     Settings fills inputs with .value = ..., which would read as edited and
+     keep that tab from ever reloading.
+       - a textarea is a draft by nature, however its text got there: dictation
+         and the / @ # picker assign .value and fire no input event
+       - a text input or editable region counts only if the person typed in it
+         and it still has text
+       - the focused field counts when it has text (the caret is in it) */
+  function draftOpen() {
+    var i, list = document.querySelectorAll("textarea");
+    for (i = 0; i < list.length; i++) if (hasText(list[i])) return true;
+    list = document.querySelectorAll("input, [contenteditable]");
+    for (i = 0; i < list.length; i++) {
+      if (typedInto.has(list[i]) && isTextField(list[i]) && hasText(list[i])) return true;
+    }
+    var focused = document.activeElement;
+    return !!(focused && isTextField(focused) && hasText(focused));
+  }
+
+  /* Busy is read from the page itself, not from a list of tabs, so a new tab
+     is protected without anyone remembering to register it. The class names are
+     owned elsewhere: app.js (.drawer), onboarding-wizard.js (.ob-scrim) and
+     palette.js (.cp-scrim, with .on while open). A test pins each against its
+     owner, so a rename fails there instead of in front of a user. */
+  function isBusy() {
+    if (draftOpen()) return true;
+    if (document.querySelector(".drawer")) return true;
+    if (document.querySelector(".ob-scrim")) return true;
+    if (document.querySelector(".cp-scrim.on")) return true;
+    var voice = window.ConsoleVoice;
+    if (voice && (voice.listening() || voice.speaking())) return true;
+    return C.reloadHeld();      // drafts that live off-screen, registered by tabs
+  }
+
+  /* Called on every answer to /api/config, whatever caused the request. An
+     answer without a stamp is not evidence of anything (a stopped or restarting
+     server answers nothing; an older one has no stamp), so it never reloads: a
+     server flapping with unchanged files must cause no reload, and comparing
+     against the boot stamp already guarantees that for answers that do have one.
+     A hidden window has nobody to protect from a reload, so it goes at the next
+     check; the idle clock stays as the fallback in case a window that is hidden
+     (a tray app) is never reported as hidden. */
+  function maybeReload(cfg) {
+    if (!versionPending || !versionOf(cfg)) return;
+    if (isBusy()) { setNoticeText(reloadPaused() ? "paused" : "busy"); return; }
+    if (document.hidden || Date.now() - lastActive >= IDLE_MS) autoReload();
+    else setNoticeText(reloadPaused() ? "paused" : "ready");
+  }
+
+  /* ---- the loop guard ----
+     A reload that does not cure the mismatch (files still changing, a stamp that
+     never settles) would otherwise repeat every 30 s for ever. So automatic
+     reloads are counted, and the third one inside five minutes is the last:
+     after that the notice says so and only Reload now works. It re-arms by
+     itself because only timestamps are kept and old ones fall out of the
+     window; no target version is stored, since a count bounds every kind of loop
+     and a stamp comparison would not. sessionStorage, not localStorage: it
+     survives a reload but belongs to this tab alone. */
+  var RELOAD_KEY = "console-reload";
+  var RELOAD_LIMIT = 3;
+  var RELOAD_WINDOW_MS = 300000;
+
+  /* Timestamps of automatic reloads still inside the window; null when storage
+     cannot be read at all. A corrupt value reads as none. */
+  function recentReloads() {
+    var raw, list, now = Date.now();
+    try { raw = window.sessionStorage.getItem(RELOAD_KEY); } catch (e) { return null; }
+    try { list = JSON.parse(raw || "[]"); } catch (e) { list = []; }
+    if (!Array.isArray(list)) return [];
+    return list.filter(function (at) { return typeof at === "number" && now - at < RELOAD_WINDOW_MS; });
+  }
+
+  /* No readable storage counts as paused: a guard that cannot count cannot bound
+     a loop, and a counter held in memory would not survive the reload it is
+     meant to count. */
+  function reloadPaused() {
+    var recent = recentReloads();
+    return !recent || recent.length >= RELOAD_LIMIT;
+  }
+
+  function autoReload() {
+    var recent = recentReloads();
+    if (!recent || recent.length >= RELOAD_LIMIT) { setNoticeText("paused"); return; }
+    recent.push(Date.now());
+    // Written before the reload, so the count is there for the page that follows.
+    try { window.sessionStorage.setItem(RELOAD_KEY, JSON.stringify(recent)); }
+    catch (e) { setNoticeText("paused"); return; }
+    window.location.reload();
   }
 
   /* ---------------- global keys ---------------- */
@@ -326,7 +669,11 @@
   }
 
   /* ---------------- boot ---------------- */
-  C.get("/api/config").then(function (cfg) {
+  // Hydration is awaited with the config so the first read of a preference
+  // (applyTheme below) sees the shared copy, not an empty map. hydrate() never
+  // rejects and gives up after 3 s, so a hung /api/prefs cannot hold first paint.
+  Promise.all([C.get("/api/config"), C.prefs.hydrate()]).then(function (res) {
+    var cfg = res[0];
     state.cfg = cfg;
     state.manifest = orderManifest(cfg.tabs || []);
     document.getElementById("brandTitle").textContent = cfg.title || "Delivery Console";
@@ -335,6 +682,7 @@
     watchConnection();
 
     applyTheme(C.prefs.get("theme", "system"));
+    bindPrefs();
     buildNav();
     bindKeys();
 
@@ -343,6 +691,7 @@
     go(ids.indexOf(wanted) !== -1 ? wanted : ids[0]);
     refreshBadges();
     if (!C.IS_STATIC) setInterval(refreshBadges, 30000);
+    if (!C.IS_STATIC && window.ConsoleOnboarding) window.ConsoleOnboarding.maybeOpen();
   }).catch(function (err) {
     markConnection(false, "no server");
     // Keep watching even though boot failed: starting the server should bring
@@ -367,6 +716,18 @@
     else document.documentElement.setAttribute("data-theme", theme);
   }
 
+  function setTitle(title) {
+    if (!title) return;
+    if (state.cfg) state.cfg.title = title;
+    var brand = document.getElementById("brandTitle");
+    if (brand) brand.textContent = title;
+    if (state.active) {
+      var target = visibleTabs().filter(function (t) { return t.id === state.active; })[0];
+      if (target) document.title = target.label + " — " + title;
+    }
+  }
+
   window.ConsoleApp = { go: go, applyTheme: applyTheme, refreshBadges: refreshBadges, drawer: drawer,
+                        setTitle: setTitle,
                         manifest: function () { return state.manifest; }, rebuildNav: buildNav };
 })(window.Console);

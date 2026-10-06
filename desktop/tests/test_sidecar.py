@@ -1,5 +1,6 @@
 """Sidecar start/reuse/stop. Uses an ephemeral port against this checkout."""
 
+import json
 import os
 import socket
 import subprocess
@@ -226,3 +227,130 @@ class TestBreakawayFallback:
             sidecar._spawn_with_breakaway_fallback(
                 ["x"], {"creationflags": base | sidecar.CREATE_BREAKAWAY_FROM_JOB}, base)
         assert caught.value.winerror == 5
+
+
+class _FakeConfig:
+    """A loopback server that answers `/api/config` with a fixed body, so
+    `ensure()`'s attach path runs against something that is not a real
+    console. `body` is raw bytes; `None` answers 404."""
+
+    def __init__(self, body):
+        import http.server
+        import threading
+
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.hits += 1
+                if outer.body is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(outer.body)
+
+            def log_message(self, *args):
+                pass
+
+        self.body = body
+        self.hits = 0
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def fake():
+    made = []
+
+    def make(payload):
+        body = payload if isinstance(payload, (bytes, type(None))) else json.dumps(payload).encode("utf-8")
+        srv = _FakeConfig(body)
+        made.append(srv)
+        return srv
+
+    yield make
+    for srv in made:
+        srv.close()
+
+
+class TestWorkspaceCheck:
+    """T-036 task 20: do not attach to a server that serves another checkout."""
+
+    def test_different_workspace_is_refused_with_both_ids(self, fake):
+        srv = fake({"workspace": "000000000000"})
+        with pytest.raises(sidecar.SidecarError) as err:
+            sidecar.ensure(REPO, host="127.0.0.1", port=srv.port, wait_sec=2)
+        msg = str(err.value)
+        assert "different workspace" in msg
+        assert "000000000000" in msg and sidecar.workspace_id(REPO) in msg
+        assert str(srv.port) in msg
+
+    def test_equal_workspace_attaches_without_owning(self, fake):
+        srv = fake({"workspace": sidecar.workspace_id(REPO)})
+        handle = sidecar.ensure(REPO, host="127.0.0.1", port=srv.port, wait_sec=2)
+        assert handle.owned is False and handle.pid is None
+        assert handle.url == sidecar.server_url("127.0.0.1", srv.port)
+
+    def test_absent_workspace_attaches_an_older_server(self, fake):
+        srv = fake({"title": "old console"})
+        handle = sidecar.ensure(REPO, host="127.0.0.1", port=srv.port, wait_sec=2)
+        assert handle.owned is False
+
+    @pytest.mark.parametrize("body", [b"not json at all", b"[1, 2]", b'{"workspace": 7}', b'{"workspace": ""}'])
+    def test_unreadable_or_malformed_answer_attaches(self, fake, body):
+        srv = fake(body)
+        assert sidecar.served_workspace("127.0.0.1", srv.port) is None
+        assert sidecar.ensure(REPO, host="127.0.0.1", port=srv.port, wait_sec=2).owned is False
+
+    def test_is_up_and_probe_stay_pure_liveness_probes(self, fake):
+        srv = fake({"workspace": "000000000000"})
+        assert sidecar.is_up("127.0.0.1", srv.port) is True
+        assert srv.hits == 1, "is_up must make one request and no workspace comparison"
+        assert sidecar.is_up("127.0.0.1", _free_port()) is False
+        import inspect
+        assert "workspace" not in inspect.getsource(sidecar.is_up)
+        if hasattr(sidecar, "probe"):
+            assert "workspace" not in inspect.getsource(sidecar.probe)
+
+    def test_cli_ensure_prints_the_refusal_on_stderr_and_exits_nonzero(self, fake):
+        # What the Tauri shell reads (sidecar.rs:110-121): stderr, trimmed.
+        srv = fake({"workspace": "000000000000"})
+        run = subprocess.run(
+            [sys.executable, os.path.join(DESKTOP, "sidecar.py"), "ensure",
+             "--root", REPO, "--host", "127.0.0.1", "--port", str(srv.port)],
+            capture_output=True, text=True, timeout=30)
+        assert run.returncode != 0
+        assert "different workspace" in run.stderr
+        assert run.stdout.strip() == ""
+
+    def test_workspace_id_matches_the_servers_helper(self, tmp_path):
+        sys.path.insert(0, os.path.join(REPO, "console"))
+        try:
+            from server.features import shell_feature
+        finally:
+            sys.path.remove(os.path.join(REPO, "console"))
+        for root in (REPO, str(tmp_path)):
+            assert sidecar.workspace_id(root) == shell_feature._workspace_id(root)
+
+    def test_sidecar_source_imports_nothing_from_console(self):
+        import re as _re
+        with open(os.path.join(DESKTOP, "sidecar.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        assert not _re.search(r"^\s*(import|from)\s+(server|console)", src, _re.M)
+
+    def test_live_server_reports_the_checkout_id_ensure_compares_against(self):
+        port = _free_port()
+        first = sidecar.ensure(REPO, host="127.0.0.1", port=port, wait_sec=60)
+        try:
+            assert sidecar.served_workspace("127.0.0.1", port) == sidecar.workspace_id(REPO)
+        finally:
+            first.stop()

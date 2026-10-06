@@ -125,7 +125,8 @@
     return node;
   }
 
-  function laneNode(lane) {
+  /* ctx = { n: open lanes built so far, lanes: the .lanes element }. */
+  function laneNode(lane, ctx) {
     var cards = lane.cards.filter(function (c) { return matches(c, st.query); });
     /* A finished column is cold: a count rail until opened. A search that
        hits it stays expanded, otherwise the match would be invisible. */
@@ -191,6 +192,18 @@
         if (id) moveTicket(id, lane.id);
       },
     }, [head, cold ? C.el("span", { class: "chip", text: String(cards.length) }) : body]);
+    /* One handle per open lane, on its trailing edge. The width is one value
+       for every lane, written on .lanes; lane k's edge moves k times that
+       change, so the delta is divided by k (ordinal). Only the first handle is
+       keyboard-reachable. The default width lives in the stylesheet. */
+    if (!cold && ctx) {
+      ctx.n += 1;
+      C.splitter({
+        host: node, pane: node, owner: function () { return ctx.lanes; },
+        key: "board.lane", cssVar: "lane", min: 200, max: 480,
+        ordinal: ctx.n, primary: ctx.n === 1, label: "Resize board columns",
+      });
+    }
     if (cold) {
       function expand() {
         st.coldOpen[lane.id] = true;
@@ -259,7 +272,8 @@
     shell.appendChild(bar);
 
     var lanes = C.el("div", { class: "lanes" });
-    view.lanes.forEach(function (l) { lanes.appendChild(laneNode(l)); });
+    var ctx = { n: 0, lanes: lanes };
+    view.lanes.forEach(function (l) { lanes.appendChild(laneNode(l, ctx)); });
 
     if (view.orphans && view.orphans.length) {
       var body = C.el("div", { class: "lanebody" });
@@ -277,6 +291,9 @@
       ]));
     }
     shell.appendChild(lanes);
+    /* The handles were attached before .lanes was in the page: now that it is,
+       put the stored width on screen and place them (once per paint). */
+    C.splitter.reapplyAll();
 
     if (!view.total) {
       C.clear(host).appendChild(C.el("div", { style: "padding:24px 14px" }, [

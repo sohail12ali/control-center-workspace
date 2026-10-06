@@ -27,7 +27,8 @@ import time
 
 from .. import (agent_approvals, agent_backends, agent_manager, assistant,
                 assistant_commands, assistant_config, assistant_reply, audit,
-                native_bridge, prompt_build, runs as runs_mod, verbs)
+                native_bridge, prompt_build, runs as runs_mod, verbs,
+                voice_assets)
 from .. import context as context_mod
 from ..httpd import EventSource
 from ..plugins.base import Plugin
@@ -36,6 +37,10 @@ from ..plugins.base import Plugin
 #: there is exactly one Assistant persona (`console/config/assistant.md`),
 #: never a per-request choice.
 PERSONA = "assistant"
+
+#: What the voice preview says. Fixed on purpose: the route speaks a sample,
+#: never text a caller supplies.
+PREVIEW_SAMPLE = "This is how I sound. Tell me if the voice and speed suit you."
 
 #: T-004 C4's injected-context caps. Each is a belt-and-braces re-cap over a
 #: source that (mostly) already caps itself — `context.tickets_digest` at
@@ -527,8 +532,11 @@ def apply(ctx):
         checks a chosen backend strictly, because a write is not a hot path
         and refusing a bad one matters more there than a millisecond.
         """
+        # `applies` is static data (when each key takes effect), so it costs
+        # nothing and still touches no socket.
         return {"settings": assistant_config.settings(repo_root),
-                "writable": sorted(assistant_config.WRITABLE)}
+                "writable": sorted(assistant_config.WRITABLE),
+                "applies": assistant_config.APPLIES}
 
     def settings_post(req):
         installed = [bid for bid, b in
@@ -538,6 +546,14 @@ def apply(ctx):
         audit.record(repo_root, "assistant.settings",
                      actor=audit.actor_of(req), target="settings",
                      detail=dict(req.body or {}))
+        # Nudge the shell so a "(live)" setting really is live (T-031 D-7).
+        # Best effort: the write has already succeeded, and a shell that is
+        # absent, slow (the helper's own 1 s cap) or broken must not turn it
+        # into an error. Reached only after `update` accepted the patch.
+        try:
+            native_bridge.settings_refresh(repo_root)
+        except Exception:  # noqa: BLE001
+            pass
         return {"settings": merged}
 
     def resolve_get(req):
@@ -622,6 +638,143 @@ def apply(ctx):
                      actor=audit.actor_of(req), target=name, outcome="removed")
         return result
 
+    # -- voice devices, tests and preview (T-031) ------------------------------
+    #
+    # The shell decides which device is in use (D-17); the console forwards and
+    # adds only what it alone knows - the configured names in settings.
+
+    def devices_get(req):
+        answer = native_bridge.audio_devices(repo_root)
+        if not answer.get("ok"):
+            return {"ok": False, "reason": answer.get("reason", "shell not running")}
+        cfg = assistant_config.settings(repo_root)
+        return dict(answer, configured={
+            "input": cfg.get("input_device", ""),
+            "output": cfg.get("output_device", "")})
+
+    def test_mic(req):
+        return native_bridge.mic_test(repo_root)
+
+    def test_speaker(req):
+        return native_bridge.speaker_test(repo_root)
+
+    def preview_post(req):
+        body = req.body or {}
+        voice = body.get("voice")
+        rate = body.get("rate_percent")
+        if voice is not None:
+            if not isinstance(voice, str):
+                raise ValueError("voice must be a voice name, or blank for automatic")
+            voice = voice.strip()
+            if voice and voice not in voice_assets.installed_voices(repo_root):
+                raise ValueError("the voice %s is not installed" % voice[:80])
+        if rate is not None:
+            if isinstance(rate, bool) or not isinstance(rate, (int, float))                     or not 50 <= rate <= 200:
+                raise ValueError("rate_percent must be a number between 50 and 200")
+        # Blank voice = automatic: send nothing, so the shell picks as it does
+        # for a reply. Nothing here writes a setting.
+        result = native_bridge.speak(
+            repo_root, PREVIEW_SAMPLE, voice=voice or None, rate_percent=rate)
+        if not result.get("ok"):
+            return {"ok": False, "reason": result.get("reason", "shell not running")}
+        return {"ok": True}
+
+    # -- voice assets: speech models and voices (T-031) ----------------------
+    #
+    # The console downloads, verifies and deletes what the shell reads from
+    # desktop/stt and desktop/tts. A request NAMES an asset - a catalog id, or
+    # an inventory name for delete - and nothing else in the body is read, so
+    # a URL or a path in it changes nothing (BR-9): the URL comes from the
+    # committed catalog. A refusal or an unknown name is a ValueError, which
+    # the server answers 400 with the sentence; none of this is a 5xx.
+
+    def _named(req, *keys):
+        body = req.body or {}
+        for key in keys or ("id",):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        raise ValueError("say which model or voice, by its id")
+
+    def _unknown(name):
+        return ValueError("there is no model or voice with the id %s" % name[:80])
+
+    def _asset_audit(req, action, target, outcome="ok", **detail):
+        audit.record(repo_root, "assistant.voice_asset." + action,
+                     actor=audit.actor_of(req), target=target,
+                     outcome=outcome, detail=detail)
+
+    def voice_assets_get(req):
+        manager = voice_assets.manager_for(repo_root)
+        return voice_assets.inventory(repo_root, manager.catalog, manager=manager)
+
+    def _asset_verb(action, audited):
+        """download | pause | resume | cancel: one manager call by catalog id."""
+        def handler(req):
+            asset_id = _named(req)
+            manager = voice_assets.manager_for(repo_root)
+            try:
+                snapshot = getattr(manager, action)(asset_id)
+            except KeyError:
+                raise _unknown(asset_id) from None
+            if audited:
+                _asset_audit(req, action, asset_id, state=snapshot["state"])
+            return {"ok": True, "asset": snapshot}
+        return handler
+
+    def voice_asset_delete(req):
+        name = _named(req, "id", "name")
+        manager = voice_assets.manager_for(repo_root)
+        result = voice_assets.delete_asset(repo_root, name, manager.catalog,
+                                           manager=manager)
+        code = result.get("error", "")
+        if code not in ("bad_name", "unknown"):
+            # A refused delete of a real asset is evidence too (an `outside`
+            # one especially); a name that matches nothing is not an asset.
+            _asset_audit(req, "delete", name,
+                         outcome="ok" if result["ok"] else code,
+                         removed=result.get("removed", []))
+        if not result["ok"]:
+            raise ValueError(result["reason"])
+        return result
+
+    def voice_asset_verify(req):
+        asset_id = _named(req)
+        manager = voice_assets.manager_for(repo_root)
+        asset = manager.catalog.get(asset_id)
+        if asset is None:
+            raise _unknown(asset_id)
+        if manager.snapshot(asset_id)["state"] in voice_assets.LIVE_STATES:
+            raise ValueError("%s is being downloaded; wait for it to finish." % asset_id)
+        try:
+            result = manager.downloader.verify_existing(asset, manager.dest_dir(asset))
+        except OSError as err:              # a file another program holds open
+            raise ValueError("could not read %s to check it: %s"
+                             % (asset_id, err.strerror or err)) from None
+        _asset_audit(req, "verify", asset_id,
+                     outcome="ok" if result["ok"] else "mismatch",
+                     message=result["message"])
+        return dict(result, id=asset_id)
+
+    ctx.get(r"^/api/assistant/voice/assets/?$", voice_assets_get,
+            "assistant.voice_assets")
+    ctx.post(r"^/api/assistant/voice/assets/download/?$",
+             _asset_verb("download", True), "assistant.voice_asset_download")
+    ctx.post(r"^/api/assistant/voice/assets/pause/?$",
+             _asset_verb("pause", False), "assistant.voice_asset_pause")
+    ctx.post(r"^/api/assistant/voice/assets/resume/?$",
+             _asset_verb("resume", False), "assistant.voice_asset_resume")
+    ctx.post(r"^/api/assistant/voice/assets/cancel/?$",
+             _asset_verb("cancel", True), "assistant.voice_asset_cancel")
+    ctx.post(r"^/api/assistant/voice/assets/delete/?$",
+             voice_asset_delete, "assistant.voice_asset_delete")
+    ctx.post(r"^/api/assistant/voice/assets/verify/?$",
+             voice_asset_verify, "assistant.voice_asset_verify")
+    ctx.get(r"^/api/assistant/voice/devices/?$", devices_get, "assistant.voice_devices")
+    ctx.post(r"^/api/assistant/voice/test/mic/?$", test_mic, "assistant.voice_test_mic")
+    ctx.post(r"^/api/assistant/voice/test/speaker/?$", test_speaker,
+             "assistant.voice_test_speaker")
+    ctx.post(r"^/api/assistant/voice/preview/?$", preview_post, "assistant.voice_preview")
     ctx.get(r"^/api/assistant/voice/?$", voice_state, "assistant.voice_state")
     ctx.post(r"^/api/assistant/wake/sample/?$", wake_sample, "assistant.wake_sample")
     ctx.post(r"^/api/assistant/wake/train/?$", wake_train, "assistant.wake_train")

@@ -134,18 +134,22 @@ def available(repo_root, opener=None, timeout=DEFAULT_TIMEOUT):
     return True, ""
 
 
-def capabilities(repo_root, opener=None):
+def capabilities(repo_root, opener=None, timeout=DEFAULT_TIMEOUT):
     """What this shell can actually do, as it reports itself.
 
     Used to tell a model "OCR is not available" instead of letting it call a
     tool that fails. The shell reports a capability as false when the route
     does not exist, so this is the build's real surface, not the platform's
     theoretical one.
+
+    `timeout` is optional: a caller on a request path that must stay quick
+    (the voice-asset inventory) passes a short one.
     """
     pointer = _read_pointer(repo_root)
     if pointer is None:
         return {"ok": False, "reason": _UNAVAILABLE_REASON}
-    ok, detail, _transport = _request(pointer, "/health", opener=opener)
+    ok, detail, _transport = _request(pointer, "/health", timeout=timeout,
+                                      opener=opener)
     if not ok:
         return {"ok": False, "reason": _UNAVAILABLE_REASON}
     return {"ok": True, "caps": detail.get("caps") or {}}
@@ -180,6 +184,51 @@ def listen_state(repo_root, opener=None):
     the recogniser never heard went five takes with nobody able to say why.
     """
     return _call(repo_root, "/listen/state", opener=opener)
+
+
+#: How long the settings poke may take. It rides on a settings write, so the
+#: write must never wait longer than this on a shell that is slow or gone.
+REFRESH_TIMEOUT = 1.0
+
+
+def settings_refresh(repo_root, opener=None):
+    """Tell the shell the settings just changed so it re-reads and re-applies.
+
+    Without this the shell notices a change only when its 30-second settings
+    cache expires, which makes every "(live)" claim false for up to that long
+    (T-031 D-7). The shell answers at once and does the work on its own
+    thread; this is a nudge, never a request for a result, so a failure here
+    is information for a log and nothing else. With no shell it returns
+    `{"ok": False, "reason": "shell not running"}` without opening a socket.
+    """
+    return _call(repo_root, "/settings/refresh", payload={},
+                 timeout=REFRESH_TIMEOUT, opener=opener)
+
+
+#: The device calls only ask the shell to list or to START a test; neither
+#: waits for audio, so a short cap keeps a Settings repaint from hanging on a
+#: shell that is slow or gone (T-031).
+DEVICE_TIMEOUT = 2.0
+
+
+def audio_devices(repo_root, opener=None):
+    """The shell's device list plus its verdict per direction (`input`,
+    `output`). The verdict is the shell's; callers must not recompute it."""
+    return _call(repo_root, "/audio/devices", timeout=DEVICE_TIMEOUT,
+                 opener=opener)
+
+
+def mic_test(repo_root, opener=None):
+    """Start the shell's microphone test. Returns at once; progress is read
+    from `listen_state()["mic_test"]`."""
+    return _call(repo_root, "/audio/test/mic", payload={},
+                 timeout=DEVICE_TIMEOUT, opener=opener)
+
+
+def speaker_test(repo_root, opener=None):
+    """Play the shell's test tone on the resolved output. Returns at once."""
+    return _call(repo_root, "/audio/test/speaker", payload={},
+                 timeout=DEVICE_TIMEOUT, opener=opener)
 
 
 def wake_sample(repo_root, name, opener=None):
@@ -229,15 +278,22 @@ def capture(repo_root, target="screen", window_title="", monitor_id=None,
                  opener=opener)
 
 
-def speak(repo_root, text, opener=None):
+def speak(repo_root, text, voice=None, rate_percent=None, opener=None):
     """Read `text` aloud, interrupting anything already speaking.
 
     Returns as soon as the utterance STARTS. Holding the call open for the
     length of a spoken paragraph would tie the console's turn to the speed of
     speech, and the tray already shows the speaking state.
+
+    `voice` and `rate_percent` ride in the payload only when given (T-031
+    preview): without them the shell reads its own settings, exactly as before.
     """
-    return _call(repo_root, "/speak", payload={"text": text or ""},
-                 opener=opener)
+    payload = {"text": text or ""}
+    if voice is not None:
+        payload["voice"] = voice
+    if rate_percent is not None:
+        payload["rate_percent"] = rate_percent
+    return _call(repo_root, "/speak", payload=payload, opener=opener)
 
 
 def stop_speaking(repo_root, opener=None):

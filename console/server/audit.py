@@ -81,7 +81,14 @@ ACTIONS = ("chat.start", "chat.stop", "verb.run", "verb.submit",
            "ticket.close", "ticket.close.override",
            # Settings clean: deletes workspace content from this checkout.
            # It does not commit and does not rewrite history.
-           "workspace.clean")
+           "workspace.clean",
+           # T-036: wiping every saved view preference, and the one-time move of
+           # a browser's old localStorage onto the server. Detail carries key
+           # names and counts, never values. A routine preference write is not
+           # recorded: it fires per setting touched.
+           "prefs.reset", "prefs.import",
+           # Setup wizard. Detail carries key NAMES, never values.
+           "onboarding.setup", "onboarding.complete")
 
 
 def audit_dir(repo_root):

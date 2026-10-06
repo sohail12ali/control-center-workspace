@@ -105,15 +105,21 @@ def _identity_step(repo_root):
 
 # ----------------------------------------------------------------- project --
 def _project_step(repo_root):
+    # Imported here so this read-only module does not load the write path
+    # at import time. The override is the wizard's copy of the same fact;
+    # a non-stock committed title still counts, either way.
+    from . import onboarding_setup
     general = boards_mod.load_console_config(repo_root).get("general", {})
-    title = (general.get("title") or "").strip()
+    committed = (general.get("title") or "").strip()
+    override = onboarding_setup.display_title(repo_root)
+    title = override if override and override not in _DEFAULT_TITLES else committed
     if title and title not in _DEFAULT_TITLES:
         return _step("project", "Project name", "ok",
                      "this workspace is “%s”" % title, extra={"title": title})
     return _step(
         "project", "Project name", "todo",
         "still the stock name, so every board and tab header says “Delivery Console”",
-        hint="set general.title (and subtitle) in console/config/console.toml",
+        hint="set it in the setup wizard, or general.title in console/config/console.toml",
         file="console/config/console.toml",
     )
 

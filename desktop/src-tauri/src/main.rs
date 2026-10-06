@@ -10,6 +10,7 @@ mod features;
 mod clipboard;
 mod console_api;
 mod console_settings;
+mod devices;
 mod hands_free;
 mod hud;
 mod icons;
@@ -26,6 +27,7 @@ mod tray_link;
 mod tray_paint;
 mod tray_state;
 mod tts;
+mod voice_test;
 mod wake;
 
 #[cfg(windows)]

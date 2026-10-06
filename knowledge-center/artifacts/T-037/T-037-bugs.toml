@@ -1,0 +1,22 @@
+[meta]
+ticket = "T-037"
+tracker = "bugs"
+updated = "2026-10-05T07:13:09Z"
+seq = 1
+
+[[items]]
+id = "D-1"
+status = "open"
+text = "palette.js:103 showResult() calls app.drawer(label, [...]) as a function, but window.ConsoleApp.drawer is the object {open, close} (app.js:52,382). The !app.drawer guard passes, the call throws a TypeError inside the runVerb .then (palette.js:90-94) and the .catch shows an error toast instead of the verb result. Found by reading only, not executed. Out of scope for T-037 (layout); logged so it is not lost."
+severity = "medium"
+found_on = "2026-10-05"
+phase = "requirements"
+found_by = "agent"
+steps = "1. Open the command palette (Ctrl/Cmd-K). 2. Run a verb whose result should open in the drawer."
+expected = "The verb result opens in the drawer."
+actual = "By reading: TypeError, then an error toast. Not executed."
+fix = ""
+fixed_by = ""
+fixed_on = ""
+verified_by = ""
+verified_on = ""

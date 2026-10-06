@@ -1,0 +1,22 @@
+[ticket]
+id = "T-038"
+title = "Command Center: MAPS Agentic OS 3-column UI with 6-view Brain canvas"
+kind = "tickets"
+stage = "open"
+status = "active"
+owner = "Sohail Ali"
+priority = "high"
+created = "2026-10-06"
+updated = "2026-10-06"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

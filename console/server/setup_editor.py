@@ -29,6 +29,8 @@ MCP_CLAUDE_ENV = {"CONSOLE_REPO_ROOT": "${CONSOLE_REPO_ROOT:-}"}
 
 EDITORS = ("cursor", "claude", "vscode")
 
+EDITOR_LABELS = {"cursor": "Cursor", "claude": "Claude", "vscode": "VS Code"}
+
 _AGENTS_START = "<!-- console:agents-snippet:start (T-017 FR-11) -->"
 _AGENTS_END = "<!-- console:agents-snippet:end -->"
 
@@ -98,6 +100,40 @@ def _write_agents_snippet(repo_root):
     return changed
 
 
+def _editor_target(repo_root, editor):
+    """`(path, servers_key)` for one editor's MCP file. Same paths
+    `setup_editor` writes, so "already wired" and "write" cannot drift."""
+    if editor == "cursor":
+        return os.path.join(repo_root, ".cursor", "mcp.json"), "mcpServers"
+    if editor == "claude":
+        return os.path.join(repo_root, ".mcp.json"), "mcpServers"
+    return os.path.join(repo_root, ".vscode", "mcp.json"), "servers"
+
+
+def editor_status(repo_root):
+    """Which editors already have the console MCP entry. No secrets: these
+    files name a command, not a credential."""
+    rows = []
+    for editor in EDITORS:
+        path, key = _editor_target(repo_root, editor)
+        wired = False
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                data = {}
+            servers = data.get(key) if isinstance(data, dict) else None
+            wired = isinstance(servers, dict) and "console" in servers
+        rows.append({
+            "id": editor,
+            "label": EDITOR_LABELS[editor],
+            "wired": wired,
+            "path": os.path.relpath(path, repo_root).replace(os.sep, "/"),
+        })
+    return rows
+
+
 def setup_editor(repo_root, editor):
     """Write `editor`'s MCP config + the AGENTS.md snippet. Returns a dict
     describing what happened — safe to call repeatedly (FR-11 idempotency)."""
@@ -105,24 +141,17 @@ def setup_editor(repo_root, editor):
         raise ValueError("unknown editor %r; choose one of %s" % (editor, EDITORS))
 
     entry_stdio = {"command": MCP_COMMAND, "args": MCP_ARGS}
-    if editor == "cursor":
-        # Cursor's project MCP config: .cursor/mcp.json, "mcpServers" key —
-        # the same shape as Claude Code's own root .mcp.json.
-        config_path = os.path.join(repo_root, ".cursor", "mcp.json")
-        mcp_changed = _merge_mcp_json(config_path, "mcpServers", entry_stdio)
-    elif editor == "claude":
-        # Claude Code's project-scoped MCP config already lives at the repo
-        # root as .mcp.json (predates this ticket) — merge into it rather
-        # than writing a second, competing file.
-        config_path = os.path.join(repo_root, ".mcp.json")
-        mcp_changed = _merge_mcp_json(
-            config_path, "mcpServers", dict(entry_stdio, env=dict(MCP_CLAUDE_ENV)))
-    else:  # vscode
-        # VS Code's MCP config: .vscode/mcp.json, "servers" key, each entry
-        # additionally names its transport type.
-        config_path = os.path.join(repo_root, ".vscode", "mcp.json")
+    config_path, servers_key = _editor_target(repo_root, editor)
+    if editor == "claude":
+        # Claude Code expands ${CONSOLE_REPO_ROOT:-} so an agent running in a
+        # ticket worktree still finds the main repo. The other editors do not.
+        entry = dict(entry_stdio, env=dict(MCP_CLAUDE_ENV))
+    elif editor == "vscode":
+        # VS Code's entry additionally names its transport type.
         entry = dict(entry_stdio, type="stdio")
-        mcp_changed = _merge_mcp_json(config_path, "servers", entry)
+    else:
+        entry = entry_stdio
+    mcp_changed = _merge_mcp_json(config_path, servers_key, entry)
 
     agents_changed = _write_agents_snippet(repo_root)
     return {

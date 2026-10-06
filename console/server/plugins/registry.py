@@ -6,8 +6,9 @@ separate on purpose (same reasoning as the fork this pattern comes from):
 - `plugins.toml` — committed, server-side. `enabled = false` means the module
   is never imported and its routes don't exist for anybody who pulls this
   checkout. Use it to say "this deployment doesn't do that".
-- Settings tab toggles — per-user, browser-local. They hide a tab for one
-  person without changing what the server offers.
+- Settings tab toggles — per-user saved preferences, kept on the server by the
+  `prefs` plugin and shared by the desktop app and every browser on this
+  machine. They hide a tab from view without changing what the server offers.
 
 Do not unify them: one is a deployment fact, the other is a preference.
 """

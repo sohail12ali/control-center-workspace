@@ -25,7 +25,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
+
+use crate::devices::{self, Direction};
 
 /// What the recogniser expects, and what the VAD expects. Not a preference —
 /// both are fixed at this rate.
@@ -474,16 +476,26 @@ impl Endpointer {
     }
 }
 
-/// Is there an input device at all?
+/// Is there an input device to open? The one the setting names if it is
+/// connected, else the system default - so this describes what `Mic::open`
+/// will use, not what the OS happens to prefer.
 pub fn available() -> bool {
-    cpal::default_host().default_input_device().is_some()
+    devices::current(Direction::Input).resolved.is_some()
 }
 
+/// The name of the input device `Mic::open` would use, empty when none.
 pub fn device_name() -> String {
-    cpal::default_host()
-        .default_input_device()
-        .and_then(|d| d.name().ok())
-        .unwrap_or_default()
+    devices::current(Direction::Input).name()
+}
+
+/// The text for a device that exists and would not open. Says "microphone"
+/// because the hands-free loop stops on that word rather than retrying a
+/// broken device forever.
+fn open_failed(cause: &dyn std::fmt::Display) -> String {
+    // The overwhelmingly common cause on Windows, and worth naming: the OS
+    // privacy switch, not a broken device.
+    format!("cannot open the microphone ({cause}). On Windows check Settings > \
+             Privacy & security > Microphone > let desktop apps access it")
 }
 
 /// Record until the speaker stops, `stop` flips, or the cap is reached.
@@ -516,7 +528,7 @@ impl Default for Limits {
 /// readable in a debugger.
 static LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-fn set_level(value: f32) {
+pub(crate) fn set_level(value: f32) {
     LEVEL.store((value.clamp(0.0, 1.0) * 1000.0) as u32, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -540,15 +552,18 @@ pub fn level() -> f32 {
 pub struct Mic {
     stream: cpal::Stream,
     ring: Arc<Mutex<Ring>>,
+    /// The device this opened, as the resolver named it.
+    device_name: String,
+    /// The input-preference generation it was opened under. When the setting
+    /// moves on, `needs_reopen` is true and the owner replaces this mic.
+    generation: u64,
 }
 
 impl Mic {
     pub fn open() -> AudioResult<Mic> {
     let opening = Instant::now();
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no microphone: nothing is set as the default input device".to_string())?;
+    let chosen = devices::resolve_input()?;
+    let device = chosen.device;
     let found_ms = opening.elapsed().as_millis();
     let step = Instant::now();
     let config = device
@@ -608,12 +623,7 @@ impl Mic {
         ),
         other => return Err(format!("this microphone reports {other:?} samples, which is not handled")),
     }
-    .map_err(|e| {
-        // The overwhelmingly common cause on Windows, and worth naming: the
-        // OS privacy switch, not a broken device.
-        format!("cannot open the microphone ({e}). On Windows check Settings > \
-                 Privacy & security > Microphone > let desktop apps access it")
-    })?;
+    .map_err(|e| open_failed(&e))?;
 
     stream
         .play()
@@ -621,11 +631,24 @@ impl Mic {
     // Timed separately from the take: this is dead air where the user has
     // already clicked and the microphone is not open yet.
     log::info!(
-        "audio: microphone open in {}ms (find {found_ms}ms, format {config_ms}ms, build {}ms)",
+        "audio: microphone {:?} open in {}ms (find {found_ms}ms, format {config_ms}ms, build {}ms)",
+        chosen.name,
         opening.elapsed().as_millis(),
         built.elapsed().as_millis()
     );
-        Ok(Mic { stream, ring })
+        Ok(Mic { stream, ring, device_name: chosen.name, generation: chosen.generation })
+    }
+
+    /// The device this microphone opened, by name.
+    pub fn device_name(&self) -> &str {
+        &self.device_name
+    }
+
+    /// Has the input setting changed since this was opened? Then the owner
+    /// drops it and opens a new one - an open stream keeps recording from the
+    /// old device for as long as it lives.
+    pub fn needs_reopen(&self) -> bool {
+        devices::needs_reopen(self.generation, devices::PREFS.input_generation())
     }
 
     /// Where the microphone has got to. A cursor taken now and passed to
@@ -1129,5 +1152,62 @@ mod tests {
         let mut ep = Endpointer::default();
         assert!(!feed(&mut ep, 0.5, 200));
         assert!(!ep.heard_speech());
+    }
+
+    // -- which device (T-031 FR-19) ----------------------------------------
+
+    #[test]
+    fn every_microphone_failure_says_microphone() {
+        // `hands_free` stops its loop on this word. A failure that dropped it
+        // would make a broken device spin the loop instead of ending it.
+        for configured in ["", "Headset"] {
+            let none = devices::no_device_error(Direction::Input, configured);
+            assert!(none.contains("microphone"), "{none}");
+        }
+        let failed = open_failed(&"the device is busy");
+        assert!(failed.contains("microphone"), "{failed}");
+        assert!(failed.contains("the device is busy"), "the cause stays in the text");
+    }
+
+    #[test]
+    fn the_reported_name_and_the_opened_name_come_from_one_decision() {
+        // `device_name()` describes the cached list and `Mic::open` the fresh
+        // one, but both call `decide`; so for one list and one preference the
+        // two answers are the same name, whichever way it matched.
+        let list = devices::DeviceList {
+            inputs: vec!["Array Mic".into(), "USB Headset Mic".into()],
+            outputs: vec!["Speakers".into()],
+            default_input: Some("Array Mic".into()),
+            default_output: Some("Speakers".into()),
+        };
+        for wanted in ["", "usb", "USB Headset Mic", "Speakers", "gone"] {
+            let described = devices::resolve_name(Direction::Input, wanted, &list);
+            let names = list.names(Direction::Input);
+            let choice = devices::choose(
+                devices::pick_by_name(wanted, names), names, list.default_name(Direction::Input));
+            assert_eq!(described.name(), choice.name.clone().unwrap_or_default(), "{wanted:?}");
+            assert_eq!(described.fallback, choice.fallback, "{wanted:?}");
+        }
+    }
+
+    #[test]
+    fn a_microphone_remembers_the_device_the_resolver_chose() {
+        // Needs a real input device. Skipped LOUDLY, not failed, where there
+        // is none (CI runners have no audio hardware).
+        if !available() {
+            println!("skipped: no input device on this machine");
+            return;
+        }
+        let mic = match Mic::open() {
+            Ok(mic) => mic,
+            Err(why) => {
+                println!("skipped: this machine has an input device but it would not open ({why})");
+                return;
+            }
+        };
+        println!("audio: opened {:?}", mic.device_name());
+        assert_eq!(mic.device_name(), device_name(),
+                   "the name `Mic` remembers is the name `device_name()` reports");
+        assert!(!mic.needs_reopen(), "nothing has changed the preference since it opened");
     }
 }

@@ -144,6 +144,7 @@
         tickets.appendChild(C.el("div", { class: "muted", text: "No open tickets." }));
       }
 
+      host.appendChild(C.splitter.foldBar(host));
       host.appendChild(C.el("div", { class: "grid as-home" }, [
         C.el("div", { class: "span2" }, [
           C.panel("Talk", [
@@ -159,12 +160,12 @@
           ], session.active
             ? C.el("span", { class: "chip", text: "live" })
             : C.el("span", { class: "chip zero", text: "idle" }),
-          { icon: "mic" }),
+          { icon: "mic", collapse: { id: "as.talk", open: true } }),
         ]),
         C.panel("Runs", runBox,
           C.el("span", { class: "chip" + (runs.length ? "" : " zero"), text: String(runs.length) }),
-          { icon: "play" }),
-        C.panel("Tickets", tickets, null, { icon: "file" }),
+          { icon: "play", collapse: { id: "as.runs", open: true } }),
+        C.panel("Tickets", tickets, null, { icon: "file", collapse: { id: "as.tickets", open: true } }),
       ]));
       paintLog();
     });

@@ -1,0 +1,29 @@
+[meta]
+ticket = "T-031"
+tracker = "questions"
+updated = "2026-10-05T06:06:10Z"
+seq = 2
+
+[[items]]
+id = "Q1"
+status = "resolved"
+text = "Should T-031's downloader also fetch the speech ENGINE binaries (whisper-server, piper), or only models and voices? Observed 2026-10-05: whisper.cpp b4938 ships Windows and Ubuntu archives (no macOS binary, SHA256 digests published); piper 2023.11.14-2 ships Windows/Linux/macOS archives (no digests); archives need extraction and an executable bit. Options: A) models and voices only; engines stay with desktop/get-whisper.ps1 and get-piper.ps1 (Windows) and a documented manual step elsewhere. B) also the piper engine on all three OSes. C) also both engines where a prebuilt exists. D) other."
+type = "scope"
+priority = "high"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-031-requirements.md FR-1, decision-log D-3"
+answer = "Models and voices only (user, 2026-10-05). Engine binaries (whisper-server, piper) are out of T-031; Linux/macOS engine install stays manual and is tracked as a follow-up. Matches decision-log D-3."
+resolved_on = ""
+
+[[items]]
+id = "Q2"
+status = "resolved"
+text = "The voice catalog mirrors get-piper.ps1 (five voices). Their MODEL_CARD licences differ: en_US-ryan-medium is CC BY-NC-SA 4.0 (non-commercial); alba CC BY 4.0; northern_english_male CC-BY-SA 4.0; amy 'See URL' (mimic3-voices); lessac points to the Blizzard 2013 licence page. This workspace is a reusable template. Options: A) keep all five and show each licence text in the UI. B) drop en_US-ryan-medium. C) keep only voices whose licence has been read in full. D) other."
+type = "decision"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-031-requirements.md FR-1, decision-log D-12"
+answer = "Keep all five voices and show each licence in the UI (user, 2026-10-05). en_US-ryan-medium stays, labelled CC BY-NC-SA 4.0 non-commercial. Matches decision-log D-12."
+resolved_on = ""

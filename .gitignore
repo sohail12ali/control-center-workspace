@@ -96,3 +96,14 @@ desktop/stt/
 # The neural voice: a 63 MB model and a prebuilt binary, fetched by
 # desktop/get-piper.ps1. Same reasoning as the speech engine above.
 desktop/tts/
+
+# scratch/ holds working notes extracted from a third-party video. Keep the
+# notes (transcript, page text, frames, scripts); never commit the downloaded
+# media or the vendor's PDF: it is not ours, and ~26 MB cannot be removed from
+# history once pushed.
+scratch/*.mp4
+scratch/*.pdf
+scratch/yt_thumb.jpg
+scratch/img_p1_*.png
+# Page text extracted from that vendor PDF is the vendor's text too.
+scratch/page_*.txt

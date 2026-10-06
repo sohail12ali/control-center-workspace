@@ -37,7 +37,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 /// Where `get-piper.ps1` puts the binary and its voices.
 const TTS_DIR: &str = "desktop/tts";
@@ -68,12 +68,37 @@ pub fn exe(repo_root: &Path) -> Option<PathBuf> {
 /// was downloaded is a settings typo, and losing the good voice over a typo is
 /// a worse outcome than using the one that is actually present.
 pub fn voice(repo_root: &Path, wanted: &str) -> Option<PathBuf> {
+    let (path, fell_back) = resolve_voice(repo_root, wanted)?;
+    if fell_back {
+        log::warn!(
+            "piper: voice {:?} is not in {TTS_DIR}; using {}",
+            wanted.trim(),
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    Some(path)
+}
+
+/// A voice NAME: letters, digits, `.`, `_`, `-` and nothing else (the rule
+/// `console/server/voice_assets.py` applies, `^[A-Za-z0-9._-]+$`). No
+/// separator, drive colon, space or NUL, so a name can never be a path.
+fn is_safe_voice_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The voice `wanted` resolves to, and whether that was a fallback. No side
+/// effects: `voice` is the one that speaks up about a fallback, and the caps
+/// ask this on every poll.
+fn resolve_voice(repo_root: &Path, wanted: &str) -> Option<(PathBuf, bool)> {
     let dir = repo_root.join(TTS_DIR);
     let wanted = wanted.trim();
-    if !wanted.is_empty() {
+    // Only a safe NAME is looked up. Anything else (a path, a drive, a space)
+    // is treated as a voice that is not installed: it falls back like a typo.
+    if is_safe_voice_name(wanted) {
         let named = dir.join(format!("{wanted}.onnx"));
         if named.is_file() {
-            return Some(named);
+            return Some((named, false));
         }
     }
     let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -83,14 +108,16 @@ pub fn voice(repo_root: &Path, wanted: &str) -> Option<PathBuf> {
         .filter(|p| p.extension().map(|x| x == "onnx").unwrap_or(false))
         .collect();
     found.sort();
-    let first = found.into_iter().next();
-    if let (false, Some(path)) = (wanted.is_empty(), first.as_ref()) {
-        log::warn!(
-            "piper: voice {wanted:?} is not in {TTS_DIR}; using {}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        );
-    }
-    first
+    // Blank is "automatic", not a typo: only a NAME that is missing is a fallback.
+    found.into_iter().next().map(|first| (first, !wanted.is_empty()))
+}
+
+/// The name of the voice that would speak for `wanted` (`en_US-amy-medium`), or
+/// `None` when no voice is installed. Never logs, so `/health` can ask it on
+/// every poll without repeating the fallback warning.
+pub fn voice_in_use(repo_root: &Path, wanted: &str) -> Option<String> {
+    let (path, _) = resolve_voice(repo_root, wanted)?;
+    path.file_stem().and_then(|s| s.to_str()).map(str::to_string)
 }
 
 /// Every voice installed, for the Settings picker.
@@ -243,8 +270,10 @@ fn play(
     done: Arc<AtomicBool>,
     source_hz: u32,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("no output device")?;
+    // The device the output setting names, else the system default.
+    let chosen = crate::devices::resolve_output()?;
+    log::debug!("piper: playing on {:?}", chosen.name);
+    let device = chosen.device;
     let config = device.default_output_config().map_err(|e| e.to_string())?;
     if config.sample_format() != cpal::SampleFormat::F32 {
         return Err(format!("output is {:?}, not f32", config.sample_format()));
@@ -367,5 +396,165 @@ mod tests {
         std::fs::write(&model, b"x").unwrap();
         let _ = std::fs::remove_file(model.with_extension("onnx.json"));
         assert_eq!(sample_rate(&model), DEFAULT_HZ);
+    }
+
+    // -- which voice speaks (T-031 FR-15, AC-2, AC-47) ---------------------
+
+    /// A repo-shaped temp root whose `desktop/tts` holds these fake voices.
+    fn root_with(tag: &str, voices: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("t031-piper-{tag}-{}", std::process::id()));
+        let dir = root.join(TTS_DIR);
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        for v in voices {
+            std::fs::write(dir.join(format!("{v}.onnx")), b"x").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn a_named_voice_is_used_and_anything_else_is_the_first_sorted() {
+        let root = root_with("pick", &["b-voice", "a-voice", "c-voice"]);
+        assert_eq!(voice_in_use(&root, "b-voice").as_deref(), Some("b-voice"));
+        assert_eq!(voice_in_use(&root, "  c-voice ").as_deref(), Some("c-voice"));
+        // Absent, blank and whitespace all fall to the first sorted voice.
+        for wanted in ["nope", "", "   "] {
+            assert_eq!(voice_in_use(&root, wanted).as_deref(), Some("a-voice"), "{wanted:?}");
+        }
+        // And `voice` (what actually speaks) agrees with it every time.
+        for wanted in ["b-voice", "nope", "", "c-voice"] {
+            let spoken = voice(&root, wanted).expect("a voice is installed");
+            let stem = spoken.file_stem().unwrap().to_string_lossy().into_owned();
+            assert_eq!(Some(stem), voice_in_use(&root, wanted), "{wanted:?}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_voice_installed_is_none_for_both() {
+        let root = root_with("none", &[]);
+        assert_eq!(voice_in_use(&root, "anything"), None);
+        assert!(voice(&root, "anything").is_none());
+        // No directory at all is the same answer.
+        let absent = std::env::temp_dir().join("t031-piper-no-such-root");
+        assert_eq!(voice_in_use(&absent, ""), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every warning-level record, in memory. The test binary has no logger of
+    /// its own (the shell installs one in `main`), so this installs one.
+    struct Capture;
+    static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            LOGGED.lock().unwrap_or_else(|e| e.into_inner()).push(record.args().to_string());
+        }
+        fn flush(&self) {}
+    }
+
+    fn mentions(marker: &str) -> usize {
+        LOGGED.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|l| l.contains(marker)).count()
+    }
+
+    #[test]
+    fn asking_which_voice_is_in_use_never_logs_the_fallback() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let _ = log::set_logger(&Capture);
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        let root = root_with("log", &["a-voice"]);
+        // A name nothing else uses, so the parallel tests' own lines cannot be
+        // mistaken for ours.
+        let missing = format!("t031-missing-voice-{}", std::process::id());
+
+        for _ in 0..5 {
+            assert_eq!(voice_in_use(&root, &missing).as_deref(), Some("a-voice"));
+        }
+        assert_eq!(mentions(&missing), 0, "a poll must not repeat the warning");
+
+        // The control: the speaking path does warn, so the zero above means
+        // something (the capture works and the fallback is a warning).
+        assert!(voice(&root, &missing).is_some());
+        assert_eq!(mentions(&missing), 1, "voice() warns once per fallback");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_voice_is_two_files_named_after_it() {
+        // The console's downloader writes `{voice}.onnx` and `{voice}.onnx.json`
+        // (`console/server/voice_assets.py`); this side reads exactly those.
+        let root = root_with("contract", &["en_US-test-medium"]);
+        let config = root.join(TTS_DIR).join("en_US-test-medium.onnx.json");
+        std::fs::write(&config, br#"{"audio": {"sample_rate": 16000}}"#).unwrap();
+
+        let model = voice(&root, "en_US-test-medium").expect("found by its name");
+        assert_eq!(model.file_name().unwrap(), "en_US-test-medium.onnx");
+        assert_eq!(sample_rate(&model), 16_000, "the config is {{voice}}.onnx.json");
+        // The config is not a voice of its own.
+        assert_eq!(voices(&root), vec!["en_US-test-medium".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -- a voice name is a name, never a path (T-031 FIX-3) -----------------
+
+    #[test]
+    fn a_voice_name_that_is_a_path_is_an_unknown_voice_and_never_leaves_the_directory() {
+        let root = root_with("traverse", &["a-voice", "b-voice"]);
+        let dir = root.join(TTS_DIR);
+        // Reachable by `..\evil` / `../evil` from desktop/tts, and by its absolute path.
+        std::fs::write(root.join("desktop").join("evil.onnx"), b"x").unwrap();
+        let outside = std::env::temp_dir().join(format!("t031-piper-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("evil2.onnx"), b"x").unwrap();
+        let absolute = outside.join("evil2").to_string_lossy().into_owned();
+
+        let hostile = [
+            "..\\evil".to_string(),
+            "../evil".to_string(),
+            "..\\..\\evil".to_string(),
+            "C:\\x\\y".to_string(),
+            "/abs/x".to_string(),
+            absolute.clone(),
+            absolute.replace('\\', "/"),
+            "sub/dir".to_string(),
+            "with space".to_string(),
+            "nul\0byte".to_string(),
+            "a-voice\0".to_string(),
+            "C:evil".to_string(),
+        ];
+        for wanted in &hostile {
+            assert_eq!(voice_in_use(&root, wanted).as_deref(), Some("a-voice"), "{wanted:?}");
+            let spoken = voice(&root, wanted).expect("a voice is installed");
+            assert_eq!(spoken.parent().unwrap(), dir, "{wanted:?} escaped to {spoken:?}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn an_empty_name_is_automatic_and_a_dotted_hyphenated_name_still_resolves() {
+        let long = "en_GB-northern_english_male-medium";
+        let root = root_with("names", &["a-voice", long, "v1.2_x-y"]);
+        assert_eq!(voice_in_use(&root, "").as_deref(), Some("a-voice"));
+        assert_eq!(voice_in_use(&root, long).as_deref(), Some(long));
+        assert_eq!(voice_in_use(&root, " v1.2_x-y ").as_deref(), Some("v1.2_x-y"));
+        let spoken = voice(&root, long).unwrap();
+        assert_eq!(spoken, root.join(TTS_DIR).join(format!("{long}.onnx")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_safe_name_rule_is_the_pythons() {
+        for ok in ["a", "en_US-amy-medium", "v1.2_x-y", "A9"] {
+            assert!(is_safe_voice_name(ok), "{ok:?}");
+        }
+        for bad in ["", "a b", "a/b", "a\\b", "C:x", "a\0", "é", "a\n"] {
+            assert!(!is_safe_voice_name(bad), "{bad:?}");
+        }
     }
 }

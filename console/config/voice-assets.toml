@@ -1,0 +1,197 @@
+# Speech models and voices the Settings tab can download (T-031).
+#
+# Reviewed like agents.toml and pricing.toml: committed, not per machine, and
+# the ONLY place a download URL or a hash enters the repo. Every URL is pinned
+# to a Hugging Face commit, so the bytes behind each sha256 cannot change.
+# Values come from knowledge-center/artifacts/T-031/T-031-decision-log.md D-2
+# (read from the Hugging Face tree API 2026-10-05, LFS oid = sha256 of the
+# content, confirmed by the x-linked-etag header). Nothing here is typed from
+# memory; to refresh, re-run the tree API and change commit + hashes together.
+#
+# hash_source = hf-lfs-oid       the sha256 Hugging Face publishes (large files)
+# hash_source = computed-pinned  small non-LFS file: Hugging Face publishes only
+#                                a git blob sha1 (git_blob_sha1), so the sha256
+#                                was computed from the commit-pinned download
+#                                and the git blob sha1 was matched against it.
+#
+# Written in the console's tomlio subset: [[array]] tables, scalars, no inline
+# tables, no multi-line strings, no trailing comments (server/tomlio.py).
+#
+# Engines (whisper-server, piper) are NOT catalogued: models and voices only
+# (decision D-3). Filenames are a shared contract with the desktop shell:
+# ggml-{id}.bin for a model, {voice}.onnx + {voice}.onnx.json for a voice.
+
+[[stt]]
+id = "tiny.en"
+label = "tiny.en"
+repo = "ggerganov/whisper.cpp"
+commit = "5359861c739e955e79d9a303bcbc70fb988958b1"
+hint = "74 MiB / 78 MB. Fastest, least accurate; weakest at ticket ids."
+license = "MIT (repository licence tag on Hugging Face)"
+
+[[stt.file]]
+name = "ggml-tiny.en.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin"
+size = 77704715
+sha256 = "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"
+hash_source = "hf-lfs-oid"
+
+[[stt]]
+id = "base.en"
+label = "base.en"
+repo = "ggerganov/whisper.cpp"
+commit = "5359861c739e955e79d9a303bcbc70fb988958b1"
+hint = "141 MiB / 148 MB. The default; accurate on ticket ids."
+license = "MIT (repository licence tag on Hugging Face)"
+
+[[stt.file]]
+name = "ggml-base.en.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin"
+size = 147964211
+sha256 = "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+hash_source = "hf-lfs-oid"
+
+[[stt]]
+id = "small.en"
+label = "small.en"
+repo = "ggerganov/whisper.cpp"
+commit = "5359861c739e955e79d9a303bcbc70fb988958b1"
+hint = "465 MiB / 488 MB. Better on accents and noise than base.en."
+license = "MIT (repository licence tag on Hugging Face)"
+
+[[stt.file]]
+name = "ggml-small.en.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en.bin"
+size = 487614201
+sha256 = "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
+hash_source = "hf-lfs-oid"
+
+[[stt]]
+id = "medium.en"
+label = "medium.en"
+repo = "ggerganov/whisper.cpp"
+commit = "5359861c739e955e79d9a303bcbc70fb988958b1"
+hint = "1.43 GiB / 1.53 GB. The largest of the four."
+license = "MIT (repository licence tag on Hugging Face)"
+
+[[stt.file]]
+name = "ggml-medium.en.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.en.bin"
+size = 1533774781
+sha256 = "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356"
+hash_source = "hf-lfs-oid"
+
+[[voice]]
+id = "en_US-amy-medium"
+label = "Amy (US English)"
+repo = "rhasspy/piper-voices"
+commit = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+hint = "60 MiB / 63 MB. US English."
+license = "See URL: https://github.com/MycroftAI/mimic3-voices"
+
+[[voice.file]]
+name = "en_US-amy-medium.onnx.json"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/en_US-amy-medium.onnx.json"
+size = 4882
+sha256 = "95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77"
+hash_source = "computed-pinned"
+git_blob_sha1 = "5a1e0a2d94d3719de29a4771aa0e6c116552445f"
+
+[[voice.file]]
+name = "en_US-amy-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/en_US-amy-medium.onnx"
+size = 63201294
+sha256 = "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18"
+hash_source = "hf-lfs-oid"
+
+[[voice]]
+id = "en_US-ryan-medium"
+label = "Ryan (US English)"
+repo = "rhasspy/piper-voices"
+commit = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+hint = "60 MiB / 63 MB. US English. Non-commercial use only."
+license = "CC BY-NC-SA 4.0 (non-commercial)"
+
+[[voice.file]]
+name = "en_US-ryan-medium.onnx.json"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ryan/medium/en_US-ryan-medium.onnx.json"
+size = 4883
+sha256 = "44034c056cb15681b2ad494307c7f3f2e4499d1253c700c711fa0a4607ffe78d"
+hash_source = "computed-pinned"
+git_blob_sha1 = "90e07066093f756cf2e0d7b973cbf176b586dddf"
+
+[[voice.file]]
+name = "en_US-ryan-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ryan/medium/en_US-ryan-medium.onnx"
+size = 63201294
+sha256 = "abf4c274862564ed647ba0d2c47f8ee7c9b717d27bdad9219100eb310db4047a"
+hash_source = "hf-lfs-oid"
+
+[[voice]]
+id = "en_US-lessac-medium"
+label = "Lessac (US English)"
+repo = "rhasspy/piper-voices"
+commit = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+hint = "60 MiB / 63 MB. US English."
+license = "https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html"
+
+[[voice.file]]
+name = "en_US-lessac-medium.onnx.json"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
+size = 4885
+sha256 = "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0"
+hash_source = "computed-pinned"
+git_blob_sha1 = "c67cea2c9a7a6501d89f7b2cdff411bc49e54a28"
+
+[[voice.file]]
+name = "en_US-lessac-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/lessac/medium/en_US-lessac-medium.onnx"
+size = 63201294
+sha256 = "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f"
+hash_source = "hf-lfs-oid"
+
+[[voice]]
+id = "en_GB-alba-medium"
+label = "Alba (British English)"
+repo = "rhasspy/piper-voices"
+commit = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+hint = "60 MiB / 63 MB. British English."
+license = "https://creativecommons.org/licenses/by/4.0/"
+
+[[voice.file]]
+name = "en_GB-alba-medium.onnx.json"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
+size = 4888
+sha256 = "aa965a2f02ecced632c2694e1fc72bbff6d65f265fab567ca945918c73dd89f4"
+hash_source = "computed-pinned"
+git_blob_sha1 = "c0969252c640fd7c2765baa62936a1106ca856d7"
+
+[[voice.file]]
+name = "en_GB-alba-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
+size = 63201294
+sha256 = "401369c4a81d09fdd86c32c5c864440811dbdcc66466cde2d64f7133a66ad03b"
+hash_source = "hf-lfs-oid"
+
+[[voice]]
+id = "en_GB-northern_english_male-medium"
+label = "Northern English male (British)"
+repo = "rhasspy/piper-voices"
+commit = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
+hint = "60 MiB / 63 MB. British English, northern accent."
+license = "CC-BY-SA 4.0 International"
+
+[[voice.file]]
+name = "en_GB-northern_english_male-medium.onnx.json"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
+size = 4847
+sha256 = "69557ed3d974463453e9b0c09dd99a7ed0e52b8b87b64b357dbeeb2540a97d47"
+hash_source = "computed-pinned"
+git_blob_sha1 = "1e94f02fd642271570a935c813186aaa95b2ad13"
+
+[[voice.file]]
+name = "en_GB-northern_english_male-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx"
+size = 63201294
+sha256 = "57a219ae8e638873db7d18893304be5069c42868f392bb95c3ff17f0690d0689"
+hash_source = "hf-lfs-oid"

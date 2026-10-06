@@ -1,0 +1,22 @@
+[ticket]
+id = "T-039"
+title = "Needs you panel and panel freshness: human-only list, timestamps, STALE marks"
+kind = "tickets"
+stage = "open"
+status = "active"
+owner = "Sohail Ali"
+priority = "medium"
+created = "2026-10-06"
+updated = "2026-10-06"
+tags = []
+links = []
+scripts_dir = ""
+url = ""
+claimed_by = ""
+claimed_at = ""
+claimed_run = ""
+review_rounds = 0
+review_escalated = false
+branch = ""
+pr_url = ""
+pr_state = ""

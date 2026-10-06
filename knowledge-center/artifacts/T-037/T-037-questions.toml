@@ -1,0 +1,17 @@
+[meta]
+ticket = "T-037"
+tracker = "questions"
+updated = "2026-10-05T06:50:04Z"
+seq = 1
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "On a viewport wider than 900px, when ticket detail opens from a board card, should the docked resizable panel (A) fully REPLACE the modal overlay + scrim, (B) be an opt-in 'dock' toggle with the overlay staying the default, or (C) other (specify)? At 900px and below the panel stays modal with scrim, Esc and focus handling in every case (existing narrow-viewport behaviour, styles.css:1994-2034)."
+type = "design"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-037-requirements"
+answer = ""
+resolved_on = ""

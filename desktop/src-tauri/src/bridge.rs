@@ -40,6 +40,7 @@ use crate::clipboard;
 use crate::ocr;
 use crate::tray_state::Event;
 use crate::tts;
+use crate::voice_test;
 use crate::listen;
 use crate::hands_free;
 use crate::tray_state::Assistant;
@@ -239,6 +240,12 @@ fn capabilities(repo_root: &Path) -> Value {
         // Probed like the rest: a microphone AND an installed engine.
         "stt": listen::available(repo_root),
         "stt_model": crate::stt::model_name(repo_root),
+        // The model file the engine is running right now (empty when none):
+        // after a live swap this is what proves it took effect.
+        "loaded_model": crate::stt::loaded_model(),
+        // The installed voice the settings resolve to (null when none). Never
+        // logs, so polling `/health` does not repeat the fallback warning.
+        "speak_voice_in_use": crate::piper::voice_in_use(repo_root, &tts::chosen_voice()),
         "stt_hint": listen::hint(repo_root),
         // A wakeword recorded on THIS machine. Hands-free runs either way —
         // without one it falls back to transcribing every utterance — so this
@@ -273,6 +280,97 @@ fn record_phrase() -> Result<Vec<u8>, String> {
         return Err("nothing heard - say the phrase once, right after pressing".into());
     }
     Ok(take.wav())
+}
+
+/// The body of `GET /listen/state`.
+pub(crate) fn listen_state_json(repo_root: &Path) -> Value {
+    json!({
+        "listening": listen::listening(),
+        "available": listen::available(repo_root),
+        "hint": listen::hint(repo_root),
+        "microphone": crate::audio::device_name(),
+        "engine_running": crate::stt::running(),
+        "model": crate::stt::loaded_model(),
+        // Why the last model or prompt swap failed, empty when it did not.
+        "swap_error": crate::stt::swap_error(),
+        // The Settings "Test microphone" state: running, peak, device.
+        "mic_test": voice_test::state_json(&voice_test::shell_state()),
+        "hands_free": hands_free::running(),
+        // Why it stopped, so a loop that ended by itself (time limit, a
+        // microphone that went away) can say so instead of just going
+        // quiet.
+        "hands_free_stopped": hands_free::last_stop_reason(),
+        // T-019. What the wake-word spotter can see, for the diagnostics
+        // panel. Before this the only evidence a user had that listening
+        // was working at all was a log file — which is why a broken wake
+        // word went five takes without anyone being able to say why.
+        "wake": {
+            "installed": crate::wake::installed(repo_root),
+            "available": crate::wake::available(repo_root),
+            "hint": crate::wake::hint(repo_root),
+            "score": crate::wake::last_score(),
+            "level": crate::audio::level(),
+            "fired": crate::wake::last_fired().map(|f| json!({
+                "name": f.name, "score": f.score, "avg_score": f.avg_score,
+            })),
+        },
+    })
+}
+
+/// One direction's verdict: what was asked for and what is in use. The only
+/// matcher is `devices::resolve_name`; nothing else decides this (D-17).
+fn verdict_json(v: &crate::devices::Verdict) -> Value {
+    json!({
+        "configured": v.configured,
+        "resolved": v.resolved,
+        "match": v.match_kind.as_str(),
+        "fallback": v.fallback,
+        "candidates": v.candidates,
+    })
+}
+
+/// The body of `GET /audio/devices`: the names on offer, the OS defaults and,
+/// per direction, the verdict for the shell's APPLIED preference.
+pub(crate) fn devices_json(
+    list: &crate::devices::DeviceList,
+    input_pref: &str,
+    output_pref: &str,
+) -> Value {
+    use crate::devices::{resolve_name, Direction};
+    json!({
+        "inputs": list.inputs,
+        "outputs": list.outputs,
+        "default_input": list.default_input,
+        "default_output": list.default_output,
+        "input": verdict_json(&resolve_name(Direction::Input, input_pref, list)),
+        "output": verdict_json(&resolve_name(Direction::Output, output_pref, list)),
+    })
+}
+
+/// `POST /audio/test/mic`: refused with 409 and the reason while the
+/// microphone is busy, else started (answering at once).
+fn mic_test_response(
+    busy: Option<&str>,
+    start: impl FnOnce() -> Result<(), String>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    if let Some(why) = busy {
+        return err(409, "busy", why);
+    }
+    match start() {
+        Ok(()) => ok(json!({"started": true})),
+        Err(e) => err(503, "unavailable", e),
+    }
+}
+
+/// `POST /audio/test/speaker`: the output is resolved before anything plays,
+/// so an unresolved one is a 503 with the reason.
+fn speaker_test_response(
+    start: impl FnOnce() -> Result<String, String>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    match start() {
+        Ok(device) => ok(json!({"playing": true, "device": device})),
+        Err(e) => err(503, "unavailable", e),
+    }
 }
 
 fn route(
@@ -407,33 +505,43 @@ fn route(
                 other => err(400, "bad_request", format!("unknown listen mode {other:?}")),
             }
         }
-        ("GET", "/listen/state") => ok(json!({
-            "listening": listen::listening(),
-            "available": listen::available(repo_root),
-            "hint": listen::hint(repo_root),
-            "microphone": crate::audio::device_name(),
-            "engine_running": crate::stt::running(),
-            "model": crate::stt::loaded_model(),
-            "hands_free": hands_free::running(),
-            // Why it stopped, so a loop that ended by itself (time limit, a
-            // microphone that went away) can say so instead of just going
-            // quiet.
-            "hands_free_stopped": hands_free::last_stop_reason(),
-            // T-019. What the wake-word spotter can see, for the diagnostics
-            // panel. Before this the only evidence a user had that listening
-            // was working at all was a log file — which is why a broken wake
-            // word went five takes without anyone being able to say why.
-            "wake": {
-                "installed": crate::wake::installed(repo_root),
-                "available": crate::wake::available(repo_root),
-                "hint": crate::wake::hint(repo_root),
-                "score": crate::wake::last_score(),
-                "level": crate::audio::level(),
-                "fired": crate::wake::last_fired().map(|f| json!({
-                    "name": f.name, "score": f.score, "avg_score": f.avg_score,
-                })),
-            },
-        })),
+        ("GET", "/listen/state") => ok(listen_state_json(repo_root)),
+        ("GET", "/audio/devices") => {
+            let list = crate::devices::refresh();
+            ok(devices_json(
+                &list,
+                &crate::devices::PREFS.input_preference(),
+                &crate::devices::PREFS.output_preference(),
+            ))
+        }
+        ("POST", "/audio/test/mic") => mic_test_response(
+            voice_test::refuse_reason(
+                listen::take_in_progress(),
+                hands_free::running(),
+                voice_test::running(&voice_test::shell_state()),
+            ),
+            voice_test::start_mic_test,
+        ),
+        ("POST", "/audio/test/speaker") => speaker_test_response(voice_test::start_speaker_test),
+        // The console saved a setting and is telling us. Answered AT ONCE and
+        // applied on a thread of its own: this bridge handles one request at a
+        // time, and the settings fetch it implies stalls for ~3 seconds one
+        // request in fifteen (`console_settings.rs`). Doing the fetch here would
+        // freeze every other bridge call, and the console only waits one second
+        // for this answer anyway (T-031 D-15).
+        ("POST", "/settings/refresh") => {
+            let root = repo_root.to_path_buf();
+            let url = console_url.to_string();
+            let spawned = std::thread::Builder::new()
+                .name("settings-refresh".into())
+                .spawn(move || {
+                    let _ = listen::refresh_settings(&root, &url);
+                });
+            match spawned {
+                Ok(_) => ok(json!({"applying": true})),
+                Err(e) => err(500, "internal", format!("cannot start the refresh: {e}")),
+            }
+        }
         // -- recording a wake word ------------------------------------------
         //
         // Three steps, deliberately: say it, say it again, build. A phrase
@@ -494,16 +602,14 @@ fn route(
                 Err(e) => return err(400, "bad_request", e),
             };
             let text = body.get("text").and_then(Value::as_str).unwrap_or("");
-            // Voice and speed come from the console's settings, read fresh:
-            // changing them on the Settings tab should take effect on the next
-            // thing spoken, not the next launch.
+            // Voice and speed: what the request names wins (Preview speaks a
+            // choice before it is saved), anything it leaves out comes from the
+            // console's settings, read fresh so a change on the Settings tab
+            // takes effect on the next thing spoken, not the next launch.
             let settings = crate::console_settings::all(console_url);
-            tts::configure(
-                repo_root,
-                &crate::console_settings::str_at(&settings, "speak_voice", ""),
-                crate::console_settings::u64_at(&settings, "speak_rate_percent", 100) as f32
-                    / 100.0,
-            );
+            let (voice, rate) = tts::speak_params(&settings, &body);
+            tts::choose(&tts::speak_params(&settings, &json!({})).0);
+            tts::configure(repo_root, &voice, rate);
             match tts::speak(text) {
                 Ok(chars) => {
                     // The tray shows speaking as soon as the utterance
@@ -717,5 +823,396 @@ mod tests {
         let body = json!({"path": "../../.env"});
         assert!(body.get("capture_id").is_none(),
                 "a caller cannot smuggle a path in place of an id");
+    }
+
+    // -- real requests against a real bridge (T-031) ------------------------
+    //
+    // A route is only tested when something asks it over a socket: the handler
+    // is private, takes a live `Request`, and the parts most likely to be wrong
+    // (auth, status codes, the response arriving at all) sit around it.
+
+    use std::io::Write as _;
+    use std::net::TcpStream;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// A real `bridge::start` on a temp repo root: its own random port, its own
+    /// token, and a pointer file that is NOT the repo's (so a test never
+    /// repoints the running app's console). Dropped, it removes the root; the
+    /// listener thread ends with the test process.
+    struct Loopback {
+        port: u16,
+        token: String,
+        root: PathBuf,
+    }
+
+    impl Loopback {
+        fn start(console_url: &str) -> Loopback {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "t031-bridge-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::SeqCst)
+            ));
+            let bridge = start(
+                &root,
+                Arc::new(Mutex::new(Assistant::default())),
+                console_url.to_string(),
+            )
+            .expect("the bridge binds to loopback");
+            assert!(bridge.pointer.starts_with(&root), "the pointer is under the temp root");
+            let pointer: Value = serde_json::from_str(
+                &std::fs::read_to_string(&bridge.pointer).expect("the pointer was written"),
+            )
+            .expect("the pointer is JSON");
+            Loopback {
+                port: bridge.base_url.rsplit(':').next().unwrap().parse().expect("a port"),
+                token: pointer["token"].as_str().expect("a token").to_string(),
+                root,
+            }
+        }
+
+        /// One request, and its answer as `(status, JSON body)`. `token` is sent
+        /// as the bearer token when given.
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            token: Option<&str>,
+            body: Option<&str>,
+        ) -> (u16, Value) {
+            let mut stream = TcpStream::connect(("127.0.0.1", self.port)).expect("connect");
+            stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+            let body = body.unwrap_or("");
+            let mut head = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n", self.port);
+            if let Some(t) = token {
+                head.push_str(&format!("Authorization: Bearer {t}\r\n"));
+            }
+            head.push_str(&format!(
+                "Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            ));
+            stream.write_all(head.as_bytes()).and_then(|()| stream.write_all(body.as_bytes())).unwrap();
+            let mut raw = Vec::new();
+            stream.read_to_end(&mut raw).expect("the bridge answers");
+            let text = String::from_utf8_lossy(&raw).into_owned();
+            let (head, payload) = text.split_once("\r\n\r\n").expect("a complete response");
+            let status = head
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| panic!("no status line in {head:?}"));
+            (status, serde_json::from_str(payload.trim()).unwrap_or(Value::Null))
+        }
+
+        /// The same, with this bridge's own token.
+        fn call(&self, method: &str, path: &str, body: Option<&str>) -> (u16, Value) {
+            self.request(method, path, Some(&self.token), body)
+        }
+    }
+
+    impl Drop for Loopback {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn the_loopback_helper_reaches_a_real_bridge() {
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        // `/health` is the one open route, and answers with the shell's caps.
+        let (status, body) = bridge.request("GET", "/health", None, None);
+        assert_eq!(status, 200);
+        assert_eq!(body["ok"], true);
+        assert!(body["caps"].is_object());
+        // An unknown route is a 404 from the real router, not from the helper.
+        let (status, body) = bridge.call("GET", "/no/such/route", None);
+        assert_eq!(status, 404);
+        assert_eq!(body["error"], "not_found");
+    }
+
+    #[test]
+    fn a_settings_refresh_needs_this_shells_token() {
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        let (status, body) = bridge.request("POST", "/settings/refresh", None, Some("{}"));
+        assert_eq!((status, body["error"].as_str()), (401, Some("unauthorized")));
+        let (status, body) = bridge.request("POST", "/settings/refresh", Some("not-the-token"), Some("{}"));
+        assert_eq!((status, body["error"].as_str()), (401, Some("unauthorized")));
+    }
+
+    #[test]
+    fn a_settings_refresh_answers_applying_at_once_when_the_console_is_unreachable() {
+        // Port 1 on loopback is closed: the console is "not running".
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        let began = Instant::now();
+        let (status, body) = bridge.call("POST", "/settings/refresh", Some("{}"));
+        let took = began.elapsed();
+        assert_eq!(status, 200);
+        assert_eq!(body["applying"], true);
+        assert_eq!(body["ok"], true);
+        assert!(took < Duration::from_millis(500), "the poke took {took:?}");
+    }
+
+    #[test]
+    fn a_console_that_never_answers_does_not_hold_the_poke() {
+        // The case D-15 exists for: the settings fetch STALLS. A console that
+        // accepts the connection and then says nothing is exactly that. The
+        // route must still answer at once, and the fetch must still happen.
+        let stalled = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+        stalled.set_nonblocking(true).unwrap();
+        let bridge = Loopback::start(&format!("http://{}", stalled.local_addr().unwrap()));
+
+        let began = Instant::now();
+        let (status, body) = bridge.call("POST", "/settings/refresh", Some("{}"));
+        let took = began.elapsed();
+        assert_eq!((status, &body["applying"]), (200, &Value::Bool(true)));
+        assert!(took < Duration::from_millis(500), "the poke took {took:?} behind a stalled console");
+
+        // The refresh really went to the console (so it was deferred, not
+        // skipped). Holding the connection keeps the fetch waiting; dropping it
+        // lets that thread finish instead of lingering for the read timeout.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let held = loop {
+            match stalled.accept() {
+                Ok((conn, _)) => break conn,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("the refresh never asked the console: {e}"),
+            }
+        };
+        drop(held);
+    }
+
+    /// A console that answers `GET /api/assistant/settings` with these settings
+    /// and nothing else, on a port of its own. Stops when dropped.
+    struct FakeConsole {
+        url: String,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl FakeConsole {
+        fn start(settings: Value) -> FakeConsole {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+            listener.set_nonblocking(true).unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = stop.clone();
+            let body = json!({"settings": settings}).to_string();
+            std::thread::spawn(move || {
+                while !flag.load(Ordering::SeqCst) {
+                    match listener.accept() {
+                        Ok((mut conn, _)) => {
+                            let _ = conn.set_nonblocking(false);
+                            let _ = conn.set_read_timeout(Some(Duration::from_secs(1)));
+                            let mut request = [0u8; 2048];
+                            let _ = conn.read(&mut request);
+                            let reply = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = conn.write_all(reply.as_bytes());
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                    }
+                }
+            });
+            FakeConsole { url, stop }
+        }
+    }
+
+    impl Drop for FakeConsole {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn speak_takes_voice_and_speed_from_the_request_else_from_the_settings() {
+        // The whole route, over a socket, with empty text: every line of the arm
+        // runs and nothing is said out loud.
+        let console = FakeConsole::start(json!({"speak_voice": "from-settings", "speak_rate_percent": 90}));
+        let bridge = Loopback::start(&console.url);
+        crate::console_settings::forget();
+
+        let (status, body) = bridge.call(
+            "POST", "/speak", Some(r#"{"text": "", "voice": "from-request", "rate_percent": 150}"#));
+        assert_eq!((status, body["chars"].as_u64()), (200, Some(0)), "{body}");
+        let (voice, rate) = tts::configured();
+        assert_eq!(voice, "from-request");
+        assert!((rate - 1.5).abs() < 1e-6, "{rate}");
+
+        // A request that names neither gets the settings, so Preview's choice
+        // did not leak into the next ordinary reply.
+        let (status, _) = bridge.call("POST", "/speak", Some(r#"{"text": ""}"#));
+        assert_eq!(status, 200);
+        let (voice, rate) = tts::configured();
+        assert_eq!(voice, "from-settings");
+        assert!((rate - 0.9).abs() < 1e-6, "{rate}");
+        crate::console_settings::forget();
+    }
+
+    // -- the audio routes and the new caps (T-031-24) -----------------------
+
+    fn body_of(response: Response<std::io::Cursor<Vec<u8>>>) -> (u16, Value) {
+        let status = response.status_code().0;
+        let mut text = String::new();
+        response.into_reader().read_to_string(&mut text).unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn the_devices_route_lists_both_directions_with_a_verdict_each() {
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        let (status, body) = bridge.request("GET", "/audio/devices", None, None);
+        assert_eq!((status, body["error"].as_str()), (401, Some("unauthorized")));
+        let (status, body) = bridge.call("GET", "/audio/devices", None);
+        assert_eq!(status, 200, "{body}");
+        assert!(body["inputs"].is_array() && body["outputs"].is_array(), "{body}");
+        for side in ["input", "output"] {
+            let v = &body[side];
+            for key in ["configured", "resolved", "match", "fallback", "candidates"] {
+                assert!(v.get(key).is_some(), "{side} has no {key}: {body}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_verdict_comes_from_the_one_matcher_per_direction() {
+        let list = crate::devices::DeviceList {
+            inputs: vec!["Array Mic".into(), "USB Headset Mic".into()],
+            outputs: vec!["Speakers".into()],
+            default_input: Some("Array Mic".into()),
+            default_output: Some("Speakers".into()),
+        };
+        let v = devices_json(&list, " usb ", "Array Mic");
+        assert_eq!(v["input"]["resolved"], "USB Headset Mic");
+        assert_eq!(v["input"]["match"], "substring");
+        assert_eq!(v["input"]["fallback"], false);
+        // A name that exists only as an input is no output: the default is used.
+        assert_eq!(v["output"]["resolved"], "Speakers");
+        assert_eq!(v["output"]["fallback"], true);
+        // No devices at all: nothing panics, nothing resolves.
+        let none = devices_json(&crate::devices::DeviceList::default(), "", "x");
+        assert_eq!(none["inputs"], json!([]));
+        assert_eq!(none["input"]["resolved"], Value::Null);
+    }
+
+    #[test]
+    fn the_mic_test_is_refused_with_a_reason_while_a_take_is_in_progress() {
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        listen::force_busy(true);
+        let (status, body) = bridge.call("POST", "/audio/test/mic", Some("{}"));
+        listen::force_busy(false);
+        assert_eq!(status, 409, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("take"), "{body}");
+        // Free: the route's answer is 200 and the test starts (a fake starter,
+        // so no microphone is opened here).
+        let (status, body) = body_of(mic_test_response(None, || Ok(())));
+        assert_eq!((status, &body["started"]), (200, &Value::Bool(true)));
+        let (status, _) = body_of(mic_test_response(None, || Err("cannot open the microphone".into())));
+        assert_eq!(status, 503);
+    }
+
+    #[test]
+    fn the_speaker_test_without_an_output_is_a_503_with_the_reason() {
+        let (status, body) = body_of(speaker_test_response(|| {
+            Err("no output device: nothing is set as the default output device".into())
+        }));
+        assert_eq!(status, 503);
+        assert!(body["message"].as_str().unwrap().contains("output"), "{body}");
+        let (status, body) = body_of(speaker_test_response(|| Ok("Speakers".into())));
+        assert_eq!((status, body["device"].as_str(), body["playing"].as_bool()), (200, Some("Speakers"), Some(true)));
+    }
+
+    #[test]
+    fn the_listen_state_carries_the_mic_test_and_the_swap_error() {
+        let state = listen_state_json(&std::env::temp_dir());
+        for key in ["mic_test", "swap_error", "microphone", "engine_running", "model"] {
+            assert!(state.get(key).is_some(), "no {key}");
+        }
+        let mut keys: Vec<_> = state["mic_test"].as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert!(keys.starts_with(&["device".into(), "peak".into(), "running".into()]), "{keys:?}");
+        // And over the wire, from the real route.
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        let (status, body) = bridge.call("GET", "/listen/state", None);
+        assert_eq!(status, 200);
+        assert!(body["mic_test"]["running"].is_boolean(), "{body}");
+        assert!(body["swap_error"].is_string(), "{body}");
+    }
+
+    #[test]
+    fn the_caps_report_the_loaded_model_and_the_voice_in_use() {
+        let caps = capabilities(&std::env::temp_dir().join("t031-no-such-root"));
+        assert!(caps["loaded_model"].is_string(), "{caps}");
+        assert!(caps.get("speak_voice_in_use").is_some(), "{caps}");
+        assert_eq!(caps["speak_voice_in_use"], Value::Null, "no voice is installed under that root");
+    }
+
+    #[test]
+    fn the_open_health_route_carries_the_new_caps_over_the_wire() {
+        let bridge = Loopback::start("http://127.0.0.1:1");
+        let (status, body) = bridge.request("GET", "/health", None, None);
+        assert_eq!(status, 200);
+        assert!(body["caps"]["loaded_model"].is_string(), "{body}");
+        assert!(body["caps"].get("speak_voice_in_use").is_some(), "{body}");
+        // The mic and speaker routes need the token like every other.
+        for path in ["/audio/test/mic", "/audio/test/speaker"] {
+            let (status, _) = bridge.request("POST", path, None, Some("{}"));
+            assert_eq!(status, 401, "{path}");
+        }
+    }
+
+    /// [HL] A live model swap is visible where the console looks: the real
+    /// engine, two models, the fixture. Skips loudly (and passes) when any of
+    /// them is missing, which is the normal state on a machine with one model.
+    #[test]
+    fn live_swap_is_visible_in_listen_state() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let stt_dir = root.join("desktop/stt");
+        let fixture = root.join("desktop/tests/fixtures/status-ticket-two.wav");
+        if !crate::stt::available(&root) {
+            eprintln!("skipped: {}", crate::stt::hint(&root));
+            return;
+        }
+        for model in ["ggml-base.en.bin", "ggml-tiny.en.bin"] {
+            if !stt_dir.join(model).is_file() {
+                eprintln!("skipped: {model} is not installed under desktop/stt");
+                return;
+            }
+        }
+        if !fixture.is_file() {
+            eprintln!("skipped: no fixture at {}", fixture.display());
+            return;
+        }
+        struct Stop;
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                crate::stt::prefer_model("");
+                crate::stt::shutdown();
+            }
+        }
+        let _stop = Stop;
+        let wav = std::fs::read(&fixture).unwrap();
+        crate::stt::prefer_model("base.en");
+        let first = crate::stt::transcribe(&root, &wav).expect("base.en transcribes");
+        assert!(first.to_lowercase().contains("status"), "{first:?}");
+        crate::stt::prefer_model("tiny.en");
+        let began = Instant::now();
+        // The next take starts the swap in the background and is served by the
+        // old engine; wait for the replacement to publish.
+        let _ = crate::stt::transcribe(&root, &wav);
+        while crate::stt::loaded_model() != "ggml-tiny.en.bin" {
+            assert!(began.elapsed() < Duration::from_secs(30), "no swap in 30 s: {}", crate::stt::swap_error());
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let swap = began.elapsed();
+        let second = crate::stt::transcribe(&root, &wav).expect("tiny.en transcribes");
+        assert!(second.to_lowercase().contains("status"), "{second:?}");
+        assert_eq!(listen_state_json(&root)["model"], "ggml-tiny.en.bin");
+        eprintln!("live swap: base.en -> tiny.en visible in {swap:?}; heard {second:?}");
     }
 }

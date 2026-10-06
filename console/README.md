@@ -199,7 +199,7 @@ its own. A tab you have to navigate to is a tab you check after it mattered.
 | Audit trail | Work → **Console activity** | Read-only, collapsed by default |
 | Worktrees, notification health | Settings → **This machine** | Read-only |
 | Provider health, model cache | Settings → **Model providers** | Refreshes a catalogue |
-| Picker triggers, list folding | Settings → **Composer** | Browser-local prefs |
+| Picker triggers, list folding | Settings → **Composer** | Saved preferences, shared |
 
 Two rules run through that table.
 
@@ -572,8 +572,8 @@ vocabulary.
 
 | Question | `config/plugins.toml` | Settings tab |
 | --- | --- | --- |
-| Scope | The deployment — everyone who pulls the checkout | One person's browser |
-| Stored in | A committed file | `localStorage` |
+| Scope | The deployment — everyone who pulls the checkout | One person's saved preferences, shared by the desktop app and every browser on this machine |
+| Stored in | A committed file | The server, in `console/.cache/prefs.json` (gitignored); `localStorage` only in a static export |
 | Effect | Module never imported, routes don't exist, tab absent from `/api/config` | Tab hidden from the nav |
 | Use it to say | "This deployment does not do that" | "I don't use that tab" |
 
@@ -581,6 +581,14 @@ Hiding the Agents tab in Settings does **not** disable the launch endpoint.
 Setting its `plugins.toml` row to `enabled = false` does. The Settings tab
 shows the server's actual loaded routes next to its own switches so the
 difference is visible rather than assumed.
+
+The Settings column is a **saved preference**: it follows the person, not the
+checkout. The `prefs` plugin keeps one copy on the server
+(`GET`/`POST /api/prefs`, plus `import` and `reset`), and the desktop app and
+every browser tab read it, so a theme chosen in one shows in the others within
+a heartbeat (15 seconds) and **Reset all preferences** clears it for all of
+them. Setting the `prefs` row to `enabled = false` removes those routes; every
+client then falls back to its own `localStorage`, as it did before.
 
 ## Data model
 
@@ -1060,10 +1068,71 @@ That puts a pinned `whisper.cpp` build and a ggml model in `desktop/stt/`
 (gitignored). Until then the tray reports listening as unavailable and says
 exactly what to run — it does not fail when you speak.
 
+The scripts are the way to get the **engines** (`whisper-server`, `piper`).
+Models and voices can also be downloaded from Settings — next section.
+
 Everything stays on the machine: the engine runs as a local process, the model
 is local, and audio never leaves. Reading replies aloud uses whatever
 synthesiser the OS already has (`System.Speech` on Windows, `say` on macOS,
 `spd-say` or `espeak-ng` on Linux), so there is nothing to install for that.
+
+### Speech models and devices (Settings → Assistant)
+
+**Speech models and voices.** Settings → Assistant lists every model and voice
+the console knows, says which are installed, verified or in use, and downloads
+more with pause, resume, cancel, verify and delete. The list is
+`console/config/voice-assets.toml`: four whisper models and five Piper voices,
+each pinned to a Hugging Face commit with a sha256 per file. A download is
+checked against that hash before it is moved into `desktop/stt/` or
+`desktop/tts/`; a mismatch is deleted, not kept. Files you placed with the
+scripts show as *installed* but not *verified* until you press Verify.
+
+What is **not** included: the engine binaries. `whisper-server` and `piper`
+stay manual — `desktop/get-whisper.ps1` / `desktop/get-piper.ps1` on Windows,
+by hand elsewhere. The manager handles models and voices only.
+
+**Refreshing the catalog** (a reviewed change, never a runtime fetch). Re-run
+the Hugging Face tree API for each repo, then change the `commit` and the
+hashes together in one commit:
+
+1. Read the tree at the new commit. The 9 large files (the model `.bin`s and
+   the `.onnx` voices) carry `hash_source = "hf-lfs-oid"`: the LFS oid *is* the
+   sha256.
+2. The 5 small `.onnx.json` files are `computed-pinned`: Hugging Face only
+   publishes a git blob sha1 for them, so download the pinned file, compute the
+   sha256, and check the blob sha1 matches.
+3. Update `commit`, every `url`, `size` and `sha256`, and keep filenames
+   (`ggml-{id}.bin`, `{voice}.onnx` + `.onnx.json`) — the desktop shell relies on them.
+
+**Licences.** All five voices are kept. `en_US-ryan-medium` is
+CC BY-NC-SA 4.0 — non-commercial use only; each catalog entry carries its
+`license` and the page shows it.
+
+**Devices.** `input_device` and `output_device` choose the microphone and
+speaker **by name**, not by position, so plugging something in does not change
+what a saved choice means. Blank is the system default (what earlier versions
+did). The lists refresh every few seconds while the panel is on screen (and
+with its Refresh button), so a device you plug in appears; a saved name that is not plugged in is shown as "(not connected)" and the
+shell uses the system default until it is back — never an error. A substring
+that fits more than one device matches none; the candidates are listed.
+
+**Tests.** *Test microphone* listens for two seconds and shows the loudest
+level — nothing is recorded or stored. It is refused while a take or hands-free
+is using the microphone. *Test speaker* plays a short tone on the chosen
+output. *Preview* speaks a sentence in the voice and speed currently picked,
+before you save.
+
+**When a change applies.** Each setting carries a flag: **(live)** — takes
+effect without a restart; **(restart needed)** — read when hands-free starts,
+so turn it off and on; **(next chat)** — applies to the next conversation. A
+Settings save tells the running shell, so a live change (model, voice, speed,
+devices) reaches it within about a second; if the shell is not running, the
+save still succeeds and the shell reads it at its next start.
+
+**Honest limits.** Hands-free does not notice a microphone that vanishes
+mid-session (unchanged from before); Settings shows the "(not connected)"
+state, and the next take or reply uses the default. Everything above is
+verified on Windows only — Linux and macOS are untested.
 
 ### Spoken ticket ids
 

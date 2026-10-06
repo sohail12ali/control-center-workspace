@@ -192,7 +192,21 @@ DEFAULTS = {
     "hands_free_listen_while_speaking": False,
     # A cap, so an always-on mic left running by accident stops on its own.
     "hands_free_max_minutes": 30,
+
+    # -- devices (T-031) -----------------------------------------------------
+    # Which microphone and speaker, by the name the OS reports. "" means the
+    # system default, which is what every earlier version always used. The
+    # shell matches the name against what is plugged in (and falls back to the
+    # default with a warning when it is not), so this stays a plain label:
+    # shape is checked here, existence is not.
+    "input_device": "",
+    "output_device": "",
 }
+
+#: Longest device name accepted. Real names are well under this; the cap only
+#: stops a pasted paragraph being stored as a device.
+DEVICE_NAME_MAX = 200
+DEVICE_KEYS = ("input_device", "output_device")
 
 #: The three things a tray click can mean. Validated rather than free text:
 #: an unrecognised value would leave the icon doing nothing, with the setting
@@ -212,7 +226,85 @@ WRITABLE = frozenset({
     "hud_dismiss_shortcut",
     "hands_free_require_wake", "hands_free_wake_word",
     "hands_free_listen_while_speaking", "hands_free_max_minutes",
+    "input_device", "output_device",
 })
+
+#: When a change to each writable key takes effect (T-031, D-8) - the one place
+#: the "(live)" / "(restart needed)" chips in Settings come from, so the UI
+#: keeps no list of its own.
+#:
+#:   live       the next time anything reads it (a take, a reply, a click)
+#:   restart    read once at start: hands-free off and on, or the shell
+#:   next_chat  stored now, used when the next new chat is created
+#:
+#: Classified by reading the readers (D-8), not by running them; a test pins
+#: that every `WRITABLE` key has an entry, so a new setting cannot ship without
+#: an honest answer, and that the hands-free ones really are read in
+#: `fetch_policy` (the shell reads them once per arming).
+APPLIES = {
+    "listen_max_seconds": {"when": "live", "note": "Applies to the next take."},
+    "listen_silence_ms": {"when": "live", "note": "Applies to the next take."},
+    "listen_first_pause_ms": {
+        "when": "live",
+        "note": "Applies to the next take; only hands-free uses it."},
+    "stt_model": {
+        "when": "live",
+        "note": "The new model loads in the background; a take in the first "
+                "seconds may still use the previous one."},
+    "speak": {"when": "live", "note": "Applies to the next reply."},
+    "speak_voice": {"when": "live", "note": "Applies to the next reply."},
+    "speak_rate_percent": {"when": "live", "note": "Applies to the next reply."},
+    "tray_click_action": {"when": "live", "note": "Applies to the next tray click."},
+    "reply_chars": {"when": "live", "note": "Applies to the next reply."},
+    "session_idle_minutes": {
+        "when": "live", "note": "Applies the next time a message arrives."},
+    "ticket_prefix": {
+        "when": "live", "note": "Applies to the next spoken command."},
+    "work_backend": {
+        "when": "live", "note": "Applies to the next task handed to the work model."},
+    "work_model": {
+        "when": "live", "note": "Applies to the next task handed to the work model."},
+    "backend_chain": {
+        "when": "live", "note": "Applies the next time a backend is chosen."},
+    "input_device": {
+        "when": "live",
+        "note": "The shell is told when you save; the next take opens this "
+                "microphone."},
+    "output_device": {
+        "when": "live",
+        "note": "The shell is told when you save; the next reply or test tone "
+                "uses this speaker."},
+    "hands_free_require_wake": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "hands_free_wake_word": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "hands_free_listen_while_speaking": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "hands_free_max_minutes": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "wake_sensitivity": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "listen_preroll_ms": {
+        "when": "restart",
+        "note": "Read when hands-free starts: turn it off and on to apply."},
+    "hud_dismiss_shortcut": {
+        "when": "restart",
+        "note": "Read when the desktop shell starts: restart the shell to apply."},
+    "backend": {
+        "when": "next_chat",
+        "note": "Applies when a new chat starts; the current chat keeps its own."},
+    "model": {
+        "when": "next_chat",
+        "note": "Applies when a new chat starts; the current chat keeps its own."},
+    "mode": {
+        "when": "next_chat",
+        "note": "Applies when a new chat starts; the current chat keeps its own."},
+}
 
 
 def _committed(repo_root):
@@ -508,6 +600,23 @@ def _coerce(key, value):
     return str(value)
 
 
+def _device_name(key, value):
+    """A device name as stored: text, trimmed, `""` allowed (system default).
+
+    Deliberately no path rules and no "is it plugged in" check: it is a label
+    the shell matches against what is attached, not a filename, and a device
+    that is unplugged right now is still a legitimate choice (D-5, D-9).
+    """
+    if not isinstance(value, str):
+        raise ValueError("%s must be text (an empty string means the system default)" % key)
+    name = value.strip()
+    if len(name) > DEVICE_NAME_MAX:
+        raise ValueError("%s must be at most %d characters" % (key, DEVICE_NAME_MAX))
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        raise ValueError("%s must not contain control characters" % key)
+    return name
+
+
 def update(repo_root, patch, installed_backends=()):
     """Validate and persist a settings patch. Returns the merged view.
 
@@ -582,6 +691,9 @@ def update(repo_root, patch, installed_backends=()):
         if len(word) < 2:
             raise ValueError("hands_free_wake_word needs at least two characters")
         clean["hands_free_wake_word"] = word
+    for key in DEVICE_KEYS:
+        if key in clean:
+            clean[key] = _device_name(key, patch[key])
 
     path = resolve_rel(repo_root, OVERRIDE_REL)
     os.makedirs(os.path.dirname(path), exist_ok=True)

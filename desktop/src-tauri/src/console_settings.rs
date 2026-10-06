@@ -138,7 +138,7 @@ pub fn forget() {
     *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// The merged settings, or an empty object when the console cannot be asked.
+/// The merged settings, or `Value::Null` when the console cannot be asked.
 ///
 /// For a caller that needs several keys at once: one request, then read from
 /// the result with `u64_at`/`str_at`. Three `*_or` calls in a row would be

@@ -106,8 +106,11 @@ ticket_prefix = "T-"
 # icon an arm/disarm switch for always-on listening.
 tray_click_action = "listen"
 
-# Which voice reads replies aloud, by name, matching a file in desktop/tts
-# (fetch one with ./desktop/get-piper.ps1). Blank means whichever is installed.
+# Which voice reads replies aloud, by name, matching a file in desktop/tts.
+# Settings > Assistant > Speech models and voices downloads and picks voices
+# (catalog: console/config/voice-assets.toml); ./desktop/get-piper.ps1 is the
+# second route and is still how the piper engine itself is fetched.
+# Blank means whichever is installed.
 # With no piper at all, the OS synthesiser speaks instead — on Windows that is
 # System.Speech, whose "Desktop" voices are the robotic ones.
 speak_voice = ""
@@ -140,7 +143,9 @@ listen_preroll_ms = 1000
 
 # Which whisper.cpp model transcribes your voice, by name. base.en is accurate
 # enough for ticket ids; tiny.en is several times faster and noticeably worse
-# at exactly those. Fetch one with: ./desktop/get-whisper.ps1 -Model tiny.en
+# at exactly those. Download more under Settings > Assistant > Speech models
+# and voices (catalog: console/config/voice-assets.toml); the second route is
+# ./desktop/get-whisper.ps1 -Model tiny.en, which also fetches the engine.
 stt_model = "base.en"
 
 # -- hands-free listening ----------------------------------------------------
@@ -174,3 +179,12 @@ hands_free_listen_while_speaking = false
 # Hands-free stops on its own after this long, so a microphone left on by
 # accident does not stay on.
 hands_free_max_minutes = 30
+
+# -- devices -----------------------------------------------------------------
+# Which microphone listens and which speaker plays replies, by the name the
+# operating system reports (Settings > Assistant shows what is plugged in).
+# Empty means the system default, which is what every earlier version used.
+# A name that is not plugged in right now falls back to the default and the
+# settings page says so; it is never an error.
+input_device = ""
+output_device = ""

@@ -2,12 +2,12 @@
 id = "T-021"
 title = "Honest close: enforce evidence, liveness and skill hygiene instead of asking for them"
 kind = "tickets"
-stage = "in-progress"
+stage = "done"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"
 created = "2026-10-01"
-updated = "2026-10-03"
+updated = "2026-10-05"
 tags = []
 links = []
 scripts_dir = ""

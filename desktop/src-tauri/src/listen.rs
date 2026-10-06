@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use crate::tray_state::{Assistant, Event};
 use crate::console_settings;
 use crate::console_api;
-use crate::{audio, stt, tts};
+use crate::{audio, devices, stt, tts};
 
 /// Guards against two takes at once. An `AtomicBool` rather than the state
 /// machine's own flag, because this must be correct even if a repaint is
@@ -39,6 +39,26 @@ pub type ListenResult<T> = Result<T, String>;
 
 pub fn listening() -> bool {
     LISTENING.load(Ordering::SeqCst)
+}
+
+/// Test hook: makes `take_in_progress` say yes without a real take, which
+/// would need a microphone. Separate from `LISTENING` so a test using it cannot
+/// make `listening()` lie to the others running beside it.
+#[cfg(test)]
+static FORCE_BUSY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub fn force_busy(busy: bool) {
+    FORCE_BUSY.store(busy, Ordering::SeqCst);
+}
+
+/// Is a take in flight? What the mic test refuses on.
+pub fn take_in_progress() -> bool {
+    #[cfg(test)]
+    if FORCE_BUSY.load(Ordering::SeqCst) {
+        return true;
+    }
+    listening()
 }
 
 /// Ask the take in flight to finish now. Harmless when nothing is listening.
@@ -178,6 +198,202 @@ pub fn limits_from(settings: &serde_json::Value, patient: bool) -> audio::Limits
     }
 }
 
+/// The settings that decide what the shell hears and says, besides the take
+/// limits: the speech model and the prompt it is given, the voice and its
+/// speed, and the two audio devices.
+///
+/// Read in one place (`extract_voice_settings`) and put to work in one place
+/// (`apply_voice_settings`), so a take and the settings refresh cannot disagree
+/// about what a key means (T-031 D-7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceSettings {
+    pub model: String,
+    pub prompt: String,
+    pub voice: String,
+    pub rate_percent: u64,
+    pub input_device: String,
+    pub output_device: String,
+}
+
+/// Read the voice settings out of the console's merged settings. Pure.
+///
+/// A key that is missing or blank takes its default, which for the devices and
+/// the voice is "automatic". Values are trimmed.
+pub fn extract_voice_settings(settings: &serde_json::Value) -> VoiceSettings {
+    VoiceSettings {
+        model: console_settings::str_at(settings, "stt_model", "base.en"),
+        prompt: stt::prompt_for(
+            &console_settings::str_at(settings, "hands_free_wake_word", ""),
+            &console_settings::str_at(settings, "ticket_prefix", "T-"),
+        ),
+        voice: console_settings::str_at(settings, "speak_voice", ""),
+        rate_percent: console_settings::u64_at(settings, "speak_rate_percent", 100),
+        input_device: console_settings::str_at(settings, "input_device", ""),
+        output_device: console_settings::str_at(settings, "output_device", ""),
+    }
+}
+
+/// What a re-apply actually changed. Only a real change costs anything: a new
+/// engine for the model or prompt, a reopened microphone for the input device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Applied {
+    pub model_changed: bool,
+    pub prompt_changed: bool,
+    pub input_changed: bool,
+    pub output_changed: bool,
+    /// Either device name changed.
+    pub device_changed: bool,
+}
+
+impl Applied {
+    /// Is the speech engine now running something other than what is wanted?
+    pub fn engine_changed(&self) -> bool {
+        self.model_changed || self.prompt_changed
+    }
+}
+
+/// Where the preferences land. The shell's are process-wide (`Shell`); a test
+/// hands in its own, so tests running in parallel cannot disturb each other or
+/// the real engine. Each setter returns whether the value changed.
+pub trait Preferences {
+    fn model(&self, name: &str) -> bool;
+    fn prompt(&self, text: &str) -> bool;
+    fn voice(&self, repo_root: &std::path::Path, voice: &str, rate_percent: u64);
+    fn input(&self, name: &str) -> bool;
+    fn output(&self, name: &str) -> bool;
+}
+
+/// The shell's own preferences: the engine's, the synthesiser's and the
+/// devices'.
+struct Shell;
+
+impl Preferences for Shell {
+    fn model(&self, name: &str) -> bool {
+        let changed = stt::preferred_model() != name;
+        stt::prefer_model(name);
+        changed
+    }
+    fn prompt(&self, text: &str) -> bool {
+        let changed = stt::prompt() != text;
+        stt::prefer_prompt(text);
+        changed
+    }
+    fn voice(&self, repo_root: &std::path::Path, voice: &str, rate_percent: u64) {
+        tts::choose(voice);
+        tts::configure(repo_root, voice, rate_percent as f32 / 100.0);
+    }
+    fn input(&self, name: &str) -> bool {
+        devices::PREFS.set_input(name)
+    }
+    fn output(&self, name: &str) -> bool {
+        devices::PREFS.set_output(name)
+    }
+}
+
+/// Put `settings` into `prefs` and say what changed.
+pub fn apply_voice_settings_on(
+    prefs: &dyn Preferences,
+    repo_root: &std::path::Path,
+    settings: &VoiceSettings,
+) -> Applied {
+    let input_changed = prefs.input(&settings.input_device);
+    let output_changed = prefs.output(&settings.output_device);
+    prefs.voice(repo_root, &settings.voice, settings.rate_percent);
+    Applied {
+        model_changed: prefs.model(&settings.model),
+        prompt_changed: prefs.prompt(&settings.prompt),
+        input_changed,
+        output_changed,
+        device_changed: input_changed || output_changed,
+    }
+}
+
+/// Apply the voice settings to the shell.
+pub fn apply_voice_settings(repo_root: &std::path::Path, settings: &VoiceSettings) -> Applied {
+    apply_voice_settings_on(&Shell, repo_root, settings)
+}
+
+/// Read and apply the console's merged settings.
+///
+/// `None` when `settings` is not an object, which is what `console_settings`
+/// returns when the console cannot be reached. An outage must apply NOTHING:
+/// reading it as "every key at its default" would reset the user's model and
+/// devices, and swap the engine and reopen the microphone, because a request
+/// timed out.
+pub fn apply_settings(repo_root: &std::path::Path, settings: &serde_json::Value) -> Option<Applied> {
+    if !settings.is_object() {
+        return None;
+    }
+    Some(apply_voice_settings(repo_root, &extract_voice_settings(settings)))
+}
+
+/// Two quick pokes apply in the order they came, not whichever finishes last.
+static REFRESH: Mutex<()> = Mutex::new(());
+
+/// The settings poke's work: forget the cached settings, read them again, apply
+/// them, and start the new model in the background when that changed. Blocking
+/// (the console may stall for seconds), so the bridge gives it a thread and
+/// answers the poke first (T-031 D-15).
+pub fn refresh_settings(repo_root: &std::path::Path, console_url: &str) -> Option<Applied> {
+    let _in_order = REFRESH.lock().unwrap_or_else(|e| e.into_inner());
+    console_settings::forget();
+    let settings = console_settings::all(console_url);
+    let Some(applied) = apply_settings(repo_root, &settings) else {
+        log::info!("settings: the console did not answer the refresh; nothing was applied");
+        return None;
+    };
+    if applied != Applied::default() {
+        log::info!("settings: refreshed, {applied:?}");
+    }
+    if applied.engine_changed() {
+        // Usually done before the next take, instead of that take paying for it.
+        stt::prewarm(repo_root);
+    }
+    Some(applied)
+}
+
+/// What to do about the microphone before a take.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Reopen {
+    /// An open microphone still matches the input setting.
+    Keep,
+    /// There is none: open one.
+    Open,
+    /// The input setting changed since it was opened: close it, open another.
+    Replace,
+}
+
+/// The decision, and the pre-roll cursor the take may still use.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ReopenPlan {
+    pub action: Reopen,
+    pub from: Option<u64>,
+}
+
+/// Decide whether a cached microphone can serve the next take. Pure.
+///
+/// A pre-roll cursor is a position in ONE microphone's ring. A new microphone
+/// has a ring of its own, so a cursor from the one it replaced points at audio
+/// that was never recorded (or past the end of it): the take starts now
+/// instead, and the old audio is gone with the old device.
+pub fn reopen_decision(has_mic: bool, stale: bool, from: Option<u64>) -> ReopenPlan {
+    match (has_mic, stale) {
+        (true, false) => ReopenPlan { action: Reopen::Keep, from },
+        (true, true) => ReopenPlan { action: Reopen::Replace, from: None },
+        (false, _) => ReopenPlan { action: Reopen::Open, from: None },
+    }
+}
+
+/// What a take says when the Settings microphone test holds the device.
+/// Matched by `hands_free::stops_loop`, which must NOT treat it as a broken mic.
+pub const MIC_TEST_BUSY: &str = "a microphone test is running; try again in a moment";
+
+/// Why a take may not open a microphone now, or `None`. A cached microphone
+/// that stays in use opens nothing, so there is nothing to refuse. Pure.
+pub fn take_refusal(mic_test_running: bool, will_open: bool) -> Option<&'static str> {
+    (mic_test_running && will_open).then_some(MIC_TEST_BUSY)
+}
+
 fn take_inner<F>(
     mic: &mut Option<audio::Mic>,
     repo_root: &std::path::Path,
@@ -193,6 +409,12 @@ where
     // and "it feels slow" is not something anyone can fix — so every take says
     // where its seconds went.
     let began = std::time::Instant::now();
+    // The Settings microphone test has the device for two seconds: a second
+    // open beside it is refused (before any side effect) rather than raced.
+    let will_open = mic.as_ref().map(|m| m.needs_reopen()).unwrap_or(true);
+    if let Some(why) = take_refusal(crate::voice_test::running(&crate::voice_test::shell_state()), will_open) {
+        return Err(why.into());
+    }
     if !audio::available() {
         return Err(hint(repo_root));
     }
@@ -238,22 +460,34 @@ where
     let settings = console_settings::all(console_url);
     log::debug!("listen: step settings {}ms", step.elapsed().as_millis());
     let limits = limits_from(&settings, from.is_some());
-    stt::prefer_model(&console_settings::str_at(&settings, "stt_model", "base.en"));
-    // Tell the decoder what it is about to hear. Ticket ids and the wake word
-    // are exactly the words a general model has no reason to expect, and
-    // exactly the ones a spoken command turns on.
-    stt::prefer_prompt(&stt::prompt_for(
-        &console_settings::str_at(&settings, "hands_free_wake_word", ""),
-        &console_settings::str_at(&settings, "ticket_prefix", "T-"),
-    ));
+    // The model, the decoder prompt (ticket ids and the wake word are exactly
+    // the words a general model has no reason to expect, and the ones a spoken
+    // command turns on), the voice and the devices: one applier, shared with
+    // the settings refresh. `transcribe` starts any swap the change implies.
+    apply_settings(repo_root, &settings);
 
     let step = std::time::Instant::now();
     note(assistant, Event::ListenStart);
     log::debug!("listen: step paint_listening {}ms", step.elapsed().as_millis());
     let opening = std::time::Instant::now();
-    if mic.is_none() {
+    // A cached microphone (hands-free keeps one for the whole session) is
+    // still recording from the device it opened on. If the input setting has
+    // moved since, it is replaced here rather than used one more time.
+    let plan = reopen_decision(
+        mic.is_some(),
+        mic.as_ref().map(|m| m.needs_reopen()).unwrap_or(false),
+        from,
+    );
+    if plan.action != Reopen::Keep {
+        if plan.action == Reopen::Replace {
+            log::info!("listen: the input device changed; reopening the microphone");
+        }
+        // Dropped first: the old stream has to let go of its device before a
+        // new one opens, and a failed open must not leave the old one behind.
+        *mic = None;
         *mic = Some(audio::Mic::open()?);
     }
+    let from = plan.from;
     let open = mic.as_mut().expect("just opened");
     let recorded = match from {
         // Pre-roll: the wake word was said before it was recognised.
@@ -363,12 +597,288 @@ mod tests {
         let empty = std::env::temp_dir().join("t006-nothing-here");
         let h = hint(&empty);
         assert!(!h.is_empty());
-        assert!(h.contains("microphone") || h.contains("get-whisper"), "{h}");
+        // Either half may be what is missing. The speech half names where to
+        // fix it, which differs per OS: Windows has a script that installs the
+        // engine; the other systems have none and point at Settings.
+        let stt_half = if cfg!(windows) { "get-whisper" } else { "Settings" };
+        assert!(h.contains("microphone") || h.contains(stt_half), "{h}");
     }
 
     #[test]
     fn release_is_safe_when_nothing_is_listening() {
         release();
         assert!(!listening());
+    }
+
+    // -- reopening on a device change (T-031 AC-56) -------------------------
+
+    #[test]
+    fn with_no_microphone_one_is_opened_and_a_stale_cursor_is_not_trusted() {
+        assert_eq!(
+            reopen_decision(false, false, None),
+            ReopenPlan { action: Reopen::Open, from: None }
+        );
+        // A cursor with nothing to point into belongs to some earlier mic.
+        assert_eq!(reopen_decision(false, false, Some(48_000)).from, None);
+    }
+
+    #[test]
+    fn an_unchanged_setting_keeps_the_microphone_and_its_preroll() {
+        assert_eq!(
+            reopen_decision(true, false, Some(48_000)),
+            ReopenPlan { action: Reopen::Keep, from: Some(48_000) }
+        );
+        assert_eq!(reopen_decision(true, false, None).from, None);
+    }
+
+    #[test]
+    fn a_changed_setting_replaces_the_microphone_and_drops_the_preroll() {
+        // The cursor was taken on the OLD microphone's ring; the take starts
+        // now on the new one.
+        assert_eq!(
+            reopen_decision(true, true, Some(48_000)),
+            ReopenPlan { action: Reopen::Replace, from: None }
+        );
+        assert_eq!(reopen_decision(true, true, None).action, Reopen::Replace);
+    }
+
+    #[test]
+    fn re_applying_an_identical_preference_reopens_nothing() {
+        // The settings poke re-applies every preference on every write. Only a
+        // real change may cost a reopen, or each unrelated settings edit would
+        // make hands-free deaf for a second.
+        let prefs = crate::devices::Prefs::new();
+        prefs.set_input("Headset");
+        let opened_under = prefs.input_generation();
+
+        prefs.set_input("Headset");
+        prefs.set_input("  Headset ");
+        let stale = crate::devices::needs_reopen(opened_under, prefs.input_generation());
+        assert_eq!(reopen_decision(true, stale, Some(1)).action, Reopen::Keep);
+
+        prefs.set_input("Array Mic");
+        let stale = crate::devices::needs_reopen(opened_under, prefs.input_generation());
+        assert_eq!(reopen_decision(true, stale, Some(1)).action, Reopen::Replace);
+    }
+
+    #[test]
+    fn the_take_path_and_the_armed_loop_both_ask_the_microphone_whether_to_reopen() {
+        // Production code only: the test module also spells the method, so it
+        // is cut off before looking.
+        for (name, source) in [
+            ("listen.rs", include_str!("listen.rs")),
+            ("hands_free.rs", include_str!("hands_free.rs")),
+        ] {
+            let production = source.split("mod tests {").next().unwrap();
+            assert!(production.contains(".needs_reopen()"), "{name} never checks needs_reopen");
+        }
+    }
+
+    // -- the voice settings, read once and applied once (T-031 AC-42) ------
+
+    use serde_json::json;
+
+    #[test]
+    fn missing_keys_take_the_defaults() {
+        for settings in [serde_json::Value::Null, json!({}), json!({"stt_model": "   "})] {
+            let v = extract_voice_settings(&settings);
+            assert_eq!(v.model, "base.en");
+            assert_eq!(v.voice, "");
+            assert_eq!(v.rate_percent, 100);
+            assert_eq!(v.input_device, "");
+            assert_eq!(v.output_device, "");
+        }
+    }
+
+    #[test]
+    fn values_are_trimmed_and_read_from_their_keys() {
+        let v = extract_voice_settings(&json!({
+            "stt_model": "  small.en ",
+            "speak_voice": " en_US-amy-medium ",
+            "speak_rate_percent": 140,
+            "input_device": "  USB Headset Mic  ",
+            "output_device": "\tSpeakers (Realtek) ",
+        }));
+        assert_eq!(v.model, "small.en");
+        assert_eq!(v.voice, "en_US-amy-medium");
+        assert_eq!(v.rate_percent, 140);
+        assert_eq!(v.input_device, "USB Headset Mic");
+        assert_eq!(v.output_device, "Speakers (Realtek)");
+    }
+
+    #[test]
+    fn the_wake_word_and_the_ticket_prefix_feed_the_prompt() {
+        let v = extract_voice_settings(&json!({
+            "hands_free_wake_word": " Computer ",
+            "ticket_prefix": "CC-",
+        }));
+        assert_eq!(v.prompt, stt::prompt_for("Computer", "CC-"));
+        assert!(v.prompt.contains("Computer, what is open?"), "{}", v.prompt);
+        assert!(v.prompt.contains("CC-002"), "{}", v.prompt);
+        // Neither set: the ticket prefix defaults, the wake word is simply absent.
+        let plain = extract_voice_settings(&json!({}));
+        assert_eq!(plain.prompt, stt::prompt_for("", "T-"));
+    }
+
+    /// Preferences of a test's own, so nothing here touches the process-wide
+    /// ones the real engine and the other tests read.
+    struct Fake {
+        devices: devices::Prefs,
+        model: Mutex<String>,
+        prompt: Mutex<String>,
+        voice: Mutex<(String, u64)>,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            Fake {
+                devices: devices::Prefs::new(),
+                model: Mutex::new(String::new()),
+                prompt: Mutex::new(String::new()),
+                voice: Mutex::new((String::new(), 0)),
+            }
+        }
+    }
+
+    fn set_if_new(slot: &Mutex<String>, value: &str) -> bool {
+        let mut slot = slot.lock().unwrap();
+        let changed = *slot != value;
+        *slot = value.to_string();
+        changed
+    }
+
+    impl Preferences for Fake {
+        fn model(&self, name: &str) -> bool { set_if_new(&self.model, name) }
+        fn prompt(&self, text: &str) -> bool { set_if_new(&self.prompt, text) }
+        fn voice(&self, _root: &std::path::Path, voice: &str, rate_percent: u64) {
+            *self.voice.lock().unwrap() = (voice.to_string(), rate_percent);
+        }
+        fn input(&self, name: &str) -> bool { self.devices.set_input(name) }
+        fn output(&self, name: &str) -> bool { self.devices.set_output(name) }
+    }
+
+    fn settings_with(input: &str, output: &str, model: &str) -> VoiceSettings {
+        extract_voice_settings(&json!({
+            "input_device": input, "output_device": output, "stt_model": model,
+        }))
+    }
+
+    #[test]
+    fn a_device_change_is_reported_once_and_bumps_the_generation_once() {
+        let fake = Fake::new();
+        let root = std::path::Path::new(".");
+        let first = apply_voice_settings_on(&fake, root, &settings_with("", "", "base.en"));
+        assert!(!first.device_changed, "nothing was configured and nothing is now");
+        assert_eq!(fake.devices.input_generation(), 0);
+
+        let moved = apply_voice_settings_on(&fake, root, &settings_with("Headset Mic", "", "base.en"));
+        assert!(moved.device_changed && moved.input_changed && !moved.output_changed);
+        assert_eq!(fake.devices.input_generation(), 1, "one change, one bump");
+        assert_eq!(fake.devices.output_generation(), 0);
+
+        // The poke re-applies every key on every write. An identical device must
+        // not count as a change, or each unrelated edit would reopen the mic.
+        for _ in 0..3 {
+            let same = apply_voice_settings_on(&fake, root, &settings_with("Headset Mic", "", "base.en"));
+            assert!(!same.device_changed, "{same:?}");
+        }
+        assert_eq!(fake.devices.input_generation(), 1);
+
+        let out = apply_voice_settings_on(&fake, root, &settings_with("Headset Mic", "Speakers", "base.en"));
+        assert!(out.device_changed && out.output_changed && !out.input_changed);
+        assert_eq!(fake.devices.output_generation(), 1);
+        assert_eq!(fake.devices.input_generation(), 1, "the input did not move");
+    }
+
+    #[test]
+    fn only_a_model_or_prompt_change_asks_for_a_new_engine() {
+        let fake = Fake::new();
+        let root = std::path::Path::new(".");
+        apply_voice_settings_on(&fake, root, &settings_with("", "", "base.en"));
+
+        let devices_only = apply_voice_settings_on(&fake, root, &settings_with("Mic", "", "base.en"));
+        assert!(!devices_only.engine_changed(), "a device is not the engine's business");
+
+        let model = apply_voice_settings_on(&fake, root, &settings_with("Mic", "", "tiny.en"));
+        assert!(model.model_changed && !model.prompt_changed && model.engine_changed());
+
+        let mut with_prompt = settings_with("Mic", "", "tiny.en");
+        with_prompt.prompt.push_str(" Extra.");
+        let prompt = apply_voice_settings_on(&fake, root, &with_prompt);
+        assert!(prompt.prompt_changed && !prompt.model_changed && prompt.engine_changed());
+
+        let nothing = apply_voice_settings_on(&fake, root, &with_prompt);
+        assert_eq!(nothing, Applied::default());
+    }
+
+    #[test]
+    fn the_voice_and_speed_are_handed_to_the_synthesiser() {
+        let fake = Fake::new();
+        let v = extract_voice_settings(&json!({"speak_voice": "en_US-ryan-medium", "speak_rate_percent": 80}));
+        apply_voice_settings_on(&fake, std::path::Path::new("."), &v);
+        assert_eq!(*fake.voice.lock().unwrap(), ("en_US-ryan-medium".to_string(), 80));
+    }
+
+    #[test]
+    fn settings_that_are_not_an_object_apply_nothing() {
+        // `console_settings::all` answers Null when the console is down. That
+        // must not look like "everything is at its default".
+        let before = (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation());
+        for down in [serde_json::Value::Null, json!("oops"), json!([1, 2]), json!(7)] {
+            assert_eq!(apply_settings(std::path::Path::new("."), &down), None, "{down}");
+        }
+        assert_eq!(
+            before,
+            (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation()),
+            "nothing global moved"
+        );
+    }
+
+    #[test]
+    fn a_refresh_against_an_unreachable_console_applies_nothing() {
+        // Port 1 is closed on loopback: the fetch fails at once, as it does
+        // when the console is not running.
+        let before = (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation());
+        assert_eq!(refresh_settings(std::path::Path::new("."), "http://127.0.0.1:1"), None);
+        assert_eq!(
+            before,
+            (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation())
+        );
+    }
+
+    #[test]
+    fn a_take_applies_through_the_same_pair_as_the_refresh() {
+        // One applier (D-7): `take_inner` must not grow a private copy of the
+        // reads that `extract_voice_settings` owns.
+        let production = include_str!("listen.rs").split("mod tests {").next().unwrap();
+        let take = production.split("fn take_inner").nth(1).expect("take_inner exists");
+        let take = take.split("\nfn note(").next().unwrap();
+        assert!(take.contains("apply_settings("), "take_inner no longer applies the settings");
+        for private_read in ["prefer_model(", "prefer_prompt(", "\"stt_model\"", "\"speak_voice\""] {
+            assert!(!take.contains(private_read), "take_inner reads {private_read} itself");
+        }
+    }
+
+    // -- a take does not open a second microphone beside the test (T-031 FIX-1)
+
+    #[test]
+    fn a_take_that_would_open_a_microphone_is_refused_while_the_test_runs() {
+        let why = take_refusal(true, true).expect("refused");
+        assert_eq!(why, MIC_TEST_BUSY);
+        assert!(why.contains("microphone test is running"), "{why}");
+        assert!(why.contains("try again"), "{why}");
+        assert_eq!(take_refusal(false, true), None);
+        assert_eq!(take_refusal(false, false), None);
+        // A microphone that is already open is not opened again: nothing to refuse.
+        assert_eq!(take_refusal(true, false), None);
+    }
+
+    #[test]
+    fn take_inner_asks_before_it_opens_a_microphone() {
+        let production = include_str!("listen.rs").split("mod tests {").next().unwrap();
+        let take = production.split("fn take_inner").nth(1).expect("take_inner exists");
+        let ask = take.find("take_refusal(").expect("take_inner consults the mic test");
+        let open = take.find("audio::Mic::open()").expect("take_inner opens a mic");
+        assert!(ask < open, "the check must come before the open");
     }
 }

@@ -1,12 +1,13 @@
 ---
-tags: [active]
-status: Open
+tags: [completed]
+status: Complete
 ticket: "T-020"
+closed_date: 2026-10-05
 ---
 
 # T-020: Reliable Runs: classify failures, catch stalls, retry with caps, reap stale claims
 
-**Status:** Open  
+**Status:** Complete  
 **Stage:** VERIFY (built and independently verified; held in `verify` — see Current State)
 **Owner:** Sohail Ali  
 **Created:** 2026-10-01  
@@ -21,6 +22,19 @@ Make a Run survive the ways agent runs actually fail. Today a Run is a pointer r
 All 30 plan tasks built and independently verified 2026-10-02/03: full suite **1867 passed, 0 failed**, `harness lint` 0/0 at 39 skills and 7 agents, `console/static` untouched ([[T-020-verification]]). The verifier found three real defects, all fixed and re-verified: D-A (`run-watch` from the CLI/MCP would have interrupted healthy Runs; now returns `skipped` outside the server), D-B (output-cap failures were silent), D-C (Windows `os.replace` flake; bounded retry, 20/20 concurrency loop). Baseline bug D-1 (3 date-rotted stop-hook tests) verified fixed.
 
 **Held in `verify`, not closed**, because five acceptance rows cannot be verified here: the new Windows CI step has not run on a real runner (Q15, local edit only, nothing pushed); Claude's `resetsAt` units and the `CLAUDECODE` nesting guard were never checked against a real `claude` (Q14); the human gate on `claim-release force` and `review-round human_decision` needs a hand edit of `agents.toml` `gated_tools` (Q12); the phone alert needs a `console.toml` edit (Q13). T-021 consumes `tickets.claim_status`, `claimed_run`, `review_escalated`, `runs.ACTIVE` and the FR-23 digest keys exactly as built.
+
+## Close note (2026-10-05)
+
+Closed after the Verify-pile walk ([[T-023-analysis]]). The held items were resolved:
+- **Q15:** the FR-9 process-tree step passed on Windows CI (run 37210917650).
+- **Q14:** a real Claude stream confirmed `resetsAt` is in epoch seconds, and `parse_reset` reads it. A real `rejected` event has still not been observed.
+- **Q12:** the owner chose to gate `claim-release`, `review-round` and `close-override` on every backend. Driven live: a card was raised and the deny reached the agent.
+
+Fixed along the way, in commit `4338cb1`:
+- Console-launched Claude chats could not call console verbs at all ([[T-025-summary]] D-1).
+- `delegate` was ungated for Claude.
+
+Ready review: 2261 python and 181 Rust tests pass. Known gap: 124 rows use the short `T: file::test` evidence form, which close-check cannot resolve to a path (warning only). Evidence: [[T-020-verification]].
 
 ## Links
 - Source: [[INV-2026-10-01-paperclip-adoption-dossier]]

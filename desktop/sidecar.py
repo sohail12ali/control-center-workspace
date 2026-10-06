@@ -7,6 +7,7 @@ and shutdown stay in one place and can be tested without a window.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -115,6 +116,31 @@ def is_up(bind_host, port, timeout=PROBE_TIMEOUT_SEC):
             return 200 <= getattr(resp, "status", 200) < 500
     except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, ValueError):
         return False
+
+
+def workspace_id(root):
+    """Which checkout a server serves, as a hash and never the path (T-036
+    D-30). Same recipe as `console/server/features/shell_feature.py`
+    `_workspace_id`, copied rather than imported: this file must stay
+    importable with no `console/` on `sys.path` (see above). A test pins the
+    two together."""
+    norm = os.path.normcase(os.path.realpath(root))
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:12]
+
+
+def served_workspace(bind_host, port, timeout=2.0):
+    """The `workspace` the answering server reports, or None when it reports
+    none: an older server, a non-JSON answer, any error. None must never block
+    an attach, so a user is not stranded by a server this check cannot read.
+    `is_up` stays the pure liveness probe; this is a separate request."""
+    url = server_url(bind_host, port) + READY_PATH
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, ValueError):
+        return None
+    ws = body.get("workspace") if isinstance(body, dict) else None
+    return ws if isinstance(ws, str) and ws else None
 
 
 def python_cmd():
@@ -277,6 +303,13 @@ def ensure(repo_root=None, host=None, port=None, wait_sec=READY_TIMEOUT_SEC):
     bind_port = int(port if port is not None else file_port)
     url = server_url(bind_host, bind_port)
     if is_up(bind_host, bind_port):
+        theirs = served_workspace(bind_host, bind_port)
+        mine = workspace_id(root)
+        if theirs is not None and theirs != mine:
+            raise SidecarError(
+                "port %d is served by a different workspace (id %s, this checkout is %s at %s); "
+                "stop that server or change the port" % (bind_port, theirs, mine, root)
+            )
         return Handle(url, False, None, bind_host, bind_port)
     proc = spawn_serve(root, bind_host, bind_port)
     deadline = time.time() + wait_sec

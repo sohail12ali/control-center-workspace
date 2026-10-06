@@ -691,6 +691,7 @@ button.stat:hover { border-color: var(--accent-line); background: var(--accent-s
   border-radius: var(--r-lg); padding: 9px;
   display: flex; flex-direction: column; gap: 7px;
   min-height: 0;   /* let .lanebody scroll instead of the lane growing */
+  position: relative;   /* containing block for the splitter handle on its trailing edge */
 }
 .lane > header { display: flex; align-items: center; gap: 6px; padding: 1px 3px 5px; }
 .lane > header h3 { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
@@ -712,6 +713,11 @@ button.stat:hover { border-color: var(--accent-line); background: var(--accent-s
 }
 .lane .more:hover { border-color: var(--ink-3); color: var(--ink); }
 .lane .showing { font-size: 10.5px; color: var(--ink-3); text-align: center; }
+/* One stored width for every lane (--sp-lane is written on .lanes). Without it
+   the --lane-w default and its 1280px trim apply; .lane.cold stays 52px. */
+@media (min-width: 901px) {
+  .lane { flex-basis: var(--sp-lane, var(--lane-w)); max-width: var(--sp-lane, var(--lane-w)); }
+}
 
 .card {
   background: var(--surface); border: 1px solid var(--line);
@@ -826,6 +832,49 @@ table.dt tbody tr:hover { background: var(--surface-2); }
 .split { display: grid; grid-template-columns: minmax(230px, 300px) 1fr; gap: var(--gap); align-items: start; }
 .pane-back { display: none; }
 
+/* -- splitter handles (splitter.js) --------------------------------------
+   splitter.js appends one `.sp` to a pane's container and writes only its
+   `left` (the pane edge, measured); the transform here centres it on that
+   edge. Hidden by default and shown only in the wide query below, so at 900px
+   and under a handle is display:none: neither focusable nor hittable, and a
+   stored size changes nothing (the --sp-* variables are consumed only in wide
+   blocks, each placed after the pane's own rule). z-index 8 sits above
+   .list-reveal (6) and .secnav (5), under the topbar (20) and the drawer (41).
+
+   Classes splitter.js uses: sp (the handle), sp-active (this handle is being
+   dragged), sp-collapsed (its pane is folded, so the handle is the restore
+   control), sp-dragging (on <body> for the whole gesture), sp-foldbar (the
+   Expand all / Collapse all row foldBar returns, any width). The hit area is
+   6px, 20px for a finger; the 2px line is a pseudo-element so the bigger
+   target never thickens the line. No transition on grid-template-columns,
+   ever (note above .vault): only the handle's own colour fades. A handle
+   that is `hidden` stays hidden through the global [hidden] rule. */
+.sp {
+  display: none; position: absolute; top: 0; bottom: 0; z-index: 8;
+  width: 6px; margin: 0; padding: 0; border: 0; background: none;
+  transform: translateX(-50%);
+  cursor: col-resize; touch-action: none;
+}
+.sp::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 2px; margin-left: -1px; border-radius: 1px;
+  background: transparent; transition: background-color .14s ease;
+}
+.sp.sp-collapsed::before { background: var(--ink-3); }
+.sp:hover::before, .sp.sp-active::before { background: var(--accent); }
+.sp:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-radius: 2px; }
+/* While dragging: no text selection and the resize cursor everywhere. Pointer
+   capture already routes every move to the handle, so pointer-events is left
+   alone on purpose: a class that got stuck must never deaden the page. */
+body.sp-dragging { user-select: none; -webkit-user-select: none; cursor: col-resize; }
+body.sp-dragging * { cursor: col-resize !important; }
+.sp-foldbar { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 8px; }
+@media (pointer: coarse) { .sp { width: 20px; } }
+@media (min-width: 901px) { .sp { display: block; } }
+/* The wide query is also true for landscape paper, and the print block far
+   below is shared with other work, so the handles carry their own. */
+@media print { .sp, .sp-foldbar { display: none !important; } }
+
 /* -- app-shell layout: a tab that owns the whole viewport ----------------
    For tabs whose main content is one long scrolling surface (a transcript),
    content-height panels are wrong: they leave the important pane short while
@@ -880,6 +929,12 @@ main#view.app { padding: 0; overflow: hidden; min-height: 0; }
 .appshell.hide-list .ap-main > header { padding-left: 42px; }
 
 @media (min-width: 901px) {
+  /* The list's width: --sp-list is written on `.appshell` by splitter.js, and
+     the fallback is the base rule's own fluid default, so with nothing stored
+     the shell is exactly what it was. `.appshell.hide-list` below is more
+     specific and keeps winning, and so does the single column at 900px and
+     under (the variable is read only here). */
+  .appshell { grid-template-columns: var(--sp-list, clamp(208px, 22vw, 302px)) 1fr; }
   .appshell.hide-list { grid-template-columns: 0 1fr; }
   /* display:none rather than a zero-width column — nothing focusable should
      survive off-screen in a pane the user folded away. */
@@ -936,8 +991,22 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
 }
 .ct-split {
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto; min-height: 0; position: relative;
   display: grid; grid-template-columns: minmax(0, 1fr) 260px;
+}
+/* The rail's width and fold (splitter.js; a second wide block, because the
+   first one sits above this rule and an equal-specificity rule loses to a
+   later one). `position: relative` above is the handle's containing block.
+   `.rail-off` takes the rail out of flow, and then auto-placement would
+   re-seat the transcript, so both children keep their own column (the same
+   trap as `.appshell.hide-list`). Below 901px the variable is never read and
+   `.ct-rail` stays the strip under the transcript. */
+@media (min-width: 901px) {
+  .ct-split { grid-template-columns: minmax(0, 1fr) var(--sp-rail, 260px); }
+  .ct-split.rail-off { grid-template-columns: minmax(0, 1fr) 0; }
+  .ct-split.rail-off .ct-rail { display: none; }
+  .ct-scroll { grid-column: 1; }
+  .ct-rail { grid-column: 2; }
 }
 .ct-scroll {
   overflow-y: auto; min-height: 0; padding: 14px 16px 18px;
@@ -1589,6 +1658,25 @@ table.dt .no  { color: var(--ink-3); display: inline-flex; align-items: center; 
   position: relative;
 }
 .vault.has-viewer { grid-template-columns: var(--vault-side) minmax(0, 1fr) var(--vault-viewer); }
+/* The two pane widths (splitter.js, vault.js): --sp-side and --sp-viewer are
+   written on `.vault` and read only here, in a block that follows the rules it
+   overrides (equal specificity, so the later one wins). The fallbacks are the
+   tokens above, so with nothing stored the grid is what it was; the stylesheet
+   at 900px and under keeps its own columns because nothing reads them there.
+   Folding the sidebar (`.side-off`, a class vault.js toggles) hides it and lets
+   the stage span its track instead of zeroing the track: with the sidebar
+   display:none, auto-placement would otherwise seat the stage in column 1. All
+   three children are pinned for the same reason. No transition on columns
+   (note above `.vault`). */
+@media (min-width: 901px) {
+  .vault { grid-template-columns: var(--sp-side, var(--vault-side)) minmax(0, 1fr) 0; }
+  .vault.has-viewer { grid-template-columns: var(--sp-side, var(--vault-side)) minmax(0, 1fr) var(--sp-viewer, var(--vault-viewer)); }
+  .vault-side { grid-column: 1; }
+  .vault-stage { grid-column: 2; }
+  .vault-viewer { grid-column: 3; }
+  .vault.side-off .vault-side { display: none; }
+  .vault.side-off .vault-stage { grid-column: 1 / 3; }
+}
 
 .vault-side {
   display: flex; flex-direction: column; gap: 8px; min-height: 0;
@@ -1689,6 +1777,30 @@ details.note[open] > summary { margin-bottom: 9px; }
 }
 .drawer > header .dtitle { flex: 1; min-width: 0; }
 .drawer .dbody { overflow-y: auto; padding: 11px 13px 22px; flex: 1; }
+
+/* Docked ticket panel (T-037, wide only). The aside is a third child of #app:
+   a second grid column beside main#view, starting under the topbar. It is
+   position: relative, never static: the .sp resize handle is absolutely
+   positioned and needs it as its containing block. No overflow is set here, so
+   the handle straddling the left edge is not clipped; .dbody scrolls itself.
+   --sp-dock is written on #app by the splitter; 430px is the only default. */
+@media (min-width: 901px) {
+  #app.has-dock { grid-template-columns: minmax(0, 1fr) var(--sp-dock, 430px); }
+  #app.has-dock > .topbar { grid-column: 1 / -1; }
+  #app.has-dock > .drawer {
+    position: relative; top: auto; right: auto; bottom: auto; z-index: auto;
+    grid-column: 2; grid-row: 2; width: auto;
+    min-width: 0; min-height: 0;
+    box-shadow: none; animation: none;
+  }
+}
+
+/* Printing with the dock open: the shared print rule below already hides
+   .drawer; this only takes back the second grid column so no empty strip is
+   left. Same specificity as the wide rule above and later in source, so it wins. */
+@media print {
+  #app.has-dock { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* Drawer internals. Sections are hairline-separated bands, not nested
    panels — a bordered card per tracker turned the drawer into boxes inside a
@@ -1856,6 +1968,23 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
 }
 .toast.err { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }
 .toast.ok { border-color: var(--ok-line); background: var(--ok-soft); color: var(--ok); }
+
+/* -- UI-version notice --
+   Persistent and non-modal on purpose: a toast times out long before the page
+   is idle enough to reload, and this has to stay until it does. Pinned just
+   under the header so it covers no tab chrome. z-index 30 sits above the
+   sticky section headers (20) and below the drawer and its scrim (40/41), so
+   it can never cover the drawer's close button, and below the toasts (60).
+   Text wraps and the Reload now button drops to its own line when narrow. */
+.ui-notice {
+  position: fixed; z-index: 30;
+  top: calc(var(--topbar-h) + var(--tabs-h) + 8px); left: 50%; transform: translateX(-50%);
+  box-sizing: border-box; width: max-content; max-width: min(640px, calc(100vw - 16px));
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  padding: 8px 12px; font-size: 12.5px; color: var(--ink);
+  background: var(--info-soft); border: 1px solid var(--info-line);
+  border-radius: var(--r-md); box-shadow: var(--shadow-2);
+}
 
 /* -- prose (About) --
    The container is wide and CENTRED; only the running text is clamped to a
@@ -2126,7 +2255,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
 }
 
 @media print {
-  .topbar, .tabs, .drawer, .scrim, .toasts { display: none !important; }
+  .topbar, .tabs, .drawer, .scrim, .toasts, .ob-scrim { display: none !important; }
   main#view { overflow: visible; padding: 0; }
   .panel { break-inside: avoid; box-shadow: none; }
 }
@@ -2194,3 +2323,120 @@ label.field > span { display: block; font-size: 11.5px; color: var(--ink-2); mar
   .cp-scrim.on .cp-panel { animation: cp-in .12s ease-out; }
   @keyframes cp-in { from { transform: translateY(-6px); opacity: .6; } }
 }
+
+/* -- setup wizard -------------------------------------------------------
+   Full-screen, one question per step. Sits above the command palette so a
+   first-run cover is not hidden behind Ctrl-K. */
+.ob-scrim {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 16px;
+  background: rgba(15, 17, 21, .46);
+}
+.ob-panel {
+  width: min(560px, 100%);
+  max-height: min(720px, 100%);
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+.ob-head {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 14px 14px 0;
+}
+.ob-head > div { flex: 1; min-width: 0; }
+.ob-kicker {
+  font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+}
+.ob-dots { display: flex; gap: 8px; align-items: center; }
+.ob-dot {
+  width: 8px; height: 8px; padding: 0; border: 0; border-radius: 99px;
+  background: var(--line); cursor: default;
+}
+.ob-dot.on { background: var(--accent); transform: scale(1.25); }
+.ob-dot.done { background: var(--accent); opacity: .45; cursor: pointer; }
+.ob-dot:disabled { cursor: default; }
+.ob-body {
+  padding: 16px 18px 8px; overflow-y: auto; flex: 1;
+}
+.ob-body h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.02em; }
+.ob-lead { margin: 0 0 16px; }
+.ob-field, .ob-role {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px;
+}
+.ob-label { font-weight: 650; font-size: 13px; }
+.ob-field input, .ob-role select, .ob-key input {
+  width: 100%; padding: 8px 10px; font: inherit; font-size: 14px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--ink);
+}
+.ob-tiles { display: flex; flex-direction: column; gap: 8px; }
+.ob-tilewrap { border: 1px solid var(--line); border-radius: var(--r-md); padding: 0; }
+.ob-tilewrap.on { border-color: var(--accent-line); background: var(--accent-soft); }
+.ob-tile {
+  width: 100%; text-align: left; border: 0; background: transparent;
+  color: inherit; font: inherit; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px;
+}
+.ob-tile[aria-pressed="true"] { color: var(--ink); }
+.ob-key { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
+.ob-note { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 0; }
+.ob-reviews { display: flex; flex-direction: column; gap: 8px; }
+.ob-review {
+  display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 2px 10px;
+  padding: 8px 0; border-top: 1px solid var(--line-soft);
+}
+.ob-review b { grid-row: span 2; }
+.ob-error {
+  margin: 0 18px 8px; color: var(--danger); font-size: 13px;
+}
+.ob-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px 14px; border-top: 1px solid var(--line-soft);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ob-screen { animation: ob-in .16s var(--ease); }
+  @keyframes ob-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+}
+
+/* T-031 voice assets and devices */
+/* "(live)" / "(restart needed)" / "(next chat)" beside a setting's label. The
+   tooltip (title) is the server's note. Written under `.setrow .settext` so it
+   beats `.setrow .settext span`, which would grey every one of them. */
+.setrow .settext .va-when { font-size: 11px; font-weight: 500; cursor: help; }
+.setrow .settext .va-when-live { color: var(--ok); }
+.setrow .settext .va-when-restart { color: var(--warn); }
+.setrow .settext .va-when-next_chat { color: var(--info); }
+/* Speech models and voices: one row per model or voice, facts on the control
+   line (state, kind, size, verified, in use, licence). */
+.va-list { display: flex; flex-direction: column; }
+.va-note {
+  padding: 8px 4px; font-size: 11.8px; color: var(--ink-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.va-size { font-size: 11.8px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.va-licence { font-size: 11.8px; color: var(--ink-3); overflow-wrap: anywhere; }
+/* Download progress (role="progressbar"), the buttons, and the server's own
+   sentence when something is refused or fails. Each takes a whole line of the
+   control row. */
+.va-progress { flex: 1 1 100%; display: flex; flex-direction: column; gap: 3px; }
+.va-bar {
+  height: 6px; overflow: hidden; border-radius: var(--r-pill);
+  background: var(--bg-sunk); border: 1px solid var(--line);
+}
+.va-fill { display: block; height: 100%; width: 0; background: var(--accent); }
+.va-bar-text { font-size: 11.8px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.va-actions { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.va-reason { font-size: 11.8px; color: var(--ink-3); }
+.va-error { flex: 1 1 100%; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
+/* Voice, devices and tests: a sentence on its own line under the controls (a
+   preview or test result, a refusal, the reason a control is disabled). */
+.va-line { flex: 1 1 100%; font-size: 11.8px; color: var(--ink-3); overflow-wrap: anywhere; }
+.va-line:empty { display: none; }
+/* The microphone test level: a bar on the .va-bar track, 12rem wide. */
+.va-meter { width: 12rem; flex: none; }
+/* end T-031 voice assets and devices */

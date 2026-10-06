@@ -311,7 +311,29 @@ fn run(
         }
 
         let outcome = if spotter.is_some() {
+            // The microphone stays open for the whole session, so it keeps
+            // recording from the device it opened on after the input setting
+            // changes. Checked before any audio is read from it.
+            let stale = mic.as_ref().map(|m| m.needs_reopen()).unwrap_or(false);
+            if listen::reopen_decision(mic.is_some(), stale, Some(cursor)).action
+                == listen::Reopen::Replace
+            {
+                log::info!("hands-free: the input device changed; reopening the microphone");
+                // Dropped first, so the old stream releases its device. The
+                // open below starts a fresh cursor, and whatever the spotter
+                // had heard came from the old device.
+                mic = None;
+                if let Some(s) = spotter.as_mut() {
+                    s.reset();
+                }
+            }
             if mic.is_none() {
+                // The Settings microphone test may hold the device for two
+                // seconds. Wait it out (bounded) instead of opening a second
+                // stream beside it; never an error, which would stop the loop.
+                if !crate::voice_test::wait_idle(MIC_TEST_WAIT) {
+                    continue;
+                }
                 match crate::audio::Mic::open() {
                     Ok(open) => {
                         cursor = open.cursor();
@@ -379,7 +401,7 @@ fn run(
                 {
                     log::info!("hands-free: {reason}");
                 }
-                if reason.contains("microphone") || reason.contains("engine") {
+                if stops_loop(&reason) {
                     // A broken microphone would otherwise spin this loop.
                     stop(&reason);
                     break;
@@ -391,6 +413,15 @@ fn run(
     RUNNING.store(false, Ordering::SeqCst);
     show_armed(&assistant, false, policy.require_wake);
     log::info!("hands-free: off ({})", last_stop_reason());
+}
+
+/// The longest the armed loop waits for the Settings microphone test (2 s) to end.
+const MIC_TEST_WAIT: Duration = Duration::from_secs(3);
+
+/// Does this take error mean the microphone or engine is broken, so the loop
+/// must stop rather than spin? A busy microphone (the test) is not broken.
+fn stops_loop(reason: &str) -> bool {
+    reason != listen::MIC_TEST_BUSY && (reason.contains("microphone") || reason.contains("engine"))
 }
 
 /// Should the loop hold the microphone shut for a moment?
@@ -580,5 +611,27 @@ mod tests {
     fn stopping_when_not_running_is_harmless() {
         stop("test");
         assert!(!running());
+    }
+
+    // -- the loop's stop contract, and the mic test (T-031 FIX-1) -----------
+
+    #[test]
+    fn a_broken_microphone_or_engine_stops_the_loop_but_a_busy_one_does_not() {
+        assert!(stops_loop("cannot open the microphone (denied)"));
+        assert!(stops_loop("no input device: microphone missing"));
+        assert!(stops_loop("the speech engine is not installed"));
+        // The mic test holds the device for two seconds: wait, never stop.
+        assert!(!stops_loop(listen::MIC_TEST_BUSY));
+        for quiet in ["nothing heard", "already listening", "not addressed"] {
+            assert!(!stops_loop(quiet), "{quiet}");
+        }
+    }
+
+    #[test]
+    fn the_armed_loop_waits_for_the_mic_test_before_it_opens_the_microphone() {
+        let production = include_str!("hands_free.rs").split("mod tests {").next().unwrap();
+        let wait = production.find("voice_test::wait_idle(").expect("the loop waits for the test");
+        let open = production.find("crate::audio::Mic::open()").expect("the loop opens a mic");
+        assert!(wait < open, "wait before open");
     }
 }

@@ -22,6 +22,9 @@
     host: null, api: null, busy: {}, newScope: GENERAL, newText: "",
   };
 
+  // The half-typed todo outlives the input box's repaints, so tell the automatic UI reload.
+  C.holdReload("todos.new", function () { return String(st.newText || "").trim() !== ""; });
+
   function isClosed(it) { return CLOSED.indexOf(it.status) !== -1; }
 
   function scopeLabel(id) {

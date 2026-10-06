@@ -44,6 +44,7 @@
 <!-- Icons first: core.js and every tab build DOM with them. -->
 <script src="icons.js"></script>
 <script src="core.js"></script>
+<script src="splitter.js"></script>
 <script src="desktop-chrome.js"></script>
 <!-- Chat plumbing: markdown, voice, SSE store, transcript renderer. Loaded
      before the tabs so agents.js can use them at registration time. -->
@@ -68,6 +69,8 @@
 <script src="agents.js"></script>
 <script src="about.js"></script>
 <script src="settings.js"></script>
+<!-- Setup wizard: opened from app.js after boot, and from Overview / Settings. -->
+<script src="onboarding-wizard.js"></script>
 <!-- Router last: it needs every tab to have registered. -->
 <script src="app.js"></script>
 </body>

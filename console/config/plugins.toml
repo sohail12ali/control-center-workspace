@@ -10,9 +10,10 @@
 # doesn't show a tab that would 404). Use it to say "this deployment does
 # not do that".
 #
-# NOT the same as the Settings tab's toggles. Those are per-user, stored in
-# one browser, and only hide a tab from one person. This file is committed
-# and applies to everyone who pulls the checkout. Don't unify them.
+# NOT the same as the Settings tab's toggles. Those are per-user saved
+# preferences, kept on the server and shared by the desktop app and every
+# browser on this machine, and they only hide a tab from view. This file is
+# committed and applies to everyone who pulls the checkout. Don't unify them.
 #
 # Load order comes from each module's own `requires`, not from this file's
 # ordering — a module's dependencies are a property of the code.
@@ -101,6 +102,15 @@ enabled = true
 [[plugin]]
 id = "workspace"
 module = "features.workspace_feature"
+enabled = true
+
+# T-036: view preferences (theme, hidden tabs, layout) kept once on the server
+# so the desktop app and every browser show the same UI. No tab. Disabling
+# this removes the routes and every client falls back to its own localStorage,
+# which is the behaviour before this row existed.
+[[plugin]]
+id = "prefs"
+module = "features.prefs_feature"
 enabled = true
 
 # The nav manifest itself. Disabling this leaves the frontend with no tab

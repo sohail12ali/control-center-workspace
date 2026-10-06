@@ -270,9 +270,11 @@ default = "workspace-write sandbox; shell and edits stay inside Codex's own appr
 # to a transcript, an event, or a telemetry record. Agents cannot read `.env`
 # either: it is in the tools' refused-paths list.
 #
-# `enabled = false` by default: this template ships no key and cannot verify
-# one, so the backend stays out of the composer until someone turns it on
-# deliberately. Flip it to true once the key is set.
+# `enabled = true`, even though this template ships no key. Without one the
+# row is listed as unusable with a reason ("OPENROUTER_API_KEY is not set",
+# or "present but empty"), and backend resolution passes over it, saying why.
+# So an enabled row with no key degrades visibly rather than failing a turn.
+# Set `enabled = false` to hide it entirely.
 
 [[backend]]
 id = "openrouter"

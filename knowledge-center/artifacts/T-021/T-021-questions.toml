@@ -1,7 +1,7 @@
 [meta]
 ticket = "T-021"
 tracker = "questions"
-updated = "2026-10-01T12:23:23Z"
+updated = "2026-10-05T03:30:49Z"
 seq = 12
 
 [[items]]
@@ -126,14 +126,14 @@ resolved_on = "2026-10-01"
 
 [[items]]
 id = "Q11"
-status = "open"
+status = "resolved"
 text = "Should override of a blocked close need a human approval card? That needs the user to add the close-override tool name to gated_tools in agents.toml by hand."
 type = "decision"
 priority = "medium"
 raised_by = "analyst"
 raised_on = "2026-10-01"
 affects = []
-answer = ""
+answer = "2026-10-05 owner decision (T-020 Q12 walk): yes. mcp__console__close-override (claude) and console_close_override (all API rows) are in agents.toml gated_tools, commit 4338cb1; tested by console/tests/test_desktop_verbs.py::TestConsoleVerbAccess."
 resolved_on = ""
 
 [[items]]

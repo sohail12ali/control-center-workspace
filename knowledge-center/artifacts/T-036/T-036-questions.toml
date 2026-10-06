@@ -1,0 +1,65 @@
+[meta]
+ticket = "T-036"
+tracker = "questions"
+updated = "2026-10-05T07:06:50Z"
+seq = 5
+
+[[items]]
+id = "Q1"
+status = "open"
+text = "Live pickup: should a theme or tab-visibility change made in one client (browser tab or desktop app) appear in the others within one 15 s heartbeat, without a reload? Default (decision-log prefs-live-pickup): yes, for theme and hiddenTabs only; every other key shows on that tab's next render. Alternative: hydrate at boot only, so another client sees a change after its next reload (which the UI-version check does not trigger)."
+type = "requirements"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-036-requirements-draft.md FR-6, decision-log prefs-live-pickup"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q2"
+status = "open"
+text = "Sidecar workspace check: should desktop/sidecar.py refuse to attach to a server that serves a different workspace (Python only, no Rust change)? It goes beyond the three scope items in the ticket summary; it addresses contributing factor (b), attaching to whatever answers on port 8790. Default: include it as a SHOULD (Phase 3, separable; the planner may drop it without affecting the rest). Alternative: its own ticket."
+type = "scope"
+priority = "medium"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-036-requirements-draft.md FR-8, decision-log sidecar-identity"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q3"
+status = "open"
+text = "Idle window: an automatic reload waits for 30 s with no key, pointer, wheel or touch input (a hidden window with nothing being edited reloads at once). Keep 30 s, or another value?"
+type = "requirements"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-036-requirements-draft.md FR-3, decision-log reload-policy"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q4"
+status = "open"
+text = "Migration deletes each browser's own console.* keys after the server accepts them, so there is one source of truth; rolling back to the old UI then shows defaults. Keep that, or leave the local copy in place after import?"
+type = "decision"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-036-requirements-draft.md FR-6, decision-log prefs-migration-rule"
+answer = ""
+resolved_on = ""
+
+[[items]]
+id = "Q5"
+status = "open"
+text = "All 16 preference keys become shared by the app and every browser, including voice (muting from the app tray then also changes browser read-aloud) and pixel layout (T-037; shared across window sizes and across devices that reach the console over a network). Should any key stay per-device? Default: none."
+type = "decision"
+priority = "low"
+raised_by = "agent"
+raised_on = "2026-10-05"
+affects = "T-036-requirements-draft.md BR-11, decision-log scope-boundaries"
+answer = ""
+resolved_on = ""
