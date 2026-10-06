@@ -1447,6 +1447,9 @@ mod tests {
         // hang. The guard stops the engine on every way out, a failed
         // transcription (which starts the engine, then panics here) included,
         // so it is made before the engine can exist.
+        // Shuts the one process-wide engine down on the way out, so it must not
+        // overlap a take that is using it (the replay tests hold this too).
+        let _serial = crate::listen::testing::serial();
         let _stop = Guard(shutdown);
         let heard = transcribe(&root, &wav).expect("the engine should transcribe this");
         eprintln!("stt: model={} heard {:?}", model_name(&root), heard);

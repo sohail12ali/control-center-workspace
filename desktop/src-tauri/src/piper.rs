@@ -162,18 +162,28 @@ fn sample_rate(model: &Path) -> u32 {
 /// The caller is a bridge request thread; holding an HTTP response open for
 /// the length of a spoken paragraph would tie the console to the speed of
 /// speech.
+///
+/// With a `sink` (`CC_TTS_SINK_WAV`) the reply is written to that WAV instead
+/// of being played: no output device is opened.
 pub fn speak_voice(
     repo_root: &Path,
     voice_name: &str,
     text: &str,
     rate: f32,
+    sink: Option<&Path>,
 ) -> Result<(), String> {
     let exe = exe(repo_root).ok_or("piper is not installed")?;
     let model = voice(repo_root, voice_name).ok_or("no piper voice is installed")?;
-    speak_with(&exe, &model, text, rate)
+    speak_with(&exe, &model, text, rate, sink)
 }
 
-fn speak_with(exe: &Path, model: &Path, text: &str, rate: f32) -> Result<(), String> {
+fn speak_with(
+    exe: &Path,
+    model: &Path,
+    text: &str,
+    rate: f32,
+    sink: Option<&Path>,
+) -> Result<(), String> {
     stop();
     CANCEL.store(false, Ordering::SeqCst);
 
@@ -247,12 +257,18 @@ fn speak_with(exe: &Path, model: &Path, text: &str, rate: f32) -> Result<(), Str
             });
     }
 
-    // Playback: owns the stream, because a cpal stream is not `Send`.
+    // Playback: owns the stream, because a cpal stream is not `Send`. Or, for
+    // a file sink, the thread that waits for the whole reply and writes it.
     PLAYING.store(true, Ordering::SeqCst);
+    let sink = sink.map(Path::to_path_buf);
     let started = std::thread::Builder::new()
         .name("piper-play".into())
         .spawn(move || {
-            if let Err(e) = play(samples, done, hz) {
+            let outcome = match sink {
+                Some(path) => write_sink(&samples, &done, &CANCEL, hz, &path),
+                None => play(samples, done, hz),
+            };
+            if let Err(e) = outcome {
                 log::warn!("piper: {e}");
             }
             PLAYING.store(false, Ordering::SeqCst);
@@ -263,6 +279,35 @@ fn speak_with(exe: &Path, model: &Path, text: &str, rate: f32) -> Result<(), Str
         return Err("cannot start playback".into());
     }
     Ok(())
+}
+
+/// The file sink: wait for the synthesiser to finish, then write everything it
+/// produced as one 16-bit mono WAV at the voice's rate, replacing the last
+/// reply. A `stop()` first means no reply, so nothing is written. `PLAYING`
+/// stays set until this returns, so `finished()` still means "the reply is
+/// done".
+fn write_sink(
+    samples: &Mutex<VecDeque<i16>>,
+    done: &AtomicBool,
+    cancel: &AtomicBool,
+    hz: u32,
+    path: &Path,
+) -> Result<(), String> {
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        if done.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let all: Vec<i16> = samples
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain(..)
+        .collect();
+    crate::replay::write_wav(path, &all, hz)
 }
 
 fn play(
@@ -371,6 +416,7 @@ mod tests {
 
     #[test]
     fn stopping_when_nothing_speaks_is_harmless() {
+        let _serial = crate::listen::testing::serial();
         stop();
         assert!(finished());
     }
@@ -556,5 +602,72 @@ mod tests {
         for bad in ["", "a b", "a/b", "a\\b", "C:x", "a\0", "é", "a\n"] {
             assert!(!is_safe_voice_name(bad), "{bad:?}");
         }
+    }
+
+    // -- the file sink (T-032 FR-4, AC-12) -----------------------------------
+
+    fn sink_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("t032-sink-{tag}-{}.wav", std::process::id()))
+    }
+
+    #[test]
+    fn the_sink_writes_a_riff_wav_at_the_voice_rate_and_replaces_the_last_reply() {
+        let path = sink_path("write");
+        let queue = Mutex::new(VecDeque::from(vec![1i16, -2, 3, -4]));
+        let (done, cancel) = (AtomicBool::new(true), AtomicBool::new(false));
+        write_sink(&queue, &done, &cancel, 22_050, &path).unwrap();
+        let wav = std::fs::read(&path).unwrap();
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 22_050, "voice rate");
+        assert_eq!(u16::from_le_bytes(wav[22..24].try_into().unwrap()), 1, "mono");
+        assert_eq!(wav.len(), 44 + 8);
+        assert!(queue.lock().unwrap().is_empty(), "the queue was drained, nothing plays it");
+
+        // The next reply overwrites it rather than appending.
+        queue.lock().unwrap().extend([9i16, 9]);
+        write_sink(&queue, &done, &cancel, 22_050, &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap().len(), 44 + 4);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_stopped_reply_writes_nothing() {
+        let path = sink_path("cancel");
+        let _ = std::fs::remove_file(&path);
+        let queue = Mutex::new(VecDeque::from(vec![1i16; 10]));
+        let (done, cancel) = (AtomicBool::new(false), AtomicBool::new(true));
+        write_sink(&queue, &done, &cancel, 22_050, &path).unwrap();
+        assert!(!path.exists());
+    }
+
+    /// Real synthesis into a file with no output device involved: the sink
+    /// thread never opens one, so this passes on a machine with no speakers.
+    /// Skipped, loudly, where piper or a voice is not installed. `CANCEL`,
+    /// `CHILD` and `PLAYING` are process-wide, so this holds the shared test
+    /// lock that every test calling `stop()` (here, in `tts` and through a
+    /// take) also holds.
+    #[test]
+    fn piper_speaks_into_a_wav_file_when_a_sink_is_given() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if !available(&root) {
+            eprintln!("skipped: piper or a voice is not installed under desktop/tts");
+            return;
+        }
+        let _serial = crate::listen::testing::serial();
+        let path = sink_path("real");
+        let _ = std::fs::remove_file(&path);
+        speak_voice(&root, "en_US-amy-medium", "Two tickets are open.", 1.0, Some(&path))
+            .expect("starts");
+        let waited = std::time::Instant::now();
+        while !finished() && waited.elapsed() < std::time::Duration::from_secs(30) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let wav = std::fs::read(&path).expect("piper wrote the sink file");
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert!(wav.len() > 44 + 2_000, "{} bytes", wav.len());
+        let hz = u32::from_le_bytes(wav[24..28].try_into().unwrap());
+        assert!(hz == 22_050 || hz == 16_000 || hz == 24_000, "voice rate {hz}");
+        let _ = std::fs::remove_file(&path);
     }
 }

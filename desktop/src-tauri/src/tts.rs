@@ -121,13 +121,29 @@ fn root() -> Option<std::path::PathBuf> {
 /// The name of the backend that would be used, for `/health` and for saying
 /// why speech is unavailable.
 pub fn backend_name() -> String {
-    match backend() {
-        Some(Backend::Piper) => "piper".into(),
-        Some(Backend::Windows) => "system.speech".into(),
-        Some(Backend::Say) => "say".into(),
-        Some(Backend::SpdSay) => "spd-say".into(),
-        Some(Backend::Espeak) => "espeak-ng".into(),
-        None => String::new(),
+    backend().map(|b| label(&b).to_string()).unwrap_or_default()
+}
+
+fn label(backend: &Backend) -> &'static str {
+    match backend {
+        Backend::Piper => "piper",
+        Backend::Windows => "system.speech",
+        Backend::Say => "say",
+        Backend::SpdSay => "spd-say",
+        Backend::Espeak => "espeak-ng",
+    }
+}
+
+/// `CC_TTS_SINK_WAV` writes a reply to a file, which only Piper can do. Any
+/// other backend is a clear error, never silent playback through a speaker the
+/// caller meant to bypass.
+fn check_sink(sink: Option<&std::path::Path>, backend: &Backend) -> TtsResult<()> {
+    match sink {
+        Some(_) if !matches!(backend, Backend::Piper) => Err(format!(
+            "CC_TTS_SINK_WAV is set but the speech backend is {}; only piper can write a reply to a file",
+            label(backend)
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -209,13 +225,15 @@ pub fn speak(text: &str) -> TtsResult<usize> {
         return Ok(0);
     }
     let backend = backend().ok_or_else(hint)?;
+    let sink = crate::replay::config().sink();
+    check_sink(sink, &backend)?;
     stop();
 
     if matches!(backend, Backend::Piper) {
         let root = root().ok_or("piper has no repo root")?;
         let voice = VOICE.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let rate = *RATE.lock().unwrap_or_else(|e| e.into_inner());
-        crate::piper::speak_voice(&root, &voice, &body, rate)?;
+        crate::piper::speak_voice(&root, &voice, &body, rate, sink)?;
         return Ok(body.chars().count());
     }
 
@@ -343,7 +361,20 @@ mod tests {
     }
 
     #[test]
+    fn a_file_sink_is_refused_by_every_backend_but_piper() {
+        let sink = std::path::Path::new("reply.wav");
+        assert_eq!(check_sink(Some(sink), &Backend::Piper), Ok(()));
+        assert_eq!(check_sink(None, &Backend::Windows), Ok(()), "no sink, no restriction");
+        for other in [Backend::Windows, Backend::Say, Backend::SpdSay, Backend::Espeak] {
+            let why = check_sink(Some(sink), &other).expect_err("refused");
+            assert!(why.contains("CC_TTS_SINK_WAV") && why.contains(label(&other)), "{why}");
+            assert!(why.contains("only piper"), "{why}");
+        }
+    }
+
+    #[test]
     fn stop_is_safe_when_nothing_is_speaking() {
+        let _serial = crate::listen::testing::serial();
         stop();
         assert!(!stop(), "the second stop has nothing to kill");
         assert!(finished(), "nothing speaking counts as finished");
@@ -357,6 +388,7 @@ mod tests {
             eprintln!("skipped: {}", hint());
             return;
         }
+        let _serial = crate::listen::testing::serial();
         let n = speak("testing one two three four five").expect("a backend is available");
         assert!(n > 0);
         // Barge-in: this is the mechanism that lets "stop" cut off a reply

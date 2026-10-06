@@ -253,18 +253,10 @@ fn run(
     console_url: String,
     policy: Policy,
 ) {
-    let started = Instant::now();
-    let cap = Duration::from_secs(policy.max_minutes.max(1) * 60);
-    // Opened once for the whole session and reused. The microphone is on
-    // either way while hands-free is on — reopening it between takes would
-    // only make it deaf for a second after every utterance. It closes when
-    // this loop ends, which is what turns the OS indicator off.
-    let mut mic: Option<crate::audio::Mic> = None;
-
     // The spotter, if this machine has a wakeword. When it does not, the loop
     // falls back to the old transcribe-everything gate — and says so once,
     // here, rather than leaving the user to wonder why it is slow.
-    let mut spotter = match (policy.require_wake, wake::Spotter::new(&repo_root, policy.wake_sensitivity)) {
+    let spotter = match (policy.require_wake, wake::Spotter::new(&repo_root, policy.wake_sensitivity)) {
         (false, _) => None,
         (true, Ok(s)) => Some(s),
         (true, Err(why)) => {
@@ -272,6 +264,26 @@ fn run(
             None
         }
     };
+    run_loop(crate::replay::config(), spotter, repo_root, assistant, console_url, policy);
+}
+
+/// The armed loop. Split from `run` so a test can hand it a replay
+/// configuration and a spotter of its own instead of the process's.
+fn run_loop(
+    cfg: &crate::replay::ReplayConfig,
+    mut spotter: Option<wake::Spotter>,
+    repo_root: std::path::PathBuf,
+    assistant: Arc<Mutex<Assistant>>,
+    console_url: String,
+    policy: Policy,
+) {
+    let started = Instant::now();
+    let cap = Duration::from_secs(policy.max_minutes.max(1) * 60);
+    // Opened once for the whole session and reused. The microphone is on
+    // either way while hands-free is on — reopening it between takes would
+    // only make it deaf for a second after every utterance. It closes when
+    // this loop ends, which is what turns the OS indicator off.
+    let mut mic: Option<crate::replay::Input> = None;
     log::info!(
         "hands-free: {}",
         if spotter.is_some() {
@@ -334,7 +346,7 @@ fn run(
                 if !crate::voice_test::wait_idle(MIC_TEST_WAIT) {
                     continue;
                 }
-                match crate::audio::Mic::open() {
+                match cfg.open_input() {
                     Ok(open) => {
                         cursor = open.cursor();
                         mic = Some(open);
@@ -367,7 +379,7 @@ fn run(
                     // word of the request after it.
                     let from = mic.as_ref().expect("open above").rewound(policy.preroll);
                     let sent = listen::take_after_wake(
-                        &mut mic, from, &repo_root, &assistant, &console_url);
+                        &mut mic, cfg, from, &repo_root, &assistant, &console_url);
                     // Whatever happened, the utterance just handled must not
                     // be scored again as a fresh wake word.
                     if let Some(open) = mic.as_ref() {
@@ -379,7 +391,7 @@ fn run(
             }
         } else {
             let policy_for_gate = policy.clone();
-            listen::take_gated_on(&mut mic, &repo_root, &assistant, &console_url, move |text| {
+            listen::take_gated_on(&mut mic, cfg, &repo_root, &assistant, &console_url, move |text| {
                 let addressed = should_send(text, &policy_for_gate);
                 if !addressed {
                     log::info!("hands-free: {}", why_not(text, &policy_for_gate));
@@ -609,6 +621,7 @@ mod tests {
 
     #[test]
     fn stopping_when_not_running_is_harmless() {
+        let _serial = listen::testing::serial();
         stop("test");
         assert!(!running());
     }
@@ -631,7 +644,78 @@ mod tests {
     fn the_armed_loop_waits_for_the_mic_test_before_it_opens_the_microphone() {
         let production = include_str!("hands_free.rs").split("mod tests {").next().unwrap();
         let wait = production.find("voice_test::wait_idle(").expect("the loop waits for the test");
-        let open = production.find("crate::audio::Mic::open()").expect("the loop opens a mic");
+        let open = production.find("cfg.open_input()").expect("the loop opens a mic");
         assert!(wait < open, "wait before open");
+    }
+
+    // -- headless: the armed loop fed a replay (T-032 FR-5, AC-13) -------------
+
+    /// Hands-free with no microphone: a replayed WAV holding the wake phrase and
+    /// its request goes through the armed loop's own read, the spotter, the
+    /// pre-roll rewind and a real take, transcription and `say` to a fake
+    /// console. The wake word is trained from the committed SYNTHETIC
+    /// "Console." fixtures into a temporary root, never the user's own.
+    #[test]
+    fn the_armed_loop_fed_a_replay_wakes_and_takes_the_request_with_no_microphone() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if !crate::stt::available(&root) {
+            eprintln!("skipped: no speech engine under desktop/stt");
+            return;
+        }
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures");
+        let _serial = listen::testing::serial();
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                stop("test over");
+                crate::stt::prefer_model("");
+                crate::stt::shutdown();
+                crate::console_settings::forget();
+            }
+        }
+        let _restore = Restore;
+
+        let wake_root = std::env::temp_dir().join(format!("t032-hf-wake-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&wake_root);
+        let samples: Vec<std::path::PathBuf> =
+            (1..=3).map(|i| fixtures.join(format!("wake-console-{i}.wav"))).collect();
+        wake::train(&wake_root, "console", &samples, None, None).expect("builds the test wakeword");
+
+        let console = listen::testing::FakeConsole::start(serde_json::json!({}));
+        crate::console_settings::forget();
+        let cfg = Arc::new(crate::replay::ReplayConfig::new(
+            Some(fixtures.join("wake-console-said.wav")),
+            None,
+        ));
+        let assistant = Arc::new(Mutex::new(Assistant::default()));
+
+        set_stop_reason("");
+        RUNNING.store(true, Ordering::SeqCst);
+        let looped = {
+            let (cfg, assistant, url, wake_root) =
+                (cfg.clone(), assistant.clone(), console.url.clone(), wake_root.clone());
+            std::thread::spawn(move || {
+                let spotter = wake::Spotter::new(&wake_root, 0.5).expect("loads");
+                run_loop(&cfg, Some(spotter), root, assistant, url, Policy::default());
+            })
+        };
+
+        let waited = Instant::now();
+        while console.said().is_empty() && waited.elapsed() < Duration::from_secs(90) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        stop("test finished");
+        looped.join().expect("the loop ends once stopped");
+        let _ = std::fs::remove_dir_all(&wake_root);
+
+        let said = console.said();
+        eprintln!("after the loop: wake fired {:?}, stop reason {:?}", wake::last_fired().map(|f| f.score), last_stop_reason());
+        assert_eq!(said.len(), 1, "the request reached the console exactly once: {said:?}");
+        assert!(said[0].contains("\"source\":\"voice\""), "{said:?}");
+        let fired = wake::last_fired().expect("the spotter fired on the replayed phrase");
+        assert_eq!(fired.name, "console");
+        eprintln!("hands-free replay: wake score {:.2}, sent {said:?}", fired.score);
+        assert_eq!(cfg.first_use_warning(), None, "the replay was opened (and warned about) once");
+        assert_eq!(cfg.source_name(), "file");
     }
 }

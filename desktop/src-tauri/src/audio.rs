@@ -35,7 +35,7 @@ pub const TARGET_HZ: u32 = 16_000;
 
 /// The VAD's frame size, fixed by the detector: exactly 256 samples of 16 kHz
 /// audio, i.e. 16 ms.
-const FRAME: usize = 256;
+pub(crate) const FRAME: usize = 256;
 
 /// Defaults for the two limits a caller can override from settings. The cap
 /// is long enough for a sentence with a pause in it and short enough that a
@@ -162,6 +162,10 @@ pub struct Take {
     /// 16 kHz mono, signed 16-bit.
     pub samples: Vec<i16>,
     pub ending: Ending,
+    /// How many times the speaker carried on after a pause inside the merge
+    /// window, and how much audio time was spent waiting for that (T-032).
+    pub merges: u32,
+    pub window_ms: u64,
 }
 
 impl Take {
@@ -171,24 +175,7 @@ impl Take {
 
     /// A RIFF/WAVE file: 44-byte header, then the samples.
     pub fn wav(&self) -> Vec<u8> {
-        let data_len = (self.samples.len() * 2) as u32;
-        let mut out = Vec::with_capacity(44 + data_len as usize);
-        out.extend_from_slice(b"RIFF");
-        out.extend_from_slice(&(36 + data_len).to_le_bytes());
-        out.extend_from_slice(b"WAVEfmt ");
-        out.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
-        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        out.extend_from_slice(&1u16.to_le_bytes()); // mono
-        out.extend_from_slice(&TARGET_HZ.to_le_bytes());
-        out.extend_from_slice(&(TARGET_HZ * 2).to_le_bytes()); // byte rate
-        out.extend_from_slice(&2u16.to_le_bytes()); // block align
-        out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-        out.extend_from_slice(b"data");
-        out.extend_from_slice(&data_len.to_le_bytes());
-        for s in &self.samples {
-            out.extend_from_slice(&s.to_le_bytes());
-        }
-        out
+        crate::replay::wav_bytes(&self.samples, TARGET_HZ)
     }
 }
 
@@ -474,6 +461,192 @@ impl Endpointer {
     pub fn observed(&self) -> (f32, usize) {
         (self.peak, self.speech_frames)
     }
+
+    /// Milliseconds of speech so far (debounced frames only).
+    fn spoken_ms(&self) -> f32 {
+        self.speech_frames as f32 * frame_ms()
+    }
+
+    /// Did the frame just pushed belong to speech - the third or later frame
+    /// of a run, the same debounce that resets the silence counter. A click is
+    /// one or two frames and never is.
+    fn in_speech(&self) -> bool {
+        self.run >= SPEECH_RUN
+    }
+}
+
+/// One VAD frame in milliseconds, whole (256 samples at 16 kHz = 16 ms).
+const FRAME_MS: usize = FRAME * 1000 / TARGET_HZ as usize;
+
+/// Silence kept where a pause is squeezed and past the last word of a take:
+/// enough that words do not run together, short enough that Whisper does not
+/// read it as a sentence break (Mic Drop's `JOIN_SILENCE_MS`).
+const JOIN_SAMPLES: usize = 300 * TARGET_HZ as usize / 1000;
+
+/// Whole frames needed to cover `d`.
+fn frames_for(d: Duration) -> usize {
+    (d.as_millis() as usize).div_ceil(FRAME_MS)
+}
+
+/// Pause tolerance on top of the `Endpointer` (T-032): its end-of-speech
+/// silence becomes a PROVISIONAL endpoint, and the take then waits a merge
+/// window for the speaker to carry on. Pure - fed scores and loudness, counts
+/// in frames, i.e. in audio time - so it is testable with no audio at all.
+///
+/// - Speech resuming inside the window (the `Endpointer`'s own debounced
+///   resume, so a click does not count) is a MERGE: the take goes on as one.
+/// - After `max_merges` merges the next provisional endpoint ends the take.
+/// - `first_pause` is a floor on total patience for a short utterance:
+///   `max(silence + window, first_pause)` after its last word.
+/// - A window of zero is today's behaviour exactly: the `Endpointer` alone,
+///   `first_pause` and all.
+///
+/// It also notes where the last word was and which stretches of silence a
+/// merge squeezed, so `assemble` can hand the recogniser one tight buffer.
+pub struct Window {
+    ep: Endpointer,
+    frames: usize,
+    window: usize,
+    /// How much longer than the window a short utterance waits: the part of
+    /// `first_pause` the provisional endpoint has not already covered.
+    floor: usize,
+    max_merges: u32,
+    merges: u32,
+    /// `(frame of the provisional endpoint, frames this wait lasts)`.
+    waiting: Option<(usize, usize)>,
+    /// Frames spent waiting, in finished waits.
+    waited: usize,
+    last_speech: Option<usize>,
+    /// Sample ranges of the raw take that a merge dropped.
+    cuts: Vec<(usize, usize)>,
+}
+
+impl Window {
+    pub fn new(limits: &Limits) -> Self {
+        let window = frames_for(limits.merge_window);
+        let ep = if window == 0 {
+            Endpointer::with_first_pause(limits.trailing_silence, limits.first_pause)
+        } else {
+            // The floor moves into the wait, so the provisional endpoint is
+            // always the plain silence.
+            Endpointer::new(limits.trailing_silence)
+        };
+        Self {
+            ep,
+            frames: 0,
+            window,
+            floor: frames_for(limits.first_pause.saturating_sub(limits.trailing_silence)),
+            max_merges: limits.max_merges,
+            merges: 0,
+            waiting: None,
+            waited: 0,
+            last_speech: None,
+            cuts: Vec::new(),
+        }
+    }
+
+    /// Feed one frame. True when the take should end (`Ending::Silence`).
+    pub fn push(&mut self, score: f32, loudness: f32) -> bool {
+        let idx = self.frames;
+        self.frames += 1;
+        let before = self.last_speech;
+        let ended = self.ep.push(score, loudness);
+        if self.ep.in_speech() {
+            self.last_speech = Some(idx);
+        }
+        if self.window == 0 {
+            return ended;
+        }
+        match self.waiting {
+            None if !ended => false,
+            None => {
+                // The provisional endpoint. A short utterance waits at least
+                // until `first_pause`; past `max_merges` nothing else.
+                let short = self.ep.spoken_ms() < SETTLED_SPEECH.as_millis() as f32;
+                let floor = if short { self.floor } else { 0 };
+                let wait = if self.merges < self.max_merges {
+                    self.window.max(floor)
+                } else {
+                    floor
+                };
+                if wait == 0 {
+                    return true;
+                }
+                self.waiting = Some((idx, wait));
+                false
+            }
+            Some((mark, wait)) => {
+                if !ended {
+                    // The silence counter was reset: speech is back.
+                    self.merges += 1;
+                    self.waited += idx - mark;
+                    self.waiting = None;
+                    self.squeeze(before, idx + 1 - SPEECH_RUN);
+                    false
+                } else if idx - mark >= wait {
+                    self.waited += wait;
+                    self.waiting = None;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Note that the silence between the last word (frame `last`) and the
+    /// frame speech came back on (`onset`) is to be cut down to
+    /// `JOIN_SAMPLES` (300 ms).
+    fn squeeze(&mut self, last: Option<usize>, onset: usize) {
+        let from = last.map_or(0, |l| (l + 1) * FRAME) + JOIN_SAMPLES;
+        let to = onset * FRAME;
+        if to > from {
+            self.cuts.push((from, to));
+        }
+    }
+
+    /// How many times the take carried on after a pause.
+    pub fn merges(&self) -> u32 {
+        self.merges
+    }
+
+    /// Audio time spent waiting for the speaker to carry on, in milliseconds,
+    /// including a wait still open when the take ended (a cap or a release).
+    pub fn window_ms(&self) -> u64 {
+        let open = self.waiting.map_or(0, |(mark, _)| self.frames - 1 - mark);
+        ((self.waited + open) * FRAME_MS) as u64
+    }
+
+    pub fn heard_speech(&self) -> bool {
+        self.ep.heard_speech()
+    }
+
+    pub fn thresholds(&self) -> (f32, f32, f32) {
+        self.ep.thresholds()
+    }
+
+    pub fn observed(&self) -> (f32, usize) {
+        self.ep.observed()
+    }
+
+    /// The raw samples of a take as the recogniser should get them: every
+    /// merged pause squeezed to `JOIN_SAMPLES`, and nothing past
+    /// `JOIN_SAMPLES` after the last word. A take with no speech is returned
+    /// as it was.
+    pub fn assemble(&self, raw: &[i16]) -> Vec<i16> {
+        let Some(last) = self.last_speech else {
+            return raw.to_vec();
+        };
+        let end = ((last + 1) * FRAME + JOIN_SAMPLES).min(raw.len());
+        let mut out = Vec::with_capacity(end);
+        let mut at = 0;
+        for &(from, to) in self.cuts.iter().filter(|(_, to)| *to <= end) {
+            out.extend_from_slice(&raw[at..from]);
+            at = to;
+        }
+        out.extend_from_slice(&raw[at..end]);
+        out
+    }
 }
 
 /// Is there an input device to open? The one the setting names if it is
@@ -510,7 +683,19 @@ pub struct Limits {
     pub max_take: Duration,
     pub trailing_silence: Duration,
     pub first_pause: Duration,
+    /// How long to keep listening after `trailing_silence` for the speaker to
+    /// carry on (T-032). Zero = off: the first pause ends the take, as before.
+    pub merge_window: Duration,
+    /// How many times one take may carry on that way. See `Window`.
+    pub max_merges: u32,
 }
+
+/// What the console's settings default to (`listen_merge_window_ms`,
+/// `listen_max_merges`). `Limits::default()` leaves the window OFF so a caller
+/// that builds its own limits (the wake-phrase recorder, a test) gets the
+/// plain endpointer; `listen::limits_from` is what turns it on.
+pub const DEFAULT_MERGE_WINDOW: Duration = Duration::from_millis(1200);
+pub const DEFAULT_MAX_MERGES: u32 = 4;
 
 impl Default for Limits {
     fn default() -> Self {
@@ -519,6 +704,8 @@ impl Default for Limits {
             trailing_silence: DEFAULT_TRAILING_SILENCE,
             // Push-to-talk's shape. Hands-free overrides it.
             first_pause: DEFAULT_TRAILING_SILENCE,
+            merge_window: Duration::ZERO,
+            max_merges: 0,
         }
     }
 }
@@ -535,6 +722,38 @@ pub(crate) fn set_level(value: f32) {
 /// The last frame's level, 0.0..1.0. Zero when nothing is recording.
 pub fn level() -> f32 {
     LEVEL.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
+}
+
+/// Where a take's audio comes from: a cursor into a stream of 16 kHz mono
+/// samples. `Mic` is the live one; `replay::FileFrames` plays a WAV.
+///
+/// The capture loop (`record_frames`) is written against this, so the VAD,
+/// the endpointer, the limits and the pre-roll are the SAME code whichever
+/// source feeds them.
+pub trait Frames {
+    /// Where the source has got to: "now".
+    fn cursor(&self) -> u64;
+    /// Everything from `cursor` up to the source's present, and where to read
+    /// next. A source may hand out less than it has.
+    fn since(&self, cursor: u64) -> (u64, Vec<i16>);
+    /// A cursor `preroll` before now, clamped to what the source still holds.
+    fn rewound(&self, preroll: Duration) -> u64;
+    /// True for a source that delivers in real time (a microphone). The
+    /// capture loop paces itself and keeps a wall-clock backstop on it: a
+    /// stalled device delivers no samples, so a cap counted in samples would
+    /// never fire.
+    fn live(&self) -> bool {
+        false
+    }
+    /// True when nothing more will ever arrive (a file's last sample).
+    fn exhausted(&self) -> bool {
+        false
+    }
+    /// Has the input device setting moved since this was opened? Only a
+    /// microphone can be on the wrong device.
+    fn needs_reopen(&self) -> bool {
+        false
+    }
 }
 
 /// An open microphone.
@@ -687,83 +906,121 @@ impl Mic {
 
     /// Record one take from this already-open microphone, starting now.
     pub fn take(&mut self, stop: Arc<Mutex<bool>>, limits: Limits) -> AudioResult<Take> {
-        self.record_from(self.cursor(), stop, limits)
+        let from = self.cursor();
+        record_frames(self, from, stop, limits)
     }
+}
 
-    /// Record one take that begins at `from` — which may be in the past.
-    ///
-    /// That is the whole point: a wake word is only recognised once it has
-    /// been said, so by the time capture starts, the first second of what
-    /// matters is already behind us. It is still in the ring, and this is how
-    /// it gets into the take.
-    pub fn record_from(
-        &mut self,
-        from: u64,
-        stop: Arc<Mutex<bool>>,
-        limits: Limits,
-    ) -> AudioResult<Take> {
-        let mut detector = earshot::Detector::default_boxed();
-        let mut endpointer =
-            Endpointer::with_first_pause(limits.trailing_silence, limits.first_pause);
-        let started = Instant::now();
-        let mut samples: Vec<i16> = Vec::new();
-        let mut cursor = from;
-        let mut scored = 0usize;
-        // Every exit below assigns this. Declared without a value so the
-        // compiler proves that, rather than a default quietly standing in
-        // for a path somebody forgot.
-        let ending;
+impl Frames for Mic {
+    fn cursor(&self) -> u64 {
+        Mic::cursor(self)
+    }
+    fn since(&self, cursor: u64) -> (u64, Vec<i16>) {
+        Mic::since(self, cursor)
+    }
+    fn rewound(&self, preroll: Duration) -> u64 {
+        Mic::rewound(self, preroll)
+    }
+    fn live(&self) -> bool {
+        true
+    }
+    fn needs_reopen(&self) -> bool {
+        Mic::needs_reopen(self)
+    }
+}
 
-        loop {
-            if *stop.lock().unwrap_or_else(|e| e.into_inner()) {
-                ending = Ending::Released;
+/// Record one take that begins at `from` — which may be in the past — from any
+/// frame source.
+///
+/// A start in the past is the point: a wake word is only recognised once it
+/// has been said, so by the time capture starts, the first second of what
+/// matters is already behind us. It is still in the source's ring, and this is
+/// how it gets into the take.
+///
+/// The cap is counted in captured samples from `from`, pre-roll included, so
+/// a replay ends at the same sample every run. A live source ALSO keeps the
+/// wall-clock cap: a stalled device delivers no samples, and a cap that only
+/// counts samples would never fire on it.
+pub fn record_frames<F: Frames + ?Sized>(
+    src: &mut F,
+    from: u64,
+    stop: Arc<Mutex<bool>>,
+    limits: Limits,
+) -> AudioResult<Take> {
+    let mut detector = earshot::Detector::default_boxed();
+    let mut endpointer = Window::new(&limits);
+    let started = Instant::now();
+    let cap_samples = limits.max_take.as_millis() as usize * TARGET_HZ as usize / 1000;
+    let mut samples: Vec<i16> = Vec::new();
+    let mut cursor = from;
+    let mut scored = 0usize;
+    // Every exit below assigns this. Declared without a value so the
+    // compiler proves that, rather than a default quietly standing in
+    // for a path somebody forgot.
+    let ending;
+
+    loop {
+        if *stop.lock().unwrap_or_else(|e| e.into_inner()) {
+            ending = Ending::Released;
+            break;
+        }
+        if samples.len() >= cap_samples || (src.live() && started.elapsed() >= limits.max_take) {
+            ending = Ending::Capped;
+            break;
+        }
+        let (next, fresh) = src.since(cursor);
+        cursor = next;
+        samples.extend_from_slice(&fresh);
+
+        let mut ended = false;
+        while (scored + 1) * FRAME <= samples.len() {
+            let frame = &samples[scored * FRAME..(scored + 1) * FRAME];
+            scored += 1;
+            let loudness = rms(frame);
+            // Published for the HUD's level meter, from the frame the VAD
+            // is scoring anyway — a second audio path just to draw a bar
+            // would be a second place for the audio to be wrong.
+            set_level(loudness);
+            if endpointer.push(detector.predict_i16(frame), loudness) {
+                ended = true;
                 break;
             }
-            if started.elapsed() >= limits.max_take {
-                ending = Ending::Capped;
-                break;
-            }
-            let (next, fresh) = self.since(cursor);
-            cursor = next;
-            samples.extend_from_slice(&fresh);
-
-            let mut ended = false;
-            while (scored + 1) * FRAME <= samples.len() {
-                let frame = &samples[scored * FRAME..(scored + 1) * FRAME];
-                scored += 1;
-                let loudness = rms(frame);
-                // Published for the HUD's level meter, from the frame the VAD
-                // is scoring anyway — a second audio path just to draw a bar
-                // would be a second place for the audio to be wrong.
-                set_level(loudness);
-                if endpointer.push(detector.predict_i16(frame), loudness) {
-                    ended = true;
-                    break;
-                }
-            }
-            if ended {
-                ending = Ending::Silence;
-                break;
-            }
+        }
+        if ended {
+            ending = Ending::Silence;
+            break;
+        }
+        // Nothing more will ever arrive, so waiting would spin forever on a
+        // sample clock that can no longer advance. Whatever was said has had
+        // its silence by now (a file carries a trailing one); if nothing was
+        // said the check below turns this into `NothingHeard`.
+        if fresh.is_empty() && src.exhausted() {
+            ending = Ending::Silence;
+            break;
+        }
+        if src.live() {
             std::thread::sleep(Duration::from_millis(16));
         }
-
-        set_level(0.0);
-        let (on, off, min_rms) = endpointer.thresholds();
-        let (peak, speech_frames) = endpointer.observed();
-        // Logged for EVERY take, including the ones that heard nothing —
-        // those are the ones you need it for. A peak near zero is a
-        // microphone problem; a healthy peak with no speech frames is a
-        // threshold problem.
-        log::debug!(
-            "audio: thresholds on {on:.2} off {off:.2} rms {min_rms:.4}; \
-             loudest frame {peak:.4}, {speech_frames} speech frames"
-        );
-        if !endpointer.heard_speech() {
-            return Ok(Take { samples, ending: Ending::NothingHeard });
-        }
-        Ok(Take { samples, ending })
     }
+
+    set_level(0.0);
+    let (on, off, min_rms) = endpointer.thresholds();
+    let (peak, speech_frames) = endpointer.observed();
+    // Logged for EVERY take, including the ones that heard nothing —
+    // those are the ones you need it for. A peak near zero is a
+    // microphone problem; a healthy peak with no speech frames is a
+    // threshold problem.
+    log::debug!(
+        "audio: thresholds on {on:.2} off {off:.2} rms {min_rms:.4}; \
+         loudest frame {peak:.4}, {speech_frames} speech frames"
+    );
+    let (merges, window_ms) = (endpointer.merges(), endpointer.window_ms());
+    if !endpointer.heard_speech() {
+        return Ok(Take { samples, ending: Ending::NothingHeard, merges, window_ms });
+    }
+    // What the recogniser gets: merged pauses squeezed, the tail trimmed.
+    let samples = endpointer.assemble(&samples);
+    Ok(Take { samples, ending, merges, window_ms })
 }
 
 impl Drop for Mic {
@@ -833,7 +1090,7 @@ mod tests {
 
     #[test]
     fn the_wav_header_is_a_44_byte_riff() {
-        let take = Take { samples: vec![0, 1, -1], ending: Ending::Silence };
+        let take = Take { samples: vec![0, 1, -1], ending: Ending::Silence, merges: 0, window_ms: 0 };
         let wav = take.wav();
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
@@ -1209,5 +1466,169 @@ mod tests {
         assert_eq!(mic.device_name(), device_name(),
                    "the name `Mic` remembers is the name `device_name()` reports");
         assert!(!mic.needs_reopen(), "nothing has changed the preference since it opened");
+    }
+
+    // -- the merge window (T-032 B3): pure, synthetic scores, no audio --------
+
+    /// (VAD score, loudness) of a frame of speech and of a quiet room.
+    const SPEECH: (f32, f32) = (0.9, 0.3);
+    const QUIET: (f32, f32) = (0.0, 0.001);
+
+    fn limits(window_ms: u64, max_merges: u32, first_pause_ms: u64) -> Limits {
+        Limits {
+            merge_window: Duration::from_millis(window_ms),
+            max_merges,
+            first_pause: Duration::from_millis(first_pause_ms),
+            ..Limits::default()
+        }
+    }
+
+    /// Feed runs of frames; the index of the frame that ended the take.
+    fn play(w: &mut Window, parts: &[((f32, f32), usize)]) -> Option<usize> {
+        let mut i = 0;
+        for &((score, loud), n) in parts {
+            for _ in 0..n {
+                if w.push(score, loud) {
+                    return Some(i);
+                }
+                i += 1;
+            }
+        }
+        None
+    }
+
+    /// 700 ms of silence is 44 frames; a 1200 ms window is 75.
+    const PROVISIONAL: usize = 44;
+    const WINDOW: usize = 75;
+
+    #[test]
+    fn speech_resuming_inside_the_window_is_one_take() {
+        // 10 quiet (calibration), 40 speech (10..=49), 56 quiet (0.9 s), speech
+        // again (106..=145), then quiet for good.
+        let mut w = Window::new(&limits(1200, 4, 700));
+        let end = play(&mut w, &[(QUIET, 10), (SPEECH, 40), (QUIET, 56), (SPEECH, 40), (QUIET, 200)]);
+        assert_eq!(w.merges(), 1);
+        assert_eq!(end, Some(145 + PROVISIONAL + WINDOW), "ends a window after the second pause");
+        // 15 frames of the first window were spent before speech came back,
+        // then the whole second one.
+        assert_eq!(w.window_ms(), ((15 + WINDOW) * 16) as u64);
+    }
+
+    #[test]
+    fn a_pause_longer_than_the_window_ends_the_take_with_no_merge() {
+        let mut w = Window::new(&limits(1200, 4, 700));
+        let end = play(&mut w, &[(QUIET, 10), (SPEECH, 40), (QUIET, 300)]);
+        assert_eq!(end, Some(49 + PROVISIONAL + WINDOW));
+        assert_eq!(w.merges(), 0);
+    }
+
+    #[test]
+    fn clicks_inside_the_window_neither_merge_nor_extend_it() {
+        let mut w = Window::new(&limits(1200, 4, 700));
+        let end = play(&mut w, &[
+            (QUIET, 10), (SPEECH, 40), (QUIET, PROVISIONAL),
+            (QUIET, 10), (SPEECH, 1), (QUIET, 14), (SPEECH, 2), (QUIET, 12), (SPEECH, 1), (QUIET, 200),
+        ]);
+        assert_eq!(end, Some(49 + PROVISIONAL + WINDOW), "same end as with no clicks");
+        assert_eq!(w.merges(), 0, "one or two frames of 'speech' is not a resume");
+    }
+
+    #[test]
+    fn after_max_merges_the_next_pause_ends_the_take_at_once() {
+        let pattern = [
+            (QUIET, 10), (SPEECH, 40), (QUIET, 56), (SPEECH, 40), (QUIET, 56),
+            (SPEECH, 40), (QUIET, 300),
+        ];
+        // speech ends at frames 49, 145, 241
+        let mut two = Window::new(&limits(1200, 2, 700));
+        assert_eq!(play(&mut two, &pattern), Some(241 + PROVISIONAL), "no window after 2 merges");
+        assert_eq!(two.merges(), 2);
+
+        let mut four = Window::new(&limits(1200, 4, 700));
+        assert_eq!(play(&mut four, &pattern), Some(241 + PROVISIONAL + WINDOW));
+
+        let mut none = Window::new(&limits(1200, 0, 700));
+        assert_eq!(play(&mut none, &pattern), Some(49 + PROVISIONAL), "0 merges: every pause splits");
+        assert_eq!(none.merges(), 0);
+    }
+
+    #[test]
+    fn a_zero_window_is_the_plain_endpointer_first_pause_included() {
+        let sequences: [&[((f32, f32), usize)]; 3] = [
+            &[(QUIET, 10), (SPEECH, 40), (QUIET, 300)],                       // short
+            &[(QUIET, 10), (SPEECH, 120), (QUIET, 300)],                      // long
+            &[(QUIET, 10), (SPEECH, 40), (QUIET, 56), (SPEECH, 40), (QUIET, 300)], // a pause
+        ];
+        for first_pause in [700u64, 1500, 3000] {
+            for seq in sequences {
+                let mut ep = Endpointer::with_first_pause(
+                    Duration::from_millis(700), Duration::from_millis(first_pause));
+                let mut i = 0;
+                let mut alone = None;
+                'run: for &((s, l), n) in seq {
+                    for _ in 0..n {
+                        if ep.push(s, l) { alone = Some(i); break 'run; }
+                        i += 1;
+                    }
+                }
+                let mut w = Window::new(&limits(0, 4, first_pause));
+                assert_eq!(play(&mut w, seq), alone, "first_pause {first_pause}");
+                assert_eq!((w.merges(), w.window_ms()), (0, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn first_pause_is_a_floor_on_total_patience_for_a_short_utterance() {
+        let short = [(QUIET, 10), (SPEECH, 30), (QUIET, 400)]; // 480 ms of speech
+        // Last speech frame is 39. With first_pause 3000 it ends at 3.0 s.
+        let mut w = Window::new(&limits(1200, 4, 3000));
+        let end = play(&mut w, &short).expect("ended");
+        let ms = (end - 39) * 16;
+        assert!((3000..=3032).contains(&ms), "{ms} ms after the last word");
+
+        // At the defaults (1500 < 700 + 1200) the floor is inert: 1.9 s.
+        let mut w = Window::new(&limits(1200, 4, 1500));
+        assert_eq!(play(&mut w, &short), Some(39 + PROVISIONAL + WINDOW));
+
+        // A long utterance is past the floor: 1.9 s whatever first_pause says.
+        let long = [(QUIET, 10), (SPEECH, 100), (QUIET, 400)];
+        let mut w = Window::new(&limits(1200, 4, 3000));
+        assert_eq!(play(&mut w, &long), Some(109 + PROVISIONAL + WINDOW));
+
+        // No merges left: the floor alone still holds, as today's first pause did.
+        let mut w = Window::new(&limits(1200, 0, 1500));
+        let end = play(&mut w, &short).expect("ended");
+        assert_eq!((end - 39) * 16, 1504);
+    }
+
+    #[test]
+    fn a_merge_squeezes_the_pause_and_the_tail_to_300_ms() {
+        let mut w = Window::new(&limits(1200, 4, 700));
+        let mut raw: Vec<i16> = Vec::new();
+        let mut frames = |w: &mut Window, kind: (f32, f32), n: usize, v: i16| {
+            for _ in 0..n {
+                raw.extend(std::iter::repeat(v).take(FRAME));
+                w.push(kind.0, kind.1);
+            }
+        };
+        frames(&mut w, QUIET, 10, 0);
+        frames(&mut w, SPEECH, 40, 5000);
+        frames(&mut w, QUIET, 56, 0); // 0.9 s pause, merged
+        frames(&mut w, SPEECH, 40, 5000);
+        frames(&mut w, QUIET, 200, 0);
+        assert_eq!(w.merges(), 1);
+        let out = w.assemble(&raw);
+        // Speech is exactly the 80 loud frames; around it, 10 quiet frames
+        // before, the squeezed pause, and at most JOIN_SAMPLES after.
+        let loud = out.iter().filter(|s| **s == 5000).count();
+        assert_eq!(loud, 80 * FRAME);
+        let first = out.iter().position(|s| *s == 5000).unwrap();
+        let last = out.iter().rposition(|s| *s == 5000).unwrap();
+        assert_eq!(first, 10 * FRAME);
+        assert_eq!(out.len() - 1 - last, JOIN_SAMPLES, "tail kept: 300 ms");
+        let gap = out[first..last].iter().filter(|s| **s == 0).count();
+        assert_eq!(gap, JOIN_SAMPLES, "pause kept: 300 ms");
+        assert!(out.len() < raw.len());
     }
 }

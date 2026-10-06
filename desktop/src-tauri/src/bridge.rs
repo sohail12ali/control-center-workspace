@@ -274,6 +274,8 @@ fn record_phrase() -> Result<Vec<u8>, String> {
             max_take: std::time::Duration::from_secs(3),
             trailing_silence: std::time::Duration::from_millis(500),
             first_pause: std::time::Duration::from_millis(500),
+            // Never wait for more: a template padded with silence matches silence.
+            ..crate::audio::Limits::default()
         },
     )?;
     if take.ending == crate::audio::Ending::NothingHeard {
@@ -284,7 +286,16 @@ fn record_phrase() -> Result<Vec<u8>, String> {
 
 /// The body of `GET /listen/state`.
 pub(crate) fn listen_state_json(repo_root: &Path) -> Value {
+    listen_state_with(repo_root, crate::replay::config())
+}
+
+/// `listen_state_json` for an explicit replay configuration, so a test need not
+/// set a process environment variable.
+pub(crate) fn listen_state_with(repo_root: &Path, replay: &crate::replay::ReplayConfig) -> Value {
     json!({
+        // Where audio comes from: "file" when CC_REPLAY_WAV stands in for the
+        // microphone, else "mic". Read-only here; nothing in the bridge sets it.
+        "source": replay.source_name(),
         "listening": listen::listening(),
         "available": listen::available(repo_root),
         "hint": listen::hint(repo_root),
@@ -1188,6 +1199,8 @@ mod tests {
             eprintln!("skipped: no fixture at {}", fixture.display());
             return;
         }
+        // Swaps and shuts down the one process-wide engine, so no take may run beside it.
+        let _serial = crate::listen::testing::serial();
         struct Stop;
         impl Drop for Stop {
             fn drop(&mut self) {

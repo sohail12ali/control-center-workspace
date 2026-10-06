@@ -364,6 +364,30 @@ class TestListeningSettings:
         with pytest.raises(ValueError, match="between"):
             assistant_config.update(str(tmp_path), {key: value})
 
+    def test_the_merge_window_has_defaults_and_is_writable(self, tmp_path):
+        # T-032. The shell's listen::limits_from reads these by name.
+        s = assistant_config.settings(str(tmp_path))
+        assert s["listen_merge_window_ms"] == 1200
+        assert s["listen_max_merges"] == 4
+        assert {"listen_merge_window_ms", "listen_max_merges"} <= assistant_config.WRITABLE
+        assistant_config.update(str(tmp_path), {
+            "listen_merge_window_ms": 0, "listen_max_merges": 8})
+        s = assistant_config.settings(str(tmp_path))
+        assert s["listen_merge_window_ms"] == 0 and s["listen_max_merges"] == 8
+
+    @pytest.mark.parametrize("key,value", [
+        ("listen_merge_window_ms", -1), ("listen_merge_window_ms", 5001),
+        ("listen_max_merges", -1), ("listen_max_merges", 9),
+    ])
+    def test_a_merge_dial_outside_its_range_is_refused(self, tmp_path, key, value):
+        with pytest.raises(ValueError, match="between"):
+            assistant_config.update(str(tmp_path), {key: value})
+
+    def test_replay_can_not_be_turned_on_from_settings(self):
+        # T-032 D-1: CC_REPLAY_WAV / CC_TTS_SINK_WAV are environment only.
+        for key in list(assistant_config.WRITABLE) + list(assistant_config.DEFAULTS):
+            assert "replay" not in key.lower() and "sink" not in key.lower(), key
+
     def test_a_sensitivity_posted_as_text_stays_a_number(self, tmp_path):
         # A slider posts "0.7". Stored as a string it would compare against
         # the range as a string, and the shell would read a float back as 0.
@@ -391,7 +415,8 @@ class TestListeningSettings:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         shipped = tomlio.load(os.path.join(
             root, "config", "assistant.toml"))["assistant"]
-        for key in ("listen_max_seconds", "listen_silence_ms", "stt_model"):
+        for key in ("listen_max_seconds", "listen_silence_ms", "stt_model",
+                    "listen_merge_window_ms", "listen_max_merges"):
             assert shipped[key] == assistant_config.DEFAULTS[key], key
 
 
@@ -847,7 +872,7 @@ class TestDeviceSettings:
 
     def test_both_keys_are_writable_and_the_set_grew_by_exactly_two(self):
         assert set(_DEVICE_KEYS) <= assistant_config.WRITABLE
-        assert len(assistant_config.WRITABLE) == 26
+        assert len(assistant_config.WRITABLE) == 28  # 26 + T-032's two merge keys
 
     @pytest.mark.parametrize("key", _DEVICE_KEYS)
     def test_the_committed_file_ships_the_same_default(self, key):
@@ -915,6 +940,7 @@ class TestAppliesMap:
             by_when.setdefault(entry["when"], set()).add(key)
         assert by_when["live"] == {
             "listen_max_seconds", "listen_silence_ms", "listen_first_pause_ms",
+            "listen_merge_window_ms", "listen_max_merges",
             "stt_model", "speak", "speak_voice", "speak_rate_percent",
             "tray_click_action", "reply_chars", "session_idle_minutes",
             "ticket_prefix", "work_backend", "work_model", "backend_chain",

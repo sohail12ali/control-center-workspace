@@ -1,13 +1,13 @@
 ---
 tags: [active]
-status: Open
+status: Verify
 ticket: "T-032"
 ---
 
 # T-032: Hear me properly: pause-tolerant endpointing, junk filter, wav-replay seam
 
-**Status:** Open  
-**Stage:** GROUND  
+**Status:** Verify  
+**Stage:** VERIFY  
 **Owner:** Sohail Ali  
 **Created:** 2026-10-05  
 **Due:**  
@@ -24,8 +24,11 @@ Out of scope: Silero VAD (B6), echo cancellation (T-035).
 
 ## Current State
 
-**2026-10-06 (corrected):** GROUND and CLARIFY are done: [[T-032-analysis]] is written and [[T-032-requirements]] is **frozen** (FR-1..20, NFR-1..4, AC-1..15; decisions D-1..D-9 in [[T-032-decision-log]]), with user stories in [[T-032-user-stories]] and a 14-task plan in [[T-032-plan]] (T-032-01..14, none built; order: wav-replay seam first, then endpointing, then the junk filter). The harness run that produced these stopped without a report, so `T-032-progress.md` is nearly empty, handoffs are not logged, and it is not confirmed that the plan was challenged. No code exists. Lane is `open`. Resume with a fresh harness that rebuilds state from these artifacts; see [[handoff-2026-10-06-pending-work]].
+**2026-10-06:** All 14 plan tasks (T-032-01..14) are built and SIMPLIFY ran. Lane is `verify`. The independent verifier's disposition is ready_to_close for code and tests (`close-check` ok:true, 0 blocks); see [[T-032-verification]]. 15 of 15 acceptance criteria PASS on synthetic audio; none is verified on real hardware. Evidence: cargo 365 passed (single-threaded and parallel); pytest 1 failed (the known `console/tests/test_stylesheet.py::test_every_class_the_js_styles_actually_exists`, `onboarding-wizard.js: .ob-count`, another ticket's) and 2884 passed.
+
+Open OWNER items: **D-10** (the 300 ms tail trim is unconditional; a one-line alternative is recorded), **D-11** (noise fixture g2 returns fluent junk through the shipped engine; the confidence guard is deferred as TD-1) and **V-7** (feel of the 1.2 s window, audible Sent cue, live-mic regression: only the user can do these). `close-work` has NOT been run and `review-round` is NOT recorded. History and handoff: [[T-032-progress]], [[handoff-2026-10-06-pending-work]].
 
 ## Links
 - [[INV-2026-10-05-micdrop-adoption-dossier]] · Previous: [[T-031-summary]] · Next: [[T-033-summary]] · Related: [[T-019-summary]]
 - [[T-032-summary]] · [[T-032-analysis]] · [[T-032-requirements]] · [[T-032-decision-log]] · [[T-032-plan]] · [[T-032-progress]] · [[T-032-verification]]
+- Also: [[T-032-context-snapshot]] · [[T-032-gap-analysis]] · [[T-032-iteration-log]] · [[T-032-release]] · [[T-032-requirements-draft]] · [[T-032-user-stories]]

@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use crate::tray_state::{Assistant, Event};
 use crate::console_settings;
 use crate::console_api;
-use crate::{audio, devices, stt, tts};
+use crate::{audio, devices, replay, stt, transcript_filter, tts};
 
 /// Guards against two takes at once. An `AtomicBool` rather than the state
 /// machine's own flag, because this must be correct even if a repaint is
@@ -70,11 +70,11 @@ pub fn release() {
 /// listening rows, so it must answer for this machine rather than for the
 /// feature in principle.
 pub fn available(repo_root: &std::path::Path) -> bool {
-    audio::available() && stt::available(repo_root)
+    (replay::config().replaying() || audio::available()) && stt::available(repo_root)
 }
 
 pub fn hint(repo_root: &std::path::Path) -> String {
-    if !audio::available() {
+    if !replay::config().replaying() && !audio::available() {
         return "no microphone: nothing is set as the default input device".into();
     }
     stt::hint(repo_root)
@@ -112,7 +112,7 @@ where
 {
     // No cached microphone: a push-to-talk take opens one and closes it, so
     // the OS indicator is lit exactly while it is recording.
-    take_gated_on(&mut None, repo_root, assistant, console_url, gate)
+    take_gated_on(&mut None, replay::config(), repo_root, assistant, console_url, gate)
 }
 
 /// A gated take that may REUSE an already-open microphone.
@@ -123,7 +123,8 @@ where
 /// the next wake word lands. `cpal::Stream` is not `Send`, so the cache
 /// belongs to the caller's thread, which is where the loop lives anyway.
 pub fn take_gated_on<F>(
-    mic: &mut Option<audio::Mic>,
+    mic: &mut Option<replay::Input>,
+    cfg: &replay::ReplayConfig,
     repo_root: &std::path::Path,
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
@@ -136,7 +137,7 @@ where
         return Err("already listening".into());
     }
     // Whatever happens below, the flag and the tray must come back.
-    let outcome = take_inner(mic, repo_root, assistant, console_url, &gate, None);
+    let outcome = take_inner(mic, cfg, repo_root, assistant, console_url, &gate, None);
     LISTENING.store(false, Ordering::SeqCst);
     if outcome.is_err() {
         note(assistant, Event::Cancel);
@@ -154,7 +155,8 @@ where
 /// There is no gate: the wake word WAS the gate, and it ran on the audio
 /// rather than on a transcript, so nothing here has to decide again.
 pub fn take_after_wake(
-    mic: &mut Option<audio::Mic>,
+    mic: &mut Option<replay::Input>,
+    cfg: &replay::ReplayConfig,
     from: u64,
     repo_root: &std::path::Path,
     assistant: &Arc<Mutex<Assistant>>,
@@ -164,7 +166,7 @@ pub fn take_after_wake(
         return Err("already listening".into());
     }
     let outcome = take_inner(
-        mic, repo_root, assistant, console_url, &|_: &str| true, Some(from));
+        mic, cfg, repo_root, assistant, console_url, &|_: &str| true, Some(from));
     LISTENING.store(false, Ordering::SeqCst);
     if outcome.is_err() {
         note(assistant, Event::Cancel);
@@ -195,6 +197,17 @@ pub fn limits_from(settings: &serde_json::Value, patient: bool) -> audio::Limits
         } else {
             trailing
         },
+        // The console enforces 0-5000 and 0-8; clamped here too, because a
+        // hand-edited settings file is not the console.
+        merge_window: std::time::Duration::from_millis(
+            console_settings::u64_at(
+                settings, "listen_merge_window_ms",
+                audio::DEFAULT_MERGE_WINDOW.as_millis() as u64,
+            ).min(5000),
+        ),
+        max_merges: console_settings::u64_at(
+            settings, "listen_max_merges", audio::DEFAULT_MAX_MERGES as u64,
+        ).min(8) as u32,
     }
 }
 
@@ -395,7 +408,8 @@ pub fn take_refusal(mic_test_running: bool, will_open: bool) -> Option<&'static 
 }
 
 fn take_inner<F>(
-    mic: &mut Option<audio::Mic>,
+    mic: &mut Option<replay::Input>,
+    cfg: &replay::ReplayConfig,
     repo_root: &std::path::Path,
     assistant: &Arc<Mutex<Assistant>>,
     console_url: &str,
@@ -411,11 +425,12 @@ where
     let began = std::time::Instant::now();
     // The Settings microphone test has the device for two seconds: a second
     // open beside it is refused (before any side effect) rather than raced.
-    let will_open = mic.as_ref().map(|m| m.needs_reopen()).unwrap_or(true);
+    // A replay opens no device, so there is nothing for the test to hold.
+    let will_open = !cfg.replaying() && mic.as_ref().map(|m| m.needs_reopen()).unwrap_or(true);
     if let Some(why) = take_refusal(crate::voice_test::running(&crate::voice_test::shell_state()), will_open) {
         return Err(why.into());
     }
-    if !audio::available() {
+    if !cfg.replaying() && !audio::available() {
         return Err(hint(repo_root));
     }
     if !stt::available(repo_root) {
@@ -485,14 +500,19 @@ where
         // Dropped first: the old stream has to let go of its device before a
         // new one opens, and a failed open must not leave the old one behind.
         *mic = None;
-        *mic = Some(audio::Mic::open()?);
+        // A replayed file keeps its playhead in `cfg`, not in what is dropped
+        // here, so a reopen or an error never rewinds it.
+        *mic = Some(cfg.open_input()?);
     }
     let from = plan.from;
     let open = mic.as_mut().expect("just opened");
     let recorded = match from {
         // Pre-roll: the wake word was said before it was recognised.
-        Some(cursor) => open.record_from(cursor, stop, limits),
-        None => open.take(stop, limits),
+        Some(cursor) => audio::record_frames(open.as_mut(), cursor, stop, limits),
+        None => {
+            let now = open.cursor();
+            audio::record_frames(open.as_mut(), now, stop, limits)
+        }
     };
     if recorded.is_err() {
         // A microphone that failed mid-take may have been unplugged. Drop it
@@ -516,9 +536,11 @@ where
         return Err("nothing heard".into());
     }
     log::info!(
-        "listen: {:.1}s of audio, ended by {:?}",
+        "listen: {:.1}s of audio, ended by {:?} ({} merges, {}ms waited for more)",
         take.seconds(),
-        take.ending
+        take.ending,
+        take.merges,
+        take.window_ms
     );
 
     let step = std::time::Instant::now();
@@ -535,6 +557,51 @@ where
         note(assistant, Event::Cancel);
         return Err("the speech engine returned nothing".into());
     }
+    let sending = std::time::Instant::now();
+    let text = deliver(&text, assistant, console_url, gate)?;
+    // One line, whole take, in the order the user experiences it. `checks` is
+    // the part before the microphone is even asked to open — the part nobody
+    // suspects until it is printed.
+    log::info!(
+        "listen: took {}ms (checks {}ms, record {}ms for {:.1}s of audio, {} merges + {}ms window,          stt {}ms, post {}ms)",
+        began.elapsed().as_millis(),
+        checked_ms,
+        recorded_ms,
+        take.seconds(),
+        take.merges,
+        take.window_ms,
+        stt_ms,
+        sending.elapsed().as_millis()
+    );
+    Ok(text)
+}
+
+/// Everything between "the engine returned text" and "the console has it": the
+/// junk filter, the gate, the on-screen echo, the send and its cue. Returns the
+/// text that was sent. Split out so a transcript can be fed in without audio.
+fn deliver<F>(
+    text: &str,
+    assistant: &Arc<Mutex<Assistant>>,
+    console_url: &str,
+    gate: &F,
+) -> ListenResult<String>
+where
+    F: Fn(&str) -> bool,
+{
+    // Sound tags and silence hallucinations are not speech. They end the take
+    // as "nothing heard" (the quiet outcome, which hands-free does not log as
+    // an error) before the gate, the Sent cue or the console see them, and
+    // only the reason and a word count are logged, never the text. This is
+    // the one place a transcript comes back, so it covers push-to-talk and
+    // hands-free alike.
+    let text = match transcript_filter::clean(text) {
+        Ok(cleaned) => cleaned,
+        Err(why) => {
+            log::info!("{}", filtered_line(text, why));
+            note(assistant, Event::Cancel);
+            return Err("nothing heard".into());
+        }
+    };
     // The gate runs HERE: after local transcription, before anything is sent.
     // That ordering is the whole privacy argument for always-on listening —
     // unaddressed speech is heard, transcribed on this machine, and dropped,
@@ -561,22 +628,15 @@ where
 
     // Handing it to the console is what makes a spoken command and a typed
     // one the same thing.
-    let sending = std::time::Instant::now();
     console_api::say(console_url, &text, "voice")?;
     crate::cue::play(crate::cue::Cue::Sent);
-    // One line, whole take, in the order the user experiences it. `checks` is
-    // the part before the microphone is even asked to open — the part nobody
-    // suspects until it is printed.
-    log::info!(
-        "listen: took {}ms (checks {}ms, record {}ms for {:.1}s of audio,          stt {}ms, post {}ms)",
-        began.elapsed().as_millis(),
-        checked_ms,
-        recorded_ms,
-        take.seconds(),
-        stt_ms,
-        sending.elapsed().as_millis()
-    );
     Ok(text)
+}
+
+/// The one log line for a discarded transcript: how many words and why, never
+/// which words.
+fn filtered_line(text: &str, why: transcript_filter::Dropped) -> String {
+    format!("listen: heard {} words, filtered ({}) - nothing sent", text.split_whitespace().count(), why.name())
 }
 
 /// Tell the tray what just happened.
@@ -586,6 +646,109 @@ where
 /// showing idle until something else repainted it.
 fn note(assistant: &Arc<Mutex<Assistant>>, event: Event) {
     crate::tray_paint::note(assistant, event);
+}
+
+/// Support for tests that run a whole take or the whole armed loop.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    /// A take moves process-wide state: `LISTENING` and `STOP`, the speech
+    /// engine's preferences and the settings cache. Tests that run one, or
+    /// that read that state, hold this so they cannot see each other's.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    pub fn serial() -> MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A console on a port of its own: it answers `GET /api/assistant/settings`
+    /// with `settings` and records the body of every `POST /api/assistant/say`.
+    /// Stops when dropped.
+    pub struct FakeConsole {
+        pub url: String,
+        said: Arc<Mutex<Vec<String>>>,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl FakeConsole {
+        pub fn start(settings: serde_json::Value) -> FakeConsole {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+            listener.set_nonblocking(true).unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let said = Arc::new(Mutex::new(Vec::new()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (log, flag) = (said.clone(), stop.clone());
+            let settings_body = serde_json::json!({ "settings": settings }).to_string();
+            std::thread::spawn(move || {
+                while !flag.load(Ordering::SeqCst) {
+                    let Ok((mut conn, _)) = listener.accept() else {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    };
+                    let _ = conn.set_nonblocking(false);
+                    let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                    let (head, body) = read_request(&mut conn);
+                    let reply = if head.starts_with("POST /api/assistant/say") {
+                        log.lock().unwrap().push(body);
+                        "{\"ok\":true}".to_string()
+                    } else {
+                        settings_body.clone()
+                    };
+                    let _ = conn.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                             Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                            reply.len()
+                        )
+                        .as_bytes(),
+                    );
+                }
+            });
+            FakeConsole { url, said, stop }
+        }
+
+        /// The bodies of every `say` received so far.
+        pub fn said(&self) -> Vec<String> {
+            self.said.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for FakeConsole {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The request line and headers, and the body they promise.
+    fn read_request(conn: &mut std::net::TcpStream) -> (String, String) {
+        let mut raw = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let split = loop {
+            if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+            match conn.read(&mut chunk) {
+                Ok(0) | Err(_) => break raw.len(),
+                Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            }
+        };
+        let head = String::from_utf8_lossy(&raw[..split.min(raw.len())]).to_string();
+        let wanted = head
+            .lines()
+            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+            .unwrap_or(0);
+        while raw.len() < split + wanted {
+            match conn.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let body = String::from_utf8_lossy(&raw[split.min(raw.len())..]).to_string();
+        (head, body)
+    }
 }
 
 #[cfg(test)]
@@ -604,8 +767,36 @@ mod tests {
         assert!(h.contains("microphone") || h.contains(stt_half), "{h}");
     }
 
+    // -- the merge window's two keys (T-032 FR-19, AC-14) --------------------
+
+    #[test]
+    fn limits_from_reads_the_merge_window_and_falls_back_to_the_defaults() {
+        let l = limits_from(&serde_json::json!({}), false);
+        assert_eq!(l.merge_window, std::time::Duration::from_millis(1200));
+        assert_eq!(l.max_merges, 4);
+
+        let l = limits_from(&serde_json::json!({
+            "listen_merge_window_ms": 800, "listen_max_merges": 2}), true);
+        assert_eq!(l.merge_window, std::time::Duration::from_millis(800));
+        assert_eq!(l.max_merges, 2);
+
+        // 0 is a real value (off), not "missing".
+        let l = limits_from(&serde_json::json!({
+            "listen_merge_window_ms": 0, "listen_max_merges": 0}), false);
+        assert_eq!((l.merge_window, l.max_merges), (std::time::Duration::ZERO, 0));
+    }
+
+    #[test]
+    fn limits_from_clamps_a_hand_edited_merge_window() {
+        let l = limits_from(&serde_json::json!({
+            "listen_merge_window_ms": 900_000, "listen_max_merges": 99}), false);
+        assert_eq!(l.merge_window, std::time::Duration::from_millis(5000));
+        assert_eq!(l.max_merges, 8);
+    }
+
     #[test]
     fn release_is_safe_when_nothing_is_listening() {
+        let _serial = testing::serial();
         release();
         assert!(!listening());
     }
@@ -823,6 +1014,7 @@ mod tests {
     fn settings_that_are_not_an_object_apply_nothing() {
         // `console_settings::all` answers Null when the console is down. That
         // must not look like "everything is at its default".
+        let _serial = testing::serial();
         let before = (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation());
         for down in [serde_json::Value::Null, json!("oops"), json!([1, 2]), json!(7)] {
             assert_eq!(apply_settings(std::path::Path::new("."), &down), None, "{down}");
@@ -838,6 +1030,7 @@ mod tests {
     fn a_refresh_against_an_unreachable_console_applies_nothing() {
         // Port 1 is closed on loopback: the fetch fails at once, as it does
         // when the console is not running.
+        let _serial = testing::serial();
         let before = (stt::preferred_model(), stt::prompt(), devices::PREFS.input_generation());
         assert_eq!(refresh_settings(std::path::Path::new("."), "http://127.0.0.1:1"), None);
         assert_eq!(
@@ -878,7 +1071,152 @@ mod tests {
         let production = include_str!("listen.rs").split("mod tests {").next().unwrap();
         let take = production.split("fn take_inner").nth(1).expect("take_inner exists");
         let ask = take.find("take_refusal(").expect("take_inner consults the mic test");
-        let open = take.find("audio::Mic::open()").expect("take_inner opens a mic");
+        let open = take.find("cfg.open_input()").expect("take_inner opens a mic");
         assert!(ask < open, "the check must come before the open");
+    }
+
+    // -- headless replay: a whole take with no microphone (T-032 FR-3, FR-5) --
+
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures").join(name)
+    }
+
+    /// Put the process-wide state a take touches back as it was found.
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            stt::prefer_model("");
+            stt::shutdown();
+            console_settings::forget();
+            LISTENING.store(false, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_replayed_take_is_transcribed_and_sent_with_no_microphone_and_the_playhead_persists() {
+        let root = repo_root();
+        if !stt::available(&root) {
+            eprintln!("skipped: no speech engine under desktop/stt ({})", stt::hint(&root));
+            return;
+        }
+        let _serial = testing::serial();
+        let _restore = Restore;
+        let console = testing::FakeConsole::start(json!({}));
+        console_settings::forget();
+        let cfg = replay::ReplayConfig::new(Some(fixture("status-ticket-two.wav")), None);
+        let assistant = Arc::new(Mutex::new(Assistant::default()));
+
+        // The first push-to-talk-shaped take (no cached input) hears the fixture.
+        let heard = take_gated_on(&mut None, &cfg, &root, &assistant, &console.url, |_| true)
+            .expect("the replayed take is heard");
+        assert!(heard.to_lowercase().contains("status"), "{heard:?}");
+        let said = console.said();
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].contains("\"source\":\"voice\"") && said[0].contains(&heard), "{said:?}");
+        assert!(!listening(), "the flag came back");
+        assert_eq!(cfg.first_use_warning(), None, "the one WARN was spent opening the file");
+
+        // The playhead persisted: the next take starts where this one ended,
+        // finds only the file's trailing silence, and runs out. Exhausted is
+        // "nothing heard", never a hang or a repeat of the same words.
+        let again = take_gated_on(&mut None, &cfg, &root, &assistant, &console.url, |_| true);
+        assert_eq!(again, Err("nothing heard".to_string()));
+        assert_eq!(console.said().len(), 1, "nothing more was sent");
+    }
+
+    // -- the junk filter at the point a transcript comes back (T-032 FR-16) --
+
+    /// What the console was told, with the junk filter and gate in front of it.
+    fn delivered(text: &str, gate: fn(&str) -> bool) -> (ListenResult<String>, Vec<String>) {
+        let _serial = testing::serial();
+        let console = testing::FakeConsole::start(json!({}));
+        let assistant = Arc::new(Mutex::new(Assistant::default()));
+        let result = deliver(text, &assistant, &console.url, &gate);
+        (result, console.said())
+    }
+
+    #[test]
+    fn a_junk_transcript_sends_nothing_and_ends_as_nothing_heard() {
+        for junk in ["[BLANK_AUDIO]", "(machinery whirring)", "*coughs*", "Thank you.", "you", "..."] {
+            let (result, said) = delivered(junk, |_| true);
+            // "nothing heard", not "the speech engine returned nothing": the armed
+            // loop treats the first as a quiet room and logs the second.
+            assert_eq!(result, Err("nothing heard".to_string()), "{junk:?}");
+            assert!(said.is_empty(), "{junk:?} reached the console: {said:?}");
+        }
+    }
+
+    #[test]
+    fn the_filter_runs_before_the_gate() {
+        // Junk is "nothing heard" even where the gate would have said "not addressed".
+        assert_eq!(delivered("(music)", |_| false).0, Err("nothing heard".to_string()));
+        assert_eq!(delivered("open the tickets", |_| false).0, Err("not addressed".to_string()));
+    }
+
+    #[test]
+    fn real_words_survive_the_filter_and_are_sent_without_their_tags() {
+        let (result, said) = delivered("[Music] open T-002", |_| true);
+        assert_eq!(result, Ok("open T-002".to_string()));
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].contains("\"text\":\"open T-002\""), "{said:?}");
+    }
+
+    #[test]
+    fn the_filtered_log_line_has_a_count_and_a_reason_and_no_text() {
+        let line = filtered_line("(machinery whirring)", transcript_filter::Dropped::NoWords);
+        assert_eq!(line, "listen: heard 2 words, filtered (sound tag or punctuation only) - nothing sent");
+        assert!(!line.contains("machinery") && !line.contains("whirring"));
+    }
+
+    /// What the real engine says about the committed silence and noise fixtures
+    /// (desktop/tests/fixtures/README-replay.md) goes through the filter and ends
+    /// the take as "nothing heard" with nothing sent. `replay-g2-noise-sound-tag.wav`
+    /// is left out on purpose: through the shipped whisper-server (not the CLI the
+    /// README used) it came back as a fluent sentence, which is the D-9 class of
+    /// junk this filter does not claim to catch.
+    #[test]
+    fn the_real_engines_answers_to_silence_and_noise_are_filtered() {
+        let root = repo_root();
+        if !stt::available(&root) {
+            eprintln!("skipped: no speech engine under desktop/stt ({})", stt::hint(&root));
+            return;
+        }
+        let _serial = testing::serial();
+        let _restore = Restore;
+        let console = testing::FakeConsole::start(json!({}));
+        console_settings::forget();
+        let assistant = Arc::new(Mutex::new(Assistant::default()));
+        for name in [
+            "replay-d-silence.wav",
+            "replay-e-low-noise.wav",
+            "replay-g-silence-hallucination.wav",
+        ] {
+            let wav = std::fs::read(fixture(name)).expect("fixture");
+            let heard = stt::transcribe(&root, &wav).expect("the engine answers");
+            eprintln!("{name}: the engine said {heard:?}");
+            let result = deliver(heard.trim(), &assistant, &console.url, &|_: &str| true);
+            assert_eq!(result, Err("nothing heard".to_string()), "{name}: {heard:?}");
+        }
+        assert!(console.said().is_empty(), "{:?}", console.said());
+    }
+
+    /// Silence and low noise never even reach the engine: the take ends first.
+    #[test]
+    fn replaying_the_silence_and_noise_fixtures_ends_the_take_as_nothing_heard() {
+        let _serial = testing::serial();
+        let _restore = Restore;
+        let console = testing::FakeConsole::start(json!({}));
+        console_settings::forget();
+        let assistant = Arc::new(Mutex::new(Assistant::default()));
+        for name in ["replay-d-silence.wav", "replay-e-low-noise.wav"] {
+            let cfg = replay::ReplayConfig::new(Some(fixture(name)), None);
+            let result = take_gated_on(&mut None, &cfg, &repo_root(), &assistant, &console.url, |_| true);
+            assert_eq!(result, Err("nothing heard".to_string()), "{name}");
+        }
+        assert!(console.said().is_empty());
     }
 }

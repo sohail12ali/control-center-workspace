@@ -14,7 +14,7 @@ Index of all work artifacts. One row per ticket. Update when artifacts are creat
 - [[T-028-summary]] — Budgets, a real Claude login probe, and a background claim reaper — Open — Sohail Ali — 2026-10-04
 - [[T-030-summary]] — One chat surface: the Assistant renders through ConsoleChatStore/Render — Open — Sohail Ali — 2026-10-04
 - [[T-031-summary]] — Voice assets and devices: model manager, device pickers, mic test — In Progress — Sohail Ali — 2026-10-05
-- [[T-032-summary]] — Hear me properly: pause-tolerant endpointing, junk filter, wav-replay seam — Open — Sohail Ali — 2026-10-05
+- [[T-032-summary]] — Hear me properly: pause-tolerant endpointing, junk filter, wav-replay seam — Verify — Sohail Ali — 2026-10-05
 - [[T-033-summary]] — Talk turn to turn: turn loop, hold-to-talk, mute, spoken summary, audio voice commands — Open — Sohail Ali — 2026-10-05
 - [[T-034-summary]] — Voice onboarding and health: wizard Voice step, doctor actions, tray device submenus — Open — Sohail Ali — 2026-10-05
 - [[T-035-summary]] — Voice opt-ins and spikes: cloud STT, language, echo-cancelled barge-in — Open — Sohail Ali — 2026-10-05

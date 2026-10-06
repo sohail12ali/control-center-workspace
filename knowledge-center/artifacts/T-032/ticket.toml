@@ -2,12 +2,12 @@
 id = "T-032"
 title = "Hear me properly: pause-tolerant endpointing, junk filter, wav-replay seam"
 kind = "tickets"
-stage = "open"
+stage = "verify"
 status = "active"
 owner = "Sohail Ali"
 priority = "medium"
 created = "2026-10-05"
-updated = "2026-10-05"
+updated = "2026-10-06"
 tags = []
 links = []
 scripts_dir = ""

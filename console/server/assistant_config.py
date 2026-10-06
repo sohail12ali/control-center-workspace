@@ -159,6 +159,12 @@ DEFAULTS = {
     # only: push-to-talk opens on a keypress, so a short take there is a short
     # command and making it wait would be the same mistake reversed.
     "listen_first_pause_ms": 1500,
+    # After a pause that would end the take, keep listening this long for the
+    # speaker to carry on (T-032). Resumed speech makes it ONE take, so a
+    # breath mid-sentence is not a cut-off. 0 = off (a pause ends the take as
+    # before). `listen_max_merges` bounds how often one take may carry on.
+    "listen_merge_window_ms": 1200,
+    "listen_max_merges": 4,
     # How much audio from BEFORE the wake word fired goes into the take. A
     # spotter can only recognise a phrase once it has been said, so without
     # this the recogniser is handed the sentence with its opening missing.
@@ -221,6 +227,7 @@ WRITABLE = frozenset({
     "reply_chars", "ticket_prefix", "tray_click_action",
     "listen_max_seconds", "listen_silence_ms", "stt_model",
     "listen_first_pause_ms", "listen_preroll_ms", "wake_sensitivity",
+    "listen_merge_window_ms", "listen_max_merges",
     "speak_voice", "speak_rate_percent",
     "work_backend", "work_model", "backend_chain",
     "hud_dismiss_shortcut",
@@ -247,6 +254,8 @@ APPLIES = {
     "listen_first_pause_ms": {
         "when": "live",
         "note": "Applies to the next take; only hands-free uses it."},
+    "listen_merge_window_ms": {"when": "live", "note": "Applies to the next take."},
+    "listen_max_merges": {"when": "live", "note": "Applies to the next take."},
     "stt_model": {
         "when": "live",
         "note": "The new model loads in the background; a take in the first "
@@ -663,6 +672,12 @@ def update(repo_root, patch, installed_backends=()):
         # Capped by what audio.rs's ring actually holds (4s), with room left
         # for the take itself. Asking for more would silently get less.
         raise ValueError("listen_preroll_ms must be between 0 and 3000")
+    if "listen_merge_window_ms" in clean and not 0 <= clean["listen_merge_window_ms"] <= 5000:
+        # 0 switches the window off; above five seconds you are waiting on the
+        # window instead of the detector.
+        raise ValueError("listen_merge_window_ms must be between 0 and 5000")
+    if "listen_max_merges" in clean and not 0 <= clean["listen_max_merges"] <= 8:
+        raise ValueError("listen_max_merges must be between 0 and 8")
     if "wake_sensitivity" in clean and not 0.0 <= clean["wake_sensitivity"] <= 1.0:
         raise ValueError("wake_sensitivity must be between 0 and 1")
     if "speak_rate_percent" in clean and not 50 <= clean["speak_rate_percent"] <= 200:

@@ -52,6 +52,16 @@ All made by the analyst as sensible defaults (user asked for defaults, no blocki
 **Rationale:** Unverified capability, and the log holds no audio so the cause is unknown. Not invented into requirements.
 **Impact:** FR-18; todo recorded.
 
+## D-10 tail-trim-unconditional (OPEN OWNER QUESTION)
+**Decision (built, slice 2):** the 300 ms trailing-silence trim (AC-7, FR-11) is unconditional, not tied to the merge window.
+**Consequence:** with `listen_merge_window_ms = 0` a take ends at the same moment as before but the audio sent to speech-to-text has about 400 ms less trailing silence than before (fixture a, window off: takes went from 47616/40192 samples to 41152/31936).
+**Open question for the owner:** accept this, or apply the trim only when the window is on? One-line alternative: skip `Window::assemble`'s tail trim when `merge_window == 0` so window=0 is byte-for-byte today's audio (breaks AC-7 as worded for that setting).
+**Status:** open; not changed by the builder.
+
+## D-11 junk-filter-list-and-scope (built, slice 3)
+**Decision:** `transcript_filter.rs` keeps five whole-transcript entries ("thank you.", "thanks for watching!", "thank you for watching.", "you", "bye."); "[blank_audio]" and "(silence)" from FR-15(d) are removed by the tag step first, so listing them would be dead data (behaviour identical, tested).
+**Finding:** through the shipped whisper-server the noise fixture `replay-g2-noise-sound-tag.wav` returned a fluent sentence, not the sound tag whisper-cli gave; the filter does not catch it by design (D-9, todo TD-1). Silence (d, g) and low noise (e) came back "you" and are filtered.
+
 ## Links
 - [[T-032-summary]] · [[T-032-analysis]] · [[T-032-requirements-draft]] · [[T-032-context-snapshot]] · [[T-032-gap-analysis]] · [[T-032-iteration-log]] · [[T-032-requirements]] · [[T-032-decision-log]] · [[T-032-plan]] · [[T-032-progress]] · [[T-032-verification]]
 - Dossier: [[INV-2026-10-05-micdrop-adoption-dossier]] · Related: [[T-019-summary]] · [[T-031-summary]] · [[T-035-summary]] · [[T-034-summary]]

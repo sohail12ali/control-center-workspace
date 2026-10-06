@@ -170,6 +170,41 @@ Reading replies aloud uses the OS synthesiser — nothing to install. Both
 capabilities are probed rather than assumed, so `/health` tells the truth
 about this machine.
 
+### Pauses, junk and headless replay (T-032)
+
+Two settings (Settings keys in `console/config/assistant.toml`, applied on the
+next take) make the shell stop cutting you off mid-thought:
+`listen_merge_window_ms` (default 1200, 0-5000; 0 = off, the old behaviour) is
+how long it keeps listening after the end-of-speech silence
+(`listen_silence_ms`) in case you carry on, and `listen_max_merges` (default 4,
+0-8) caps how many such pauses one take absorbs. A merged take is transcribed
+once; the quiet gaps in it are squeezed to 300 ms and trailing silence is
+trimmed to 300 ms before it goes to the speech engine, with or without the
+window. `listen_first_pause_ms` is now only a floor on total patience for a
+short utterance. The cost is up to the window's length added to the end of
+every take that ends by silence.
+
+Whatever the speech engine returns is cleaned first: sound tags (`[Music]`,
+`(whirring)`, `*coughs*`, `♪ la ♪`), bare punctuation and the engine's known
+hallucinations on silence ("you", "Thank you.", "Bye.") are dropped, and the
+take ends as "nothing heard" with nothing sent. A tag containing a digit
+("(T-002)") is kept. Logs say how many words were dropped and why, never which.
+
+For tests, two environment variables of the shell process (never a setting, a
+bridge route or a Settings control) swap the hardware for files:
+
+- `CC_REPLAY_WAV=<file>` — every take (tray, push-to-talk, hands-free) reads
+  this WAV instead of the microphone, any rate or channel count, as fast as
+  it can be consumed. One WARN names the file when it is first used and
+  `GET /listen/state` reports `"source": "file"` (else `"mic"`). The playhead
+  persists across takes; once the file is used up a take ends as "nothing
+  heard".
+- `CC_TTS_SINK_WAV=<file>` — a reply spoken by Piper is written to this
+  16-bit mono WAV (overwritten each reply) instead of the speakers; any other
+  voice backend refuses with an error rather than playing.
+
+Synthetic fixtures and how to regenerate them: `desktop/tests/fixtures/README-replay.md`.
+
 Module layout, all under `src-tauri/src/`:
 
 | File | Role |
@@ -181,7 +216,9 @@ Module layout, all under `src-tauri/src/`:
 | `tts.rs` | reads a reply aloud: piper when installed, the OS synthesiser otherwise; `stop()` is barge-in |
 | `piper.rs` | the local neural voice — streams its PCM straight to the output device |
 | `speech_text.rs` | what a written reply sounds like: markdown out, ids said aloud |
-| `listen.rs` | one spoken command: record, transcribe, hand to the console |
+| `listen.rs` | one spoken command: record, transcribe, filter, hand to the console |
+| `replay.rs` | headless replay: a WAV file as the audio source (`CC_REPLAY_WAV`) and a WAV file as the reply sink (`CC_TTS_SINK_WAV`) |
+| `transcript_filter.rs` | drops sound tags and silence hallucinations ("[Music]", "(whirring)", "Thank you.") before anything is sent |
 | `tray_state.rs` | the icon's state machine (pure, unit-tested) |
 | `tray_link.rs` | follows the console's event stream so the tray is right when hidden |
 | `tray_paint.rs` | the one place a state change becomes pixels — every source of events calls it |

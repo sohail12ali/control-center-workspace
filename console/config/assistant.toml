@@ -136,6 +136,17 @@ listen_silence_ms = 700
 # ask rather than someone finishing.
 listen_first_pause_ms = 1500
 
+# After a pause that would end the take, keep listening this long for you to
+# carry on. If you do, it is one take (one transcription) instead of two, so a
+# breath mid-sentence no longer splits it. Costs up to this much extra waiting
+# after you really are done. 0 turns it off. Applies to push-to-talk and
+# hands-free alike; releasing the key ends the take at once.
+listen_merge_window_ms = 1200
+
+# How many times one take may carry on after such a pause. The next pause after
+# that many ends it immediately, with no waiting. 0 = never carry on.
+listen_max_merges = 4
+
 # How much audio from BEFORE the wake word fired goes into the take. A spotter
 # can only recognise the phrase once it has been said, so with no pre-roll the
 # recogniser is handed the sentence with its opening missing.
